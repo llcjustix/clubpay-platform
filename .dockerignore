@@ -1,0 +1,7 @@
+.git
+.DS_Store
+outputs
+work
+web/node_modules
+web/dist
+bin

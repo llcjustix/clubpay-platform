@@ -1,0 +1,13 @@
+.DS_Store
+.env
+bin/
+dist/
+node_modules/
+tmp/
+*.log
+web/node_modules/
+web/dist/
+.playwright-cli/
+outputs/
+work/
+coverage/
