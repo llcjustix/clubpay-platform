@@ -15,7 +15,7 @@ jobs:
 
       - name: Build API
         run: |
-          docker build -t clubpay-api:latest ./api
+          docker build -t clubpay-api:latest .
 
       - name: Build Web
         run: |
