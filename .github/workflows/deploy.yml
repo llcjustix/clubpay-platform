@@ -7,7 +7,7 @@ on:
 
 jobs:
   deploy:
-    runs-on: [self-hosted, docker, chart-justix]
+    runs-on: [self-hosted, docker, clubpay-platform]
 
     steps:
       - name: Checkout repository
