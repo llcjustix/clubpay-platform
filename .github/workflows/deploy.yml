@@ -1,4 +1,4 @@
-name: Deploy Clubpay
+name: Build and Deploy Clubpay
 
 on:
   push:
@@ -7,26 +7,27 @@ on:
 
 jobs:
   deploy:
-    runs-on: [self-hosted]
+    runs-on: [self-hosted, docker, chart-justix]
 
     steps:
-      - name: Checkout
+      - name: Checkout repository
         uses: actions/checkout@v4
+
+      - name: Build API
+        run: |
+          docker build -t clubpay-api:latest ./api
+
+      - name: Build Web
+        run: |
+          docker build -t clubpay-web:latest ./web
+
+      - name: Sync docker-compose
+        run: |
+          mkdir -p /home/ubuntu/clubpay-platform
+          cp ./docker-compose.yml /home/ubuntu/clubpay-platform/docker-compose.yml
 
       - name: Deploy
         run: |
-          set -e
-
           cd /home/ubuntu/clubpay-platform
-
-          echo "Pull latest code..."
-          git pull origin main
-
-          echo "Stop old containers..."
-          docker compose down
-
-          echo "Start new containers..."
-          docker compose up -d
-
-          echo "Check containers..."
+          docker compose up -d --remove-orphans
           docker ps
