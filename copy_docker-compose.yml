@@ -1,17 +1,14 @@
 services:
   postgres:
     image: postgres:16-alpine
-    mem_limit: 200m
-    cpus: 0.2    
     environment:
       POSTGRES_DB: clubpay
       POSTGRES_USER: clubpay
       POSTGRES_PASSWORD: clubpay
     ports:
-      - "2044:5432"
+      - "5432:5432"
     volumes:
-#      - clubpay-postgres:/var/lib/postgresql/data
-      - /home/ubuntu/clubpay-platform/data/postgres:/var/lib/postgresql/data
+      - clubpay-postgres:/var/lib/postgresql/data
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U clubpay -d clubpay"]
       interval: 5s
@@ -20,8 +17,6 @@ services:
 
   api:
     image: golang:1.22-alpine
-    mem_limit: 200m
-    cpus: 0.2   
     working_dir: /app
     command: sh -c "go mod download && go run ./cmd/api"
     environment:
@@ -47,7 +42,7 @@ services:
       VOUCHER_MIN_MINUTES: ${VOUCHER_MIN_MINUTES:-5}
       VOUCHER_TTL_DAYS: ${VOUCHER_TTL_DAYS:-30}
     ports:
-      - "2045:8080"
+      - "8080:8080"
     volumes:
       - .:/app
       - clubpay-go-cache:/go
@@ -57,14 +52,12 @@ services:
 
   web:
     image: node:22-alpine
-    mem_limit: 200m
-    cpus: 0.2   
     working_dir: /app/web
     command: sh -c "npm install && npm run dev -- --host 0.0.0.0"
     environment:
       VITE_API_BASE_URL: http://localhost:8080
     ports:
-      - "2046:5173"
+      - "5173:5173"
     volumes:
       - .:/app
       - clubpay-web-node-modules:/app/web/node_modules
@@ -72,6 +65,6 @@ services:
       - api
 
 volumes:
-#  clubpay-postgres:
+  clubpay-postgres:
   clubpay-go-cache:
   clubpay-web-node-modules:

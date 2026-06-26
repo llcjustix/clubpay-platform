@@ -1,0 +1,41 @@
+name: Deploy Clubpay
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup SSH key
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/id_rsa
+          chmod 600 ~/.ssh/id_rsa
+          ssh-keyscan -H ${{ secrets.SERVER_HOST }} >> ~/.ssh/known_hosts
+
+      - name: Deploy to server
+        run: |
+          ssh ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }} '
+            set -e
+
+            cd /opt/clubpay
+
+            echo "Pull latest code..."
+            git pull origin main
+
+            echo "Stop old containers..."
+            docker compose down
+
+            echo "Start new containers..."
+            docker compose up -d
+
+            echo "Check containers..."
+            docker ps
+          '
