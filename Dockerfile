@@ -7,6 +7,8 @@ RUN go mod download
 
 COPY . .
 
+RUN go build -o clubpay-api ./cmd/api
+
 EXPOSE 8080
 
-CMD ["go", "run", "./cmd/api"]
+CMD ["./clubpay-api"]
