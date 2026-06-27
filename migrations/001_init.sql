@@ -404,11 +404,23 @@ WHERE phone = '+998900000000'
 
 UPDATE users
 SET
-  email = 'owner@test.local',
+  email = 'owner@clubpay.local',
   role = 'owner',
   password_hash = 'f1aacffd5fc4cd7e018dd516d1e4b2b29e8618292024e3d3995456b588f769c8',
   status = 'active',
   updated_at = now()
+WHERE phone = '+998000000000'
+  AND NOT EXISTS (
+    SELECT 1 FROM users u
+    WHERE lower(COALESCE(u.email, '')) = 'owner@clubpay.local'
+      AND u.phone <> '+998000000000'
+  );
+
+UPDATE users
+SET role = 'owner',
+    password_hash = 'f1aacffd5fc4cd7e018dd516d1e4b2b29e8618292024e3d3995456b588f769c8',
+    status = 'active',
+    updated_at = now()
 WHERE phone = '+998000000000';
 
 UPDATE users
@@ -416,7 +428,28 @@ SET role = 'owner',
     password_hash = 'f1aacffd5fc4cd7e018dd516d1e4b2b29e8618292024e3d3995456b588f769c8',
     status = 'active',
     updated_at = now()
-WHERE email = 'owner@clubpay.local';
+WHERE email IN ('owner@clubpay.local', 'owner@test.local');
+
+UPDATE users
+SET
+  email = 'admin@clubpay.local',
+  role = 'admin',
+  password_hash = 'a3c75316794fb37d045f6b84db41904b645ce82593b439ace3501f86f755e6ec',
+  status = 'active',
+  updated_at = now()
+WHERE phone = '+998000000001'
+  AND NOT EXISTS (
+    SELECT 1 FROM users u
+    WHERE lower(COALESCE(u.email, '')) = 'admin@clubpay.local'
+      AND u.phone <> '+998000000001'
+  );
+
+UPDATE users
+SET role = 'admin',
+    password_hash = 'a3c75316794fb37d045f6b84db41904b645ce82593b439ace3501f86f755e6ec',
+    status = 'active',
+    updated_at = now()
+WHERE phone = '+998000000001';
 
 UPDATE users
 SET role = 'admin',
@@ -442,21 +475,40 @@ WITH club AS (
   RETURNING id
 ), owner_user AS (
   INSERT INTO users (club_id, name, email, phone, role, password_hash)
-  SELECT id, 'Owner Demo', 'owner@test.local', '+998000000000', 'owner', 'f1aacffd5fc4cd7e018dd516d1e4b2b29e8618292024e3d3995456b588f769c8'
+  SELECT id, 'Owner Demo', 'owner@clubpay.local', '+998000000000', 'owner', 'f1aacffd5fc4cd7e018dd516d1e4b2b29e8618292024e3d3995456b588f769c8'
   FROM selected_club
   WHERE NOT EXISTS (
-    SELECT 1 FROM users u WHERE u.club_id = selected_club.id AND u.phone = '+998000000000'
+    SELECT 1 FROM users u WHERE u.phone = '+998000000000' OR lower(COALESCE(u.email, '')) = 'owner@clubpay.local'
   )
   RETURNING id
 ), selected_owner AS (
   SELECT id FROM owner_user
   UNION
-  SELECT id FROM users WHERE phone = '+998000000000'
+  SELECT id FROM users WHERE phone = '+998000000000' OR lower(COALESCE(email, '')) = 'owner@clubpay.local'
   LIMIT 1
 ), owner_membership AS (
   INSERT INTO user_club_roles (user_id, club_id, role)
   SELECT selected_owner.id, selected_club.id, 'owner'
   FROM selected_owner, selected_club
+  ON CONFLICT (user_id, club_id) DO UPDATE SET role = EXCLUDED.role, status = 'active'
+  RETURNING user_id
+), admin_user AS (
+  INSERT INTO users (club_id, name, email, phone, role, password_hash)
+  SELECT id, 'Admin Demo', 'admin@clubpay.local', '+998000000001', 'admin', 'a3c75316794fb37d045f6b84db41904b645ce82593b439ace3501f86f755e6ec'
+  FROM selected_club
+  WHERE NOT EXISTS (
+    SELECT 1 FROM users u WHERE u.phone = '+998000000001' OR lower(COALESCE(u.email, '')) = 'admin@clubpay.local'
+  )
+  RETURNING id
+), selected_admin AS (
+  SELECT id FROM admin_user
+  UNION
+  SELECT id FROM users WHERE phone = '+998000000001' OR lower(COALESCE(email, '')) = 'admin@clubpay.local'
+  LIMIT 1
+), admin_membership AS (
+  INSERT INTO user_club_roles (user_id, club_id, role)
+  SELECT selected_admin.id, selected_club.id, 'admin'
+  FROM selected_admin, selected_club
   ON CONFLICT (user_id, club_id) DO UPDATE SET role = EXCLUDED.role, status = 'active'
   RETURNING user_id
 ), standard_zone AS (
