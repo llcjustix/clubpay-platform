@@ -38,6 +38,10 @@ func main() {
 		coreAdapter = core.NewHTTPAdapter(cfg.CoreBaseURL, cfg.CoreToken, time.Duration(cfg.CoreTimeoutMS)*time.Millisecond)
 	}
 	server := httpapi.NewServer(cfg, pool, coreAdapter)
+	syncCtx, syncCancel := context.WithCancel(context.Background())
+	defer syncCancel()
+	go server.RunEdgeSync(syncCtx)
+	go server.RunTelegramPolling(syncCtx)
 
 	httpServer := &http.Server{
 		Addr:              cfg.HTTPAddr,

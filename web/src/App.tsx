@@ -6,6 +6,7 @@ import {
   Banknote,
   Building2,
   CheckCircle2,
+  Copy,
   Clock3,
   CreditCard,
   Gamepad2,
@@ -16,15 +17,17 @@ import {
   Play,
   Plus,
   Power,
+  QrCode,
   ReceiptText,
   RefreshCw,
   Save,
+  Send,
   Settings,
-  Square,
   Ticket,
   Trash2,
   Users,
   Wrench,
+  X,
 } from 'lucide-react';
 import './styles.css';
 
@@ -64,6 +67,17 @@ type QRData = {
   zone: { id: string; name: string; hourly_price_tiyin: number; hourly_price_uzs: number };
   tariffs: Tariff[];
   payment_providers: QRPaymentProvider[];
+  telegram?: { bot_link?: string; bot_username?: string };
+};
+
+type VoucherCheck = {
+  voucher_id: string;
+  minutes_left: number;
+  seconds_left: number;
+  status: string;
+  can_redeem?: boolean;
+  pc_status?: string;
+  zone?: { id: string; name: string };
 };
 
 type PC = {
@@ -140,6 +154,7 @@ type Order = {
   provider_payment_id?: string;
   amount_uzs: number;
   duration_minutes: number;
+  duration_seconds?: number;
   status: string;
   provider_status?: string;
   fiscal_status?: string;
@@ -152,15 +167,32 @@ type Order = {
   created_at: string;
 };
 
+type VoucherDelivery = {
+  status: string;
+  phone?: string;
+  telegram_link?: string;
+  link_expires_at?: string;
+};
+
+type TelegramPrompt = {
+  link: string;
+  phone?: string;
+  code?: string;
+  minutes?: number;
+  seconds?: number;
+};
+
 type Grant = {
   id: string;
   duration_minutes: number;
+  duration_seconds?: number;
   status: string;
   source: string;
   pc_label: string;
   core_session_id?: string;
   planned_ends_at?: string;
   remaining_minutes: number;
+  remaining_seconds?: number;
   last_error?: string;
   created_at: string;
 };
@@ -384,6 +416,9 @@ function AuthenticatedApp({ path }: { path: string }) {
     if (!canViewAdmin(auth, currentClubID)) return <Centered text="Недостаточно прав" />;
     return <AdminPage {...commonProps} />;
   }
+  if (canViewOwner(auth, currentClubID)) {
+    return <ReportsPage {...commonProps} currentPath="/reports" />;
+  }
   if (!canViewOwner(auth, currentClubID) && !canViewSettings(auth, currentClubID) && canViewAdmin(auth, currentClubID)) {
     return <AdminPage {...commonProps} currentPath="/admin" />;
   }
@@ -454,8 +489,8 @@ function HomePage(props: WorkspaceProps) {
       <Panel>
         <div className="link-grid">
           <LinkButton href="/qr/pc-001" icon={<Monitor size={18} />}>Открыть QR PC #01</LinkButton>
-          <LinkButton href="/admin" icon={<Activity size={18} />}>Панель администратора</LinkButton>
-          {canOpenOwner && <LinkButton href="/reports" icon={<Banknote size={18} />}>Отчёт</LinkButton>}
+          <LinkButton href="/admin" icon={<Activity size={18} />}>Панель менеджера</LinkButton>
+          {canOpenOwner && <LinkButton href="/reports" icon={<Banknote size={18} />}>Дашборд</LinkButton>}
           {canOpenSettings && <LinkButton href="/settings" icon={<Settings size={18} />}>Настройки клуба</LinkButton>}
         </div>
       </Panel>
@@ -470,6 +505,9 @@ function QRPage({ token }: { token: string }) {
   const [customAmount, setCustomAmount] = useState('');
   const [voucherCode, setVoucherCode] = useState('');
   const [voucherMessage, setVoucherMessage] = useState('');
+  const [voucherError, setVoucherError] = useState('');
+  const [voucherCheck, setVoucherCheck] = useState<VoucherCheck | null>(null);
+  const [checkingVoucher, setCheckingVoucher] = useState(false);
   const [loading, setLoading] = useState(true);
   const [creating, setCreating] = useState(false);
   const [redeeming, setRedeeming] = useState(false);
@@ -490,6 +528,36 @@ function QRPage({ token }: { token: string }) {
 
   useEffect(loadQR, [token]);
 
+  useEffect(() => {
+    const code = voucherCode.trim();
+    setVoucherMessage('');
+    setVoucherError('');
+    setVoucherCheck(null);
+    if (code.length < 4) {
+      setCheckingVoucher(false);
+      return;
+    }
+    let cancelled = false;
+    setCheckingVoucher(true);
+    const timer = window.setTimeout(async () => {
+      try {
+        const payload = await api<VoucherCheck>('/api/vouchers/check', {
+          method: 'POST',
+          body: JSON.stringify({ code, qr_token: token }),
+        });
+        if (!cancelled) setVoucherCheck(payload);
+      } catch (err) {
+        if (!cancelled) setVoucherError(String((err as Error).message || err));
+      } finally {
+        if (!cancelled) setCheckingVoucher(false);
+      }
+    }, 450);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
+  }, [voucherCode, token]);
+
   const selectedTariff = useMemo(() => data?.tariffs.find((tariff) => tariff.id === selected), [data, selected]);
   const providerOptions = useMemo(() => {
     const options = data?.payment_providers || [];
@@ -502,6 +570,10 @@ function QRPage({ token }: { token: string }) {
   const paymentMethodReady = Boolean(selectedProviderOption?.configured);
   const customAmountUZS = parseUZSInput(customAmount);
   const checkoutAmountUZS = customAmountUZS || selectedTariff?.price_uzs || 0;
+  const canStartOrExtend = data ? isPayableStatus(data.pc.status) || data.pc.status === 'occupied' : false;
+  const isExtension = data?.pc.status === 'occupied';
+  const voucherReadyForAutoApply = Boolean(voucherCode.trim() && voucherCheck?.can_redeem);
+  const voucherDurationSeconds = voucherCheck?.seconds_left || (voucherCheck?.minutes_left ? voucherCheck.minutes_left * 60 : 0);
 
   async function createCheckout() {
     if (!selected && !customAmountUZS) return;
@@ -519,6 +591,7 @@ function QRPage({ token }: { token: string }) {
           payment_provider: paymentProvider,
           ...(!customAmountUZS && selected ? { tariff_block_id: selected } : {}),
           ...(customAmountUZS ? { amount_uzs: customAmountUZS } : {}),
+          ...(voucherReadyForAutoApply ? { voucher_code: voucherCode.trim() } : {}),
         }),
       });
       window.location.href = payload.checkout_url;
@@ -531,18 +604,26 @@ function QRPage({ token }: { token: string }) {
 
   async function redeemVoucher() {
     if (!voucherCode.trim()) return;
+    if (!voucherCheck?.can_redeem) {
+      setVoucherError(voucherError || 'Ваучер не прошёл проверку. Проверьте код или дождитесь завершения проверки.');
+      return;
+    }
     setRedeeming(true);
     setVoucherMessage('');
+    setVoucherError('');
     setError('');
     try {
-      const payload = await api<{ grant_id: string; minutes_left: number }>('/api/vouchers/redeem', {
+      const payload = await api<{ grant_id: string; minutes_left: number; seconds_left?: number; extended?: boolean }>('/api/vouchers/redeem', {
         method: 'POST',
         body: JSON.stringify({ code: voucherCode.trim(), qr_token: token }),
       });
-      setVoucherMessage(`Ваучер применён: ${payload.minutes_left} мин`);
+      const durationText = formatDurationClock(payload.seconds_left || payload.minutes_left * 60);
+      setVoucherMessage(payload.extended ? `Ваучер применён: сессия продлена на ${durationText}` : `Ваучер применён: ${durationText}`);
+      setVoucherCheck(null);
+      setVoucherCode('');
       loadQR();
     } catch (err) {
-      setError(String((err as Error).message || err));
+      setVoucherError(String((err as Error).message || err));
     } finally {
       setRedeeming(false);
     }
@@ -552,11 +633,13 @@ function QRPage({ token }: { token: string }) {
   if (error && !data) return <Centered text={error} />;
   if (!data) return <Centered text="Компьютер не найден" />;
 
-  const isBusy = !isPayableStatus(data.pc.status);
+  const isBusy = !canStartOrExtend;
   const payLabel = isBusy
-    ? 'Компьютер занят'
+    ? 'Компьютер недоступен'
+    : isExtension && checkoutAmountUZS
+      ? `Продлить на ${formatUZS(checkoutAmountUZS)}${voucherReadyForAutoApply ? ' + ваучер' : ''}`
     : checkoutAmountUZS
-      ? `Оплатить ${formatUZS(checkoutAmountUZS)}`
+      ? `Оплатить ${formatUZS(checkoutAmountUZS)}${voucherReadyForAutoApply ? ' + ваучер' : ''}`
       : 'Нет доступных пакетов';
 
   return (
@@ -574,9 +657,55 @@ function QRPage({ token }: { token: string }) {
           <div>
             <span>Зона</span>
             <strong>{data.zone.name}</strong>
-            <p>{isBusy ? 'Этот компьютер сейчас нельзя оплатить по QR.' : `Пакет или своя сумма. 1 час: ${formatUZS(data.zone.hourly_price_uzs)}.`}</p>
+            <p>{isExtension ? 'Этот ПК занят. Оплата или ваучер продлят текущую сессию.' : isBusy ? 'Этот компьютер сейчас нельзя оплатить по QR.' : `Пакет или своя сумма. 1 час: ${formatUZS(data.zone.hourly_price_uzs)}.`}</p>
           </div>
         </section>
+
+        <section className="qr-voucher-card">
+          <div>
+            <p>Есть остаток времени?</p>
+            <h2>Проверьте ваучер</h2>
+          </div>
+          <div className="qr-voucher-form">
+            <input
+              id="voucher"
+              value={voucherCode}
+              onChange={(event) => setVoucherCode(event.target.value)}
+              placeholder="Код ваучера"
+              autoComplete="off"
+              inputMode="text"
+            />
+            <Button variant="secondary" disabled={isBusy || checkingVoucher || redeeming || !voucherCode.trim()} icon={checkingVoucher ? <RefreshCw className="spin" size={16} /> : <Ticket size={16} />} onClick={redeemVoucher}>
+              {redeeming ? 'Применяем' : 'Применить'}
+            </Button>
+          </div>
+          {voucherCheck?.can_redeem && (
+            <div className="qr-voucher-status success">
+              <strong>Ваучер валиден: {formatDurationClock(voucherDurationSeconds)}</strong>
+              <span>
+                Можно нажать “Применить” сразу. Если выбрать пакет или ввести сумму и оплатить, ваучер применится автоматически и добавится к оплаченному времени.
+              </span>
+            </div>
+          )}
+          {voucherCheck && !voucherCheck.can_redeem && (
+            <div className="qr-voucher-status danger">
+              <strong>Ваучер найден, но применить здесь нельзя</strong>
+              <span>Проверьте клуб, зону или статус компьютера.</span>
+            </div>
+          )}
+          {checkingVoucher && <p className="qr-method-message">Проверяем ваучер...</p>}
+        </section>
+
+        {data.telegram?.bot_link && (
+          <section className="qr-telegram-card">
+            <div className="qr-telegram-copy">
+              <p>Telegram-бот</p>
+              <h2>Получайте ваучеры</h2>
+              <span>Если менеджер завершит сессию, остаток времени придёт сюда.</span>
+              <LinkButton href={data.telegram.bot_link} variant="secondary" icon={<Send size={16} />}>Открыть бота</LinkButton>
+            </div>
+          </section>
+        )}
 
         <section className="qr-section-heading">
           <div>
@@ -643,33 +772,14 @@ function QRPage({ token }: { token: string }) {
           {selectedProviderOption && !selectedProviderOption.configured && <p className="qr-method-message">{selectedProviderOption.message}</p>}
         </section>
 
-        <section className="qr-voucher-card">
-          <div>
-            <p>Есть остаток времени?</p>
-            <h2>Примените ваучер</h2>
-          </div>
-          <div className="qr-voucher-form">
-            <input
-              id="voucher"
-              value={voucherCode}
-              onChange={(event) => setVoucherCode(event.target.value)}
-              placeholder="Код ваучера"
-              autoComplete="off"
-              inputMode="text"
-            />
-            <Button variant="secondary" disabled={isBusy || redeeming || !voucherCode.trim()} icon={<Ticket size={16} />} onClick={redeemVoucher}>
-              {redeeming ? 'Проверяем' : 'Применить'}
-            </Button>
-          </div>
-        </section>
-
         {voucherMessage && <Notice tone="success">{voucherMessage}</Notice>}
+        {voucherError && <Notice tone="danger">{voucherError}</Notice>}
         {error && <Notice tone="danger">{error}</Notice>}
       </section>
 
       <div className="qr-checkout-bar">
         <div className="qr-checkout-inner">
-          <Button full className="qr-pay-button" disabled={isBusy || (!selected && !customAmountUZS) || !checkoutAmountUZS || creating || !paymentMethodReady} icon={creating ? <RefreshCw className="spin" size={18} /> : <CreditCard size={18} />} onClick={createCheckout}>
+          <Button full className="qr-pay-button" disabled={isBusy || checkingVoucher || (!selected && !customAmountUZS) || !checkoutAmountUZS || creating || !paymentMethodReady} icon={creating ? <RefreshCw className="spin" size={18} /> : <CreditCard size={18} />} onClick={createCheckout}>
             {creating ? 'Открываем оплату' : payLabel}
           </Button>
         </div>
@@ -687,7 +797,8 @@ function AdminPage({ auth, selectedClubID, currentPath, onClubChange, onLogout }
   const [cashPCID, setCashPCID] = useState('');
   const [cashTariffID, setCashTariffID] = useState('');
   const [cashAmount, setCashAmount] = useState('');
-  const [endMinutesByGrant, setEndMinutesByGrant] = useState<Record<string, string>>({});
+  const [endPhoneByGrant, setEndPhoneByGrant] = useState<Record<string, string>>({});
+  const [telegramPrompt, setTelegramPrompt] = useState<TelegramPrompt | null>(null);
   const [message, setMessage] = useState('');
   const refreshingRef = useRef(false);
 
@@ -778,12 +889,27 @@ function AdminPage({ auth, selectedClubID, currentPath, onClubChange, onLogout }
   }
 
   async function endGrant(grant: Grant) {
-    const remaining = Number.parseInt(endMinutesByGrant[grant.id] || '0', 10) || 0;
-    const result = await api<{ voucher?: { code: string; minutes_left: number } }>(`/api/admin/grants/${grant.id}/end`, {
+    setTelegramPrompt(null);
+    const result = await api<{ voucher?: { code: string; minutes_left: number; seconds_left?: number }; voucher_delivery?: VoucherDelivery }>(`/api/admin/grants/${grant.id}/end`, {
       method: 'POST',
-      body: JSON.stringify({ reason: 'admin_request', remaining_minutes: remaining }),
+      body: JSON.stringify({ reason: 'admin_request', recipient_phone: endPhoneByGrant[grant.id] || '' }),
     });
-    setMessage(result.voucher ? `Сессия завершена. Ваучер: ${result.voucher.code}` : 'Сессия завершена без ваучера');
+    if (result.voucher_delivery?.telegram_link) {
+      setTelegramPrompt({
+        link: result.voucher_delivery.telegram_link,
+        phone: result.voucher_delivery.phone,
+        code: result.voucher?.code,
+        minutes: result.voucher?.minutes_left,
+        seconds: result.voucher?.seconds_left,
+      });
+    }
+    const deliverySuffix = result.voucher_delivery?.status ? ` · Telegram: ${telegramDeliveryLabel(result.voucher_delivery.status)}` : '';
+    setMessage(result.voucher ? `Сессия завершена. Ваучер: ${result.voucher.code}${deliverySuffix}` : 'Сессия завершена без ваучера');
+    setEndPhoneByGrant((current) => {
+      const next = { ...current };
+      delete next[grant.id];
+      return next;
+    });
     refresh();
   }
 
@@ -799,9 +925,10 @@ function AdminPage({ auth, selectedClubID, currentPath, onClubChange, onLogout }
 
   return (
     <main className="shell">
-      <WorkspaceHeader auth={auth} selectedClubID={selectedClubID} currentPath={currentPath} onClubChange={onClubChange} onLogout={onLogout} eyebrow="Панель администратора" title="Зал, оплаты и сессии" />
+      <WorkspaceHeader auth={auth} selectedClubID={selectedClubID} currentPath={currentPath} onClubChange={onClubChange} onLogout={onLogout} eyebrow="Панель менеджера" title="Зал, оплаты и сессии" />
 
       {message && <Notice tone="success">{message}</Notice>}
+      {telegramPrompt && <TelegramVoucherModal prompt={telegramPrompt} onClose={() => setTelegramPrompt(null)} onCopied={() => setMessage('Ссылка Telegram скопирована')} />}
 
       <Panel className="pc-table-panel">
         <div className="table-wrap">
@@ -899,7 +1026,7 @@ function AdminPage({ auth, selectedClubID, currentPath, onClubChange, onLogout }
             {grants.map((grant) => (
               <div className="list-row" key={grant.id}>
                 <div>
-                  <strong>{grant.pc_label} · {grant.duration_minutes} мин</strong>
+                  <strong>{grant.pc_label} · {formatDurationClock(grant.duration_seconds || grant.duration_minutes * 60)}</strong>
                   <span>Источник: {sourceLabel(grant.source)} · {grantStatusLabel(grant.status)}</span>
                   {grant.planned_ends_at && <small>Плановое окончание: {formatDateTime(grant.planned_ends_at)}</small>}
                   {grant.last_error && <small className="danger-text">{grant.last_error}</small>}
@@ -907,13 +1034,14 @@ function AdminPage({ auth, selectedClubID, currentPath, onClubChange, onLogout }
                 {grant.status === 'accepted' && (
                   <div className="end-session">
                     <input
-                      aria-label="Остаток минут"
-                      inputMode="numeric"
-                      value={endMinutesByGrant[grant.id] || ''}
-                      onChange={(event) => setEndMinutesByGrant((current) => ({ ...current, [grant.id]: event.target.value }))}
-                      placeholder="0 мин"
+                      aria-label="Телефон для Telegram"
+                      inputMode="tel"
+                      value={endPhoneByGrant[grant.id] || ''}
+                      onFocus={() => setEndPhoneByGrant((current) => ({ ...current, [grant.id]: current[grant.id] || '+998 ' }))}
+                      onChange={(event) => setEndPhoneByGrant((current) => ({ ...current, [grant.id]: formatUzPhoneInput(event.target.value) }))}
+                      placeholder="+998 00 000 00 00"
                     />
-                    <Button size="sm" variant="secondary" icon={<Square size={13} />} onClick={() => endGrant(grant)}>Завершить</Button>
+                    <Button size="sm" variant="secondary" icon={<Power size={13} />} onClick={() => endGrant(grant)}>Завершить</Button>
                   </div>
                 )}
               </div>
@@ -971,7 +1099,7 @@ function ReportsPage({ auth, selectedClubID, currentPath, onClubChange, onLogout
 
   return (
     <main className="shell">
-      <WorkspaceHeader auth={auth} selectedClubID={selectedClubID} currentPath={currentPath} onClubChange={onClubChange} onLogout={onLogout} eyebrow="Отчёт владельца" title="Финансовый отчёт" />
+      <WorkspaceHeader auth={auth} selectedClubID={selectedClubID} currentPath={currentPath} onClubChange={onClubChange} onLogout={onLogout} eyebrow="Дашборд" title="Финансы и загрузка клуба" />
       {!summary ? (
         <Panel><EmptyState text="Считаем сводку" /></Panel>
       ) : (
@@ -989,14 +1117,13 @@ function ReportsPage({ auth, selectedClubID, currentPath, onClubChange, onLogout
   );
 }
 
-function defaultZoneForm(zones: Zone[] = []): Partial<Zone> {
-  return { name: '', hourly_price_uzs: 15000, sort_order: (zones.length + 1) * 10, status: 'active' };
+function defaultZoneForm(_zones: Zone[] = []): Partial<Zone> {
+  return { name: '', hourly_price_uzs: 15000, sort_order: 0, status: 'active' };
 }
 
-function defaultTariffForm(zones: Zone[] = [], tariffs: Tariff[] = []): Partial<Tariff> {
+function defaultTariffForm(zones: Zone[] = [], _tariffs: Tariff[] = []): Partial<Tariff> {
   const zoneID = zones[0]?.id || '';
-  const zoneTariffs = tariffs.filter((tariff) => tariff.zone_id === zoneID);
-  return { zone_id: zoneID, name: '', duration_minutes: 60, price_uzs: 0, sort_order: zoneTariffs.length + 1, status: 'active' };
+  return { zone_id: zoneID, name: '', duration_minutes: 60, price_uzs: 0, sort_order: 0, status: 'active' };
 }
 
 function uniqueExternalPCID(label: string, pcs: ManagedPC[] = [], currentID?: string) {
@@ -1035,6 +1162,11 @@ function SettingsPage({ auth, selectedClubID, currentPath, onClubChange, onLogou
   const [tariffForm, setTariffForm] = useState<Partial<Tariff>>(defaultTariffForm());
   const [pcForm, setPCForm] = useState<Partial<ManagedPC>>(defaultPCForm());
   const [userForm, setUserForm] = useState<Partial<ClubUser> & { password?: string }>(defaultUserForm());
+  const [showZoneForm, setShowZoneForm] = useState(false);
+  const [showTariffForm, setShowTariffForm] = useState(false);
+  const [showPCForm, setShowPCForm] = useState(false);
+  const [tariffZoneFilter, setTariffZoneFilter] = useState('');
+  const [pcZoneFilter, setPCZoneFilter] = useState('');
 
   async function loadSettings() {
     if (!selectedClubID) return;
@@ -1047,6 +1179,11 @@ function SettingsPage({ auth, selectedClubID, currentPath, onClubChange, onLogou
       setTariffForm(defaultTariffForm(payload.zones, payload.tariffs));
       setPCForm(defaultPCForm(payload.zones, payload.pcs));
       setUserForm(defaultUserForm());
+      setShowZoneForm(false);
+      setShowTariffForm(false);
+      setShowPCForm(false);
+      setTariffZoneFilter((current) => current && payload.zones.some((zone) => zone.id === current) ? current : payload.zones[0]?.id || '');
+      setPCZoneFilter((current) => current && payload.zones.some((zone) => zone.id === current) ? current : '');
       setError('');
     } catch (err) {
       setError(String((err as Error).message || err));
@@ -1073,14 +1210,18 @@ function SettingsPage({ auth, selectedClubID, currentPath, onClubChange, onLogou
 
   function resetZone() {
     setZoneForm(defaultZoneForm(settings?.zones || []));
+    setShowZoneForm(true);
   }
 
   function resetTariff() {
-    setTariffForm(defaultTariffForm(settings?.zones || [], settings?.tariffs || []));
+    const next = defaultTariffForm(settings?.zones || [], settings?.tariffs || []);
+    setTariffForm({ ...next, zone_id: tariffZoneFilter || next.zone_id });
+    setShowTariffForm(true);
   }
 
   function resetPC() {
     setPCForm(defaultPCForm(settings?.zones || [], settings?.pcs || []));
+    setShowPCForm(true);
   }
 
   function resetUser() {
@@ -1243,13 +1384,20 @@ function SettingsPage({ auth, selectedClubID, currentPath, onClubChange, onLogou
   const settingsTitle = {
     club: 'Клуб',
     zones: 'Зоны и пакеты',
-    pcs: 'Компьютеры и QR',
+    pcs: 'Компьютеры',
     users: 'Доступы',
   }[settingsSection];
   const visibleUsers = settings
     ? canManageNetwork
-      ? settings.users.filter((user) => user.role === 'owner' || user.role === 'admin')
-      : settings.users.filter((user) => user.role === 'admin')
+      ? settings.users.filter((user) => user.role === 'owner' || user.role === 'admin' || user.role === 'manager')
+      : settings.users.filter((user) => user.role === 'admin' || user.role === 'manager')
+    : [];
+  const activeZoneTabs = settings?.zones.filter((zone) => zone.status !== 'deleted') || [];
+  const filteredTariffs = settings
+    ? settings.tariffs.filter((tariff) => !tariffZoneFilter || tariff.zone_id === tariffZoneFilter)
+    : [];
+  const filteredPCs = settings
+    ? settings.pcs.filter((pc) => !pcZoneFilter || pc.zone_id === pcZoneFilter)
     : [];
 
   return (
@@ -1266,7 +1414,7 @@ function SettingsPage({ auth, selectedClubID, currentPath, onClubChange, onLogou
         <div className="settings-subnav">
           <LinkButton href="/settings" variant={settingsSection === 'club' ? 'secondary' : 'ghost'} icon={<Building2 size={16} />}>Клуб</LinkButton>
           <LinkButton href="/settings/zones" variant={settingsSection === 'zones' ? 'secondary' : 'ghost'} icon={<ReceiptText size={16} />}>Зоны и пакеты</LinkButton>
-          <LinkButton href="/settings/pcs" variant={settingsSection === 'pcs' ? 'secondary' : 'ghost'} icon={<Monitor size={16} />}>Компьютеры и QR</LinkButton>
+          <LinkButton href="/settings/pcs" variant={settingsSection === 'pcs' ? 'secondary' : 'ghost'} icon={<Monitor size={16} />}>Компьютеры</LinkButton>
           <LinkButton href="/settings/users" variant={settingsSection === 'users' ? 'secondary' : 'ghost'} icon={<Users size={16} />}>Доступы</LinkButton>
         </div>
       )}
@@ -1327,10 +1475,10 @@ function SettingsPage({ auth, selectedClubID, currentPath, onClubChange, onLogou
             <SectionTitle icon={<Settings size={18} />} title="Зоны" caption="Зона группирует ПК с одной базовой ценой за час, например Standard, VIP или Bootcamp." />
             <div className="compact-list">
               {settings.zones.map((zone) => (
-                <button className="editable-row" key={zone.id} onClick={() => setZoneForm(zone)}>
+                <button className="editable-row" key={zone.id} onClick={() => { setZoneForm(zone); setShowZoneForm(true); }}>
                   <span>
                     <strong>{zone.name}</strong>
-                    <small>1 час: {formatUZS(zone.hourly_price_uzs)} · {statusLabel(zone.status)} · порядок {zone.sort_order}</small>
+                    <small>1 час: {formatUZS(zone.hourly_price_uzs)} · {statusLabel(zone.status)}</small>
                   </span>
                   <em>Изменить</em>
                 </button>
@@ -1339,27 +1487,39 @@ function SettingsPage({ auth, selectedClubID, currentPath, onClubChange, onLogou
             <div className="button-row">
               <Button size="sm" variant="secondary" icon={<Plus size={13} />} onClick={resetZone}>Новая зона</Button>
             </div>
-            <div className="form-mode">
-              <strong>{zoneForm.id ? 'Редактирование зоны' : 'Новая зона'}</strong>
-              <span>Клик по зоне выше открывает редактирование. Для создания нажмите “Новая зона”.</span>
-            </div>
-            <div className="form-grid">
-              <Field label="Название зоны" value={zoneForm.name || ''} onChange={(value) => setZoneForm({ ...zoneForm, name: value })} />
-              <Field label="Стоимость 1 часа, сум" type="number" value={String(zoneForm.hourly_price_uzs || 0)} onChange={(value) => setZoneForm({ ...zoneForm, hourly_price_uzs: Number(value || 0) })} help="Используется, когда клиент или админ вводит сумму вручную без пакета." />
-              <Field label="Порядок в списке" type="number" value={String(zoneForm.sort_order || 0)} onChange={(value) => setZoneForm({ ...zoneForm, sort_order: Number(value || 0) })} help="Меньше число — выше в списке. Можно ставить 10, 20, 30, чтобы потом вставлять между ними." />
-              <SelectField label="Статус" value={zoneForm.status || 'active'} options={statusOptions()} onChange={(value) => setZoneForm({ ...zoneForm, status: value })} />
-            </div>
-            <div className="button-row">
-              {zoneForm.id && <Button variant="danger" icon={<Trash2 size={16} />} onClick={deleteZone}>Удалить</Button>}
-              <Button icon={<Save size={16} />} onClick={saveZone}>{zoneForm.id ? 'Сохранить зону' : 'Добавить зону'}</Button>
-            </div>
+            {showZoneForm && (
+              <>
+                <div className="form-mode">
+                  <strong>{zoneForm.id ? 'Редактирование зоны' : 'Новая зона'}</strong>
+                  <span>Клик по зоне выше открывает редактирование. Для создания нажмите “Новая зона”.</span>
+                </div>
+                <div className="form-grid">
+                  <Field label="Название зоны" value={zoneForm.name || ''} onChange={(value) => setZoneForm({ ...zoneForm, name: value })} />
+                  <Field label="Стоимость 1 часа, сум" type="number" value={String(zoneForm.hourly_price_uzs || 0)} onChange={(value) => setZoneForm({ ...zoneForm, hourly_price_uzs: Number(value || 0) })} help="Используется, когда клиент или менеджер вводит сумму вручную без пакета." />
+                  <SelectField label="Статус" value={zoneForm.status || 'active'} options={zoneStatusOptions()} onChange={(value) => setZoneForm({ ...zoneForm, status: value })} />
+                </div>
+                <div className="button-row">
+                  {zoneForm.id && <Button variant="danger" icon={<Trash2 size={16} />} onClick={deleteZone}>Удалить</Button>}
+                  <Button icon={<Save size={16} />} onClick={saveZone}>{zoneForm.id ? 'Сохранить зону' : 'Добавить зону'}</Button>
+                </div>
+              </>
+            )}
           </Panel>
 
           <Panel className="stack">
             <SectionTitle icon={<ReceiptText size={18} />} title="Пакеты" caption="Пакет выбирает клиент на QR-странице. Цена пакета фиксированная и не зависит от стоимости часа зоны." />
+            {activeZoneTabs.length > 1 && (
+              <div className="tab-row">
+                {activeZoneTabs.map((zone) => (
+                  <button type="button" key={zone.id} className={tariffZoneFilter === zone.id ? 'active' : ''} onClick={() => setTariffZoneFilter(zone.id)}>
+                    {zone.name}
+                  </button>
+                ))}
+              </div>
+            )}
             <div className="compact-list">
-              {settings.tariffs.map((tariff) => (
-                <button className="editable-row" key={tariff.id} onClick={() => setTariffForm(tariff)}>
+              {filteredTariffs.map((tariff) => (
+                <button className="editable-row" key={tariff.id} onClick={() => { setTariffForm(tariff); setShowTariffForm(true); }}>
                   <span>
                     <strong>{tariff.zone} · {tariff.name}</strong>
                     <small>{tariff.duration_minutes} мин · {formatUZS(tariff.price_uzs)} · {statusLabel(tariff.status || '')}</small>
@@ -1371,29 +1531,41 @@ function SettingsPage({ auth, selectedClubID, currentPath, onClubChange, onLogou
             <div className="button-row">
               <Button size="sm" variant="secondary" icon={<Plus size={13} />} onClick={resetTariff}>Новый пакет</Button>
             </div>
-            <div className="form-mode">
-              <strong>{tariffForm.id ? 'Редактирование пакета' : 'Новый пакет'}</strong>
-              <span>Если хотите добавить пакет, сначала нажмите “Новый пакет”.</span>
-            </div>
-            <div className="form-grid two">
-              <SelectField label="Зона" value={tariffForm.zone_id || ''} options={settings.zones.map((zone) => ({ value: zone.id, label: zone.name }))} onChange={(value) => setTariffForm({ ...tariffForm, zone_id: value })} />
-              <Field label="Название" value={tariffForm.name || ''} onChange={(value) => setTariffForm({ ...tariffForm, name: value })} />
-              <Field label="Минуты" type="number" value={String(tariffForm.duration_minutes || 0)} onChange={(value) => setTariffForm({ ...tariffForm, duration_minutes: Number(value || 0) })} />
-              <Field label="Цена, сум" type="number" value={String(tariffForm.price_uzs || 0)} onChange={(value) => setTariffForm({ ...tariffForm, price_uzs: Number(value || 0) })} />
-              <Field label="Порядок в списке" type="number" value={String(tariffForm.sort_order || 0)} onChange={(value) => setTariffForm({ ...tariffForm, sort_order: Number(value || 0) })} help="Влияет на порядок пакетов на QR-странице." />
-              <SelectField label="Статус" value={tariffForm.status || 'active'} options={statusOptions()} onChange={(value) => setTariffForm({ ...tariffForm, status: value })} />
-            </div>
-            <div className="button-row">
-              {tariffForm.id && <Button variant="danger" icon={<Trash2 size={16} />} onClick={deleteTariff}>Удалить</Button>}
-              <Button icon={<Save size={16} />} onClick={saveTariff}>{tariffForm.id ? 'Сохранить пакет' : 'Добавить пакет'}</Button>
-            </div>
+            {showTariffForm && (
+              <>
+                <div className="form-mode">
+                  <strong>{tariffForm.id ? 'Редактирование пакета' : 'Новый пакет'}</strong>
+                  <span>Если хотите добавить пакет, сначала нажмите “Новый пакет”.</span>
+                </div>
+                <div className="form-grid two">
+                  <SelectField label="Зона" value={tariffForm.zone_id || ''} options={settings.zones.map((zone) => ({ value: zone.id, label: zone.name }))} onChange={(value) => setTariffForm({ ...tariffForm, zone_id: value })} />
+                  <Field label="Название" value={tariffForm.name || ''} onChange={(value) => setTariffForm({ ...tariffForm, name: value })} />
+                  <Field label="Минуты" type="number" value={String(tariffForm.duration_minutes || 0)} onChange={(value) => setTariffForm({ ...tariffForm, duration_minutes: Number(value || 0) })} />
+                  <Field label="Цена, сум" type="number" value={String(tariffForm.price_uzs || 0)} onChange={(value) => setTariffForm({ ...tariffForm, price_uzs: Number(value || 0) })} />
+                  <SelectField label="Статус" value={tariffForm.status || 'active'} options={statusOptions()} onChange={(value) => setTariffForm({ ...tariffForm, status: value })} />
+                </div>
+                <div className="button-row">
+                  {tariffForm.id && <Button variant="danger" icon={<Trash2 size={16} />} onClick={deleteTariff}>Удалить</Button>}
+                  <Button icon={<Save size={16} />} onClick={saveTariff}>{tariffForm.id ? 'Сохранить пакет' : 'Добавить пакет'}</Button>
+                </div>
+              </>
+            )}
           </Panel>
             </>
           )}
 
           {!creatingClub && settingsSection === 'pcs' && (
           <Panel className="stack settings-wide">
-            <SectionTitle icon={<Monitor size={18} />} title="Компьютеры и QR" caption="Добавьте компьютеры клуба. QR создается автоматически после сохранения ПК." />
+            <SectionTitle icon={<Monitor size={18} />} title="Компьютеры" caption="Добавьте компьютеры клуба. QR создается автоматически после сохранения ПК." />
+            <div className="table-filter">
+              <label>
+                Зона
+                <select value={pcZoneFilter} onChange={(event) => setPCZoneFilter(event.target.value)}>
+                  <option value="">Все зоны</option>
+                  {settings.zones.map((zone) => <option key={zone.id} value={zone.id}>{zone.name}</option>)}
+                </select>
+              </label>
+            </div>
             <div className="table-wrap">
               <table className="pc-table settings-table">
                 <thead>
@@ -1405,12 +1577,12 @@ function SettingsPage({ auth, selectedClubID, currentPath, onClubChange, onLogou
                   </tr>
                 </thead>
                 <tbody>
-                  {settings.pcs.map((pc) => (
+                  {filteredPCs.map((pc) => (
                     <tr key={pc.id}>
                       <td>{pc.label} · #{pc.number}</td>
                       <td>{pc.zone}</td>
                       <td>{pc.qr_url ? <AppLink className="text-link" href={pc.qr_url}>{pc.qr_token}</AppLink> : '—'}</td>
-                      <td><Button size="sm" variant="ghost" onClick={() => setPCForm(pc)}>Изменить</Button></td>
+                      <td><Button size="sm" variant="ghost" onClick={() => { setPCForm(pc); setShowPCForm(true); }}>Изменить</Button></td>
                     </tr>
                   ))}
                 </tbody>
@@ -1419,19 +1591,23 @@ function SettingsPage({ auth, selectedClubID, currentPath, onClubChange, onLogou
             <div className="button-row">
               <Button size="sm" variant="secondary" icon={<Plus size={13} />} onClick={resetPC}>Новый ПК</Button>
             </div>
-            <div className="form-mode">
-              <strong>{pcForm.id ? 'Редактирование ПК' : 'Новый ПК'}</strong>
-              <span>QR и системный ID создаются автоматически после сохранения.</span>
-            </div>
-            <div className="form-grid two">
-              <SelectField label="Зона" value={pcForm.zone_id || ''} options={settings.zones.map((zone) => ({ value: zone.id, label: zone.name }))} onChange={(value) => setPCForm({ ...pcForm, zone_id: value })} />
-              <Field label="Номер" type="number" value={String(pcForm.number || 0)} onChange={(value) => setPCForm({ ...pcForm, number: Number(value || 0) })} />
-              <Field label="Название" value={pcForm.label || ''} onChange={updatePCLabel} />
-            </div>
-            <div className="button-row">
-              {pcForm.id && <Button variant="danger" icon={<Trash2 size={16} />} onClick={deletePC}>Удалить</Button>}
-              <Button icon={<Save size={16} />} onClick={savePC}>{pcForm.id ? 'Сохранить ПК' : 'Добавить ПК'}</Button>
-            </div>
+            {showPCForm && (
+              <>
+                <div className="form-mode">
+                  <strong>{pcForm.id ? 'Редактирование ПК' : 'Новый ПК'}</strong>
+                  <span>QR и системный ID создаются автоматически после сохранения.</span>
+                </div>
+                <div className="form-grid two">
+                  <SelectField label="Зона" value={pcForm.zone_id || ''} options={settings.zones.map((zone) => ({ value: zone.id, label: zone.name }))} onChange={(value) => setPCForm({ ...pcForm, zone_id: value })} />
+                  <Field label="Номер" type="number" value={String(pcForm.number || 0)} onChange={(value) => setPCForm({ ...pcForm, number: Number(value || 0) })} />
+                  <Field label="Название" value={pcForm.label || ''} onChange={updatePCLabel} />
+                </div>
+                <div className="button-row">
+                  {pcForm.id && <Button variant="danger" icon={<Trash2 size={16} />} onClick={deletePC}>Удалить</Button>}
+                  <Button icon={<Save size={16} />} onClick={savePC}>{pcForm.id ? 'Сохранить ПК' : 'Добавить ПК'}</Button>
+                </div>
+              </>
+            )}
           </Panel>
           )}
 
@@ -1448,14 +1624,14 @@ function SettingsPage({ auth, selectedClubID, currentPath, onClubChange, onLogou
                   <em>Изменить</em>
                 </button>
               ))}
-              {visibleUsers.length === 0 && <EmptyState text="Админы клуба пока не добавлены" />}
+              {visibleUsers.length === 0 && <EmptyState text="Менеджеры клуба пока не добавлены" />}
             </div>
             <div className="button-row">
-              <Button size="sm" variant="secondary" icon={<Plus size={13} />} onClick={resetUser}>{canManageNetwork ? 'Новый пользователь' : 'Новый админ'}</Button>
+              <Button size="sm" variant="secondary" icon={<Plus size={13} />} onClick={resetUser}>{canManageNetwork ? 'Новый пользователь' : 'Новый менеджер'}</Button>
             </div>
             <div className="form-mode">
               <strong>{userForm.id ? 'Редактирование доступа' : 'Новый пользователь'}</strong>
-              <span>{canManageNetwork ? 'Суперадмин может добавить владельца клуба или админа.' : 'Владелец может добавлять только админов. Владельцев добавляет команда Clubpay.'}</span>
+              <span>{canManageNetwork ? 'Суперадмин может добавить владельца клуба или менеджера.' : 'Владелец может добавлять только менеджеров. Владельцев добавляет команда Clubpay.'}</span>
             </div>
             <div className="form-grid two">
               <Field label="Имя" value={userForm.name || ''} onChange={(value) => setUserForm({ ...userForm, name: value })} />
@@ -1467,14 +1643,14 @@ function SettingsPage({ auth, selectedClubID, currentPath, onClubChange, onLogou
               ) : (
                 <label className="form-block">
                   Роль
-                  <input value="Админ" readOnly />
+                  <input value="Менеджер" readOnly />
                 </label>
               )}
               <SelectField label="Статус" value={userForm.status || 'active'} options={statusOptions()} onChange={(value) => setUserForm({ ...userForm, status: value })} />
             </div>
             <div className="button-row">
               {userForm.id && <Button variant="danger" icon={<Trash2 size={16} />} onClick={deleteUser}>Удалить</Button>}
-              <Button icon={<Save size={16} />} onClick={saveUser}>{userForm.id ? 'Сохранить доступ' : canManageNetwork ? 'Добавить пользователя' : 'Добавить админа'}</Button>
+              <Button icon={<Save size={16} />} onClick={saveUser}>{userForm.id ? 'Сохранить доступ' : canManageNetwork ? 'Добавить пользователя' : 'Добавить менеджера'}</Button>
             </div>
           </Panel>
           )}
@@ -1565,7 +1741,7 @@ function WorkspaceHeader({ auth, selectedClubID, currentPath, onClubChange, onLo
         ) : (
           <span className="club-static">{selectedClub ? `${selectedClub.name} · ${roleLabel(selectedClub.role)}` : 'Клуб не выбран'}</span>
         )}
-        {canOpenOwner && <AppLink className={`btn ghost sm ${currentPath.startsWith('/reports') || currentPath.startsWith('/owner') ? 'active' : ''}`} href="/reports"><Banknote size={13} /><span>Отчёт</span></AppLink>}
+        {canOpenOwner && <AppLink className={`btn ghost sm ${currentPath.startsWith('/reports') || currentPath.startsWith('/owner') ? 'active' : ''}`} href="/reports"><Banknote size={13} /><span>Дашборд</span></AppLink>}
         {canOpenSettings && <AppLink className={`btn ghost sm ${currentPath.startsWith('/settings') ? 'active' : ''}`} href="/settings"><Settings size={13} /><span>Настройки</span></AppLink>}
         <Button size="sm" variant="secondary" icon={<LogOut size={13} />} onClick={onLogout}>Выйти</Button>
       </div>
@@ -1639,6 +1815,53 @@ function AppLink({ href, children, className = '' }: { href: string; children: R
 
 function Notice({ children, tone }: { children: React.ReactNode; tone: 'success' | 'danger' }) {
   return <p className={`notice ${tone}`}>{children}</p>;
+}
+
+function QRCodeImage({ value, size = 160, label }: { value: string; size?: number; label: string }) {
+  const src = `https://api.qrserver.com/v1/create-qr-code/?size=${size}x${size}&margin=10&data=${encodeURIComponent(value)}`;
+  return (
+    <div className="qr-image-box" style={{ width: size, height: size }}>
+      <img src={src} width={size} height={size} alt={label} loading="lazy" />
+    </div>
+  );
+}
+
+function TelegramVoucherModal({ prompt, onClose, onCopied }: { prompt: TelegramPrompt; onClose: () => void; onCopied: () => void }) {
+  return (
+    <div className="telegram-modal-backdrop" role="dialog" aria-modal="true" aria-labelledby="telegram-modal-title">
+      <section className="telegram-modal">
+        <button className="modal-close" type="button" onClick={onClose} aria-label="Закрыть">
+          <X size={18} />
+        </button>
+        <div className="telegram-modal-head">
+          <span><QrCode size={22} /></span>
+          <div>
+            <p>Telegram-бот</p>
+            <h2 id="telegram-modal-title">Покажите QR клиенту</h2>
+          </div>
+        </div>
+        <QRCodeImage value={prompt.link} size={220} label="QR для получения ваучера в Telegram" />
+        <p className="telegram-modal-text">
+          После нажатия Start бот привяжет номер{prompt.phone ? ` ${prompt.phone}` : ''} и отправит ваучер
+          {prompt.code ? ` ${prompt.code}` : ''}{prompt.seconds || prompt.minutes ? ` на ${formatDurationClock(prompt.seconds || (prompt.minutes || 0) * 60)}` : ''}.
+        </p>
+        <div className="telegram-modal-actions">
+          <LinkButton href={prompt.link} variant="secondary" icon={<Send size={16} />}>Открыть Telegram</LinkButton>
+          <Button
+            type="button"
+            variant="ghost"
+            icon={<Copy size={16} />}
+            onClick={() => {
+              navigator.clipboard?.writeText(prompt.link);
+              onCopied();
+            }}
+          >
+            Скопировать ссылку
+          </Button>
+        </div>
+      </section>
+    </div>
+  );
 }
 
 function EmptyState({ text }: { text: string }) {
@@ -1790,6 +2013,11 @@ function localizeError(message: string) {
     'auth required': 'Нужно войти в систему',
     'not enough permissions': 'Недостаточно прав',
     'club access required': 'Нет доступа к клубу',
+    'PC is not available': 'Компьютер сейчас недоступен',
+    'active session for extension not found': 'Активная сессия для продления не найдена',
+    'voucher not found or expired': 'Ваучер не найден или истёк',
+    'QR token not found': 'QR-код не найден',
+    'voucher belongs to another club': 'Ваучер относится к другому клубу',
   };
   return dictionary[message] || message;
 }
@@ -1821,6 +2049,18 @@ function formatUZS(value: number) {
 
 function parseUZSInput(value: string) {
   return Number(value.replace(/\D/g, '')) || 0;
+}
+
+function formatUzPhoneInput(value: string) {
+  const digits = value.replace(/\D/g, '');
+  const localDigits = (digits.startsWith('998') ? digits.slice(3) : digits).slice(0, 9);
+  const parts = [
+    localDigits.slice(0, 2),
+    localDigits.slice(2, 5),
+    localDigits.slice(5, 7),
+    localDigits.slice(7, 9),
+  ].filter(Boolean);
+  return `+998${parts.length ? ` ${parts.join(' ')}` : ' '}`;
 }
 
 function formatPackageCount(count: number) {
@@ -1862,6 +2102,10 @@ function formatRemainingTime(seconds?: number) {
   return [hours, minutes, restSeconds].map((part) => String(part).padStart(2, '0')).join(':');
 }
 
+function formatDurationClock(seconds?: number) {
+  return formatRemainingTime(seconds);
+}
+
 function isPayableStatus(status: string) {
   return status === 'available' || status === 'sleeping';
 }
@@ -1882,6 +2126,7 @@ function statusLabel(status: string) {
   const labels: Record<string, string> = {
     active: 'Активен',
     inactive: 'Отключен',
+    maintenance: 'Ремонт',
     deleted: 'Удален',
   };
   return labels[status] || status;
@@ -1937,13 +2182,24 @@ function fiscalStatusLabel(status?: string) {
   return labels[status || ''] || 'Soliq не подтверждён';
 }
 
+function telegramDeliveryLabel(status: string) {
+  const labels: Record<string, string> = {
+    sent: 'отправлено',
+    telegram_waiting_for_user: 'ждём привязку номера',
+    telegram_not_configured: 'бот не настроен',
+    telegram_link_failed: 'ссылка не создана',
+    telegram_failed: 'ошибка отправки',
+  };
+  return labels[status] || status;
+}
+
 function clubRole(auth: AuthPayload, clubID: string) {
   if (auth.user.global_role === 'super_admin') return 'super_admin';
   return auth.clubs.find((club) => club.id === clubID)?.role || '';
 }
 
 function canViewAdmin(auth: AuthPayload, clubID: string) {
-  return ['super_admin', 'owner', 'admin'].includes(clubRole(auth, clubID));
+  return ['super_admin', 'owner', 'admin', 'manager'].includes(clubRole(auth, clubID));
 }
 
 function canViewOwner(auth: AuthPayload, clubID: string) {
@@ -1958,7 +2214,8 @@ function roleLabel(role: string) {
   const labels: Record<string, string> = {
     super_admin: 'Суперадмин',
     owner: 'Владелец',
-    admin: 'Админ',
+    admin: 'Менеджер',
+    manager: 'Менеджер',
   };
   return labels[role] || role;
 }
@@ -1967,15 +2224,23 @@ function roleOptions(canManageNetwork = false) {
   return canManageNetwork
     ? [
         { value: 'owner', label: 'Владелец' },
-        { value: 'admin', label: 'Админ' },
+        { value: 'admin', label: 'Менеджер' },
       ]
-    : [{ value: 'admin', label: 'Админ' }];
+    : [{ value: 'admin', label: 'Менеджер' }];
 }
 
 function statusOptions() {
   return [
     { value: 'active', label: 'Активен' },
     { value: 'inactive', label: 'Отключен' },
+  ];
+}
+
+function zoneStatusOptions() {
+  return [
+    { value: 'active', label: 'Активна' },
+    { value: 'maintenance', label: 'Ремонт' },
+    { value: 'inactive', label: 'Отключена' },
   ];
 }
 

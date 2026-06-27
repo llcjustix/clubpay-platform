@@ -61,19 +61,23 @@ ALTER TABLE users ADD COLUMN IF NOT EXISTS email TEXT;
 ALTER TABLE users ADD COLUMN IF NOT EXISTS global_role TEXT NOT NULL DEFAULT '';
 ALTER TABLE users ADD COLUMN IF NOT EXISTS password_hash TEXT;
 ALTER TABLE users ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT now();
-ALTER TABLE users ADD CONSTRAINT users_role_check CHECK (role IN ('owner', 'manager', 'admin', 'support', 'super_admin'));
+UPDATE users SET role = 'admin' WHERE role = 'support';
+ALTER TABLE users ADD CONSTRAINT users_role_check CHECK (role IN ('owner', 'manager', 'admin', 'super_admin'));
 CREATE UNIQUE INDEX IF NOT EXISTS users_email_uidx ON users(lower(email)) WHERE email IS NOT NULL AND email <> '';
 CREATE UNIQUE INDEX IF NOT EXISTS users_phone_uidx ON users(phone) WHERE phone IS NOT NULL AND phone <> '';
 
 CREATE TABLE IF NOT EXISTS user_club_roles (
   user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
   club_id UUID NOT NULL REFERENCES clubs(id) ON DELETE CASCADE,
-  role TEXT NOT NULL CHECK (role IN ('owner', 'manager', 'admin', 'support')),
+  role TEXT NOT NULL CHECK (role IN ('owner', 'manager', 'admin')),
   status TEXT NOT NULL DEFAULT 'active',
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   PRIMARY KEY (user_id, club_id)
 );
+ALTER TABLE user_club_roles DROP CONSTRAINT IF EXISTS user_club_roles_role_check;
+UPDATE user_club_roles SET role = 'admin' WHERE role = 'support';
+ALTER TABLE user_club_roles ADD CONSTRAINT user_club_roles_role_check CHECK (role IN ('owner', 'manager', 'admin'));
 
 CREATE TABLE IF NOT EXISTS auth_sessions (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -153,6 +157,8 @@ CREATE TABLE IF NOT EXISTS payment_orders (
   tariff_block_id UUID REFERENCES tariff_blocks(id),
   amount_tiyin BIGINT NOT NULL,
   duration_minutes INT NOT NULL,
+  duration_seconds INT NOT NULL DEFAULT 0,
+  voucher_id UUID,
   status TEXT NOT NULL DEFAULT 'created',
   provider_status TEXT,
   checkout_url TEXT,
@@ -178,9 +184,13 @@ ALTER TABLE payment_orders ADD COLUMN IF NOT EXISTS receipt_kind TEXT NOT NULL D
 ALTER TABLE payment_orders ADD COLUMN IF NOT EXISTS fiscal_status TEXT NOT NULL DEFAULT 'not_requested';
 ALTER TABLE payment_orders ADD COLUMN IF NOT EXISTS split_platform_amount_tiyin BIGINT NOT NULL DEFAULT 0;
 ALTER TABLE payment_orders ADD COLUMN IF NOT EXISTS split_club_amount_tiyin BIGINT NOT NULL DEFAULT 0;
+ALTER TABLE payment_orders ADD COLUMN IF NOT EXISTS extension_grant_id UUID;
+ALTER TABLE payment_orders ADD COLUMN IF NOT EXISTS duration_seconds INT NOT NULL DEFAULT 0;
+ALTER TABLE payment_orders ADD COLUMN IF NOT EXISTS voucher_id UUID;
 ALTER TABLE payment_orders ALTER COLUMN tariff_block_id DROP NOT NULL;
 ALTER TABLE payment_orders ALTER COLUMN receipt_kind SET DEFAULT 'provider_receipt';
 UPDATE payment_orders SET receipt_kind = 'provider_receipt' WHERE receipt_kind = 'multicard_receipt';
+UPDATE payment_orders SET duration_seconds = duration_minutes * 60 WHERE duration_seconds <= 0;
 
 CREATE INDEX IF NOT EXISTS payment_orders_provider_payment_idx ON payment_orders(provider, provider_payment_id);
 CREATE INDEX IF NOT EXISTS payment_orders_status_idx ON payment_orders(status);
@@ -233,25 +243,33 @@ CREATE TABLE IF NOT EXISTS game_access_grants (
   payment_order_id UUID REFERENCES payment_orders(id),
   cash_payment_id UUID,
   duration_minutes INT NOT NULL,
+  duration_seconds INT NOT NULL DEFAULT 0,
   status TEXT NOT NULL DEFAULT 'pending',
   core_session_id TEXT,
   voucher_id UUID,
+  returned_voucher_id UUID,
   source TEXT NOT NULL DEFAULT 'online_payment',
   accepted_at TIMESTAMPTZ,
   planned_ends_at TIMESTAMPTZ,
   ended_at TIMESTAMPTZ,
   end_reason TEXT,
   remaining_minutes INT NOT NULL DEFAULT 0,
+  remaining_seconds INT NOT NULL DEFAULT 0,
   last_error TEXT,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
 ALTER TABLE game_access_grants ADD COLUMN IF NOT EXISTS voucher_id UUID;
+ALTER TABLE game_access_grants ADD COLUMN IF NOT EXISTS returned_voucher_id UUID;
 ALTER TABLE game_access_grants ADD COLUMN IF NOT EXISTS planned_ends_at TIMESTAMPTZ;
 ALTER TABLE game_access_grants ADD COLUMN IF NOT EXISTS ended_at TIMESTAMPTZ;
 ALTER TABLE game_access_grants ADD COLUMN IF NOT EXISTS end_reason TEXT;
 ALTER TABLE game_access_grants ADD COLUMN IF NOT EXISTS remaining_minutes INT NOT NULL DEFAULT 0;
+ALTER TABLE game_access_grants ADD COLUMN IF NOT EXISTS duration_seconds INT NOT NULL DEFAULT 0;
+ALTER TABLE game_access_grants ADD COLUMN IF NOT EXISTS remaining_seconds INT NOT NULL DEFAULT 0;
 ALTER TABLE game_access_grants ADD COLUMN IF NOT EXISTS last_error TEXT;
+UPDATE game_access_grants SET duration_seconds = duration_minutes * 60 WHERE duration_seconds <= 0;
+UPDATE game_access_grants SET remaining_seconds = remaining_minutes * 60 WHERE remaining_seconds <= 0 AND remaining_minutes > 0;
 
 CREATE INDEX IF NOT EXISTS game_access_grants_pc_idx ON game_access_grants(pc_ref_id, created_at DESC);
 
@@ -260,6 +278,7 @@ CREATE TABLE IF NOT EXISTS vouchers (
   club_id UUID NOT NULL REFERENCES clubs(id),
   original_payment_order_id UUID REFERENCES payment_orders(id),
   minutes_left INT NOT NULL CHECK (minutes_left > 0),
+  seconds_left INT NOT NULL DEFAULT 0,
   code_hash TEXT NOT NULL UNIQUE,
   status TEXT NOT NULL DEFAULT 'active',
   expires_at TIMESTAMPTZ NOT NULL,
@@ -269,6 +288,49 @@ CREATE TABLE IF NOT EXISTS vouchers (
 );
 
 ALTER TABLE vouchers ADD COLUMN IF NOT EXISTS redeemed_grant_id UUID;
+ALTER TABLE vouchers ADD COLUMN IF NOT EXISTS recipient_phone TEXT;
+ALTER TABLE vouchers ADD COLUMN IF NOT EXISTS delivery_channel TEXT;
+ALTER TABLE vouchers ADD COLUMN IF NOT EXISTS delivery_status TEXT NOT NULL DEFAULT 'not_requested';
+ALTER TABLE vouchers ADD COLUMN IF NOT EXISTS delivered_at TIMESTAMPTZ;
+ALTER TABLE vouchers ADD COLUMN IF NOT EXISTS public_code TEXT;
+ALTER TABLE vouchers ADD COLUMN IF NOT EXISTS seconds_left INT NOT NULL DEFAULT 0;
+UPDATE vouchers SET seconds_left = minutes_left * 60 WHERE seconds_left <= 0;
+UPDATE game_access_grants g
+SET returned_voucher_id = g.voucher_id
+FROM vouchers v
+WHERE g.returned_voucher_id IS NULL
+  AND g.voucher_id = v.id
+  AND NOT EXISTS (
+    SELECT 1
+    FROM payment_orders po
+    WHERE po.id = g.payment_order_id AND po.voucher_id = g.voucher_id
+  )
+  AND (v.redeemed_grant_id IS NULL OR v.redeemed_grant_id <> g.id);
+
+CREATE TABLE IF NOT EXISTS telegram_users (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  phone TEXT NOT NULL UNIQUE,
+  chat_id TEXT NOT NULL UNIQUE,
+  username TEXT,
+  first_name TEXT,
+  status TEXT NOT NULL DEFAULT 'active',
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS telegram_link_tokens (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  phone TEXT NOT NULL,
+  token_hash TEXT NOT NULL UNIQUE,
+  status TEXT NOT NULL DEFAULT 'active',
+  expires_at TIMESTAMPTZ NOT NULL,
+  used_at TIMESTAMPTZ,
+  chat_id TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS telegram_link_tokens_phone_idx ON telegram_link_tokens(phone, status, expires_at);
 
 CREATE TABLE IF NOT EXISTS core_events (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -285,6 +347,20 @@ CREATE TABLE IF NOT EXISTS core_events (
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
+CREATE TABLE IF NOT EXISTS edge_sync_runs (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  node_id TEXT NOT NULL,
+  club_id UUID,
+  direction TEXT NOT NULL CHECK (direction IN ('push', 'pull')),
+  status TEXT NOT NULL DEFAULT 'started',
+  event_id TEXT,
+  error TEXT,
+  started_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  finished_at TIMESTAMPTZ
+);
+
+CREATE INDEX IF NOT EXISTS edge_sync_runs_node_idx ON edge_sync_runs(node_id, started_at DESC);
+
 CREATE TABLE IF NOT EXISTS cash_payments (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   club_id UUID NOT NULL REFERENCES clubs(id),
@@ -293,11 +369,14 @@ CREATE TABLE IF NOT EXISTS cash_payments (
   tariff_block_id UUID REFERENCES tariff_blocks(id),
   amount_tiyin BIGINT NOT NULL,
   duration_minutes INT NOT NULL,
+  duration_seconds INT NOT NULL DEFAULT 0,
   reason TEXT NOT NULL DEFAULT 'cash',
   fiscal_reference TEXT,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 ALTER TABLE cash_payments ALTER COLUMN tariff_block_id DROP NOT NULL;
+ALTER TABLE cash_payments ADD COLUMN IF NOT EXISTS duration_seconds INT NOT NULL DEFAULT 0;
+UPDATE cash_payments SET duration_seconds = duration_minutes * 60 WHERE duration_seconds <= 0;
 
 CREATE TABLE IF NOT EXISTS audit_logs (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
