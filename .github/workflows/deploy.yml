@@ -20,7 +20,7 @@ jobs:
       - name: Build Web
         run: |
           docker build \
-            --build-arg VITE_API_BASE_URL=http://192.168.100.133:2045 \
+            --build-arg VITE_API_BASE_URL=https://api-clubpay.justix.uz \
             -t clubpay-web:latest \
             ./web
 
