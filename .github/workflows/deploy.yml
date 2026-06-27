@@ -1,0 +1,36 @@
+name: Build and Deploy Clubpay
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  deploy:
+    runs-on: [self-hosted, docker, clubpay-platform]
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Build API
+        run: |
+          docker build -t clubpay-api:latest .
+
+      - name: Build Web
+        run: |
+          docker build \
+            --build-arg VITE_API_BASE_URL=http://192.168.100.133:2045 \
+            -t clubpay-web:latest \
+            ./web
+
+      - name: Sync docker-compose
+        run: |
+          mkdir -p /home/ubuntu/clubpay-platform
+          cp ./docker-compose.yml /home/ubuntu/clubpay-platform/docker-compose.yml
+
+      - name: Deploy
+        run: |
+          cd /home/ubuntu/clubpay-platform
+          docker compose up -d --remove-orphans
+          docker ps
