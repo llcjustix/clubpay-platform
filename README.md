@@ -90,7 +90,7 @@ FRONTEND_BASE_URL=https://your-frontend-domain
 3. В Clubpay задать `PAYME_MERCHANT_ID` и `PAYME_SECRET_KEY` (`TEST_KEY`) через env или настройки клуба.
 4. Открыть QR, выбрать Payme и перейти по checkout-ссылке. Если `PAYME_CHECKOUT_URL=https://test.paycom.uz`, Clubpay открывает внутреннюю sandbox-страницу `/api/payments/payme/sandbox/{invoice_id}`. Это нужно потому, что `test.paycom.uz` является кабинетом тестирования Merchant API, а не стабильным клиентским checkout.
 5. На sandbox-странице нажать `Оплатить тестово`: backend применит оплату через тот же `payme` provider path и вернет пользователя на `/payment/return`.
-6. Для ручной проверки Merchant API в кабинете Payme отдельно прогнать: `CheckPerformTransaction`, `CreateTransaction`, `PerformTransaction`, `CheckTransaction`, `CancelTransaction`, `GetStatement`.
+6. Для ручной проверки Merchant API в кабинете Payme отдельно прогнать: `CheckPerformTransaction`, `CreateTransaction`, `PerformTransaction`, `CheckTransaction`, `CancelTransaction`, `GetStatement`. В поле суммы Payme ожидает тийины: `8000 сум` нужно вводить как `800000`.
 
 ## Click testing
 
