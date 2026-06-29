@@ -1782,13 +1782,16 @@ func (s *Server) paymeCreateTransaction(ctx context.Context, raw json.RawMessage
 	if order.AmountTiyin != params.Amount {
 		return nil, paymeErr(-31001, "Сумма платежа не совпадает")
 	}
-	if order.Status != "payment_pending" && order.Status != "created" {
-		return nil, paymeErr(-31008, "Невозможно выполнить операцию")
-	}
 	if order.ProviderPaymentID != "" && order.ProviderPaymentID != params.ID {
-		return nil, paymeErr(-31008, "Невозможно выполнить операцию")
+		return nil, paymeErr(-31099, "Платеж по заказу уже обрабатывается", accountField)
+	}
+	if order.Status != "payment_pending" && order.Status != "created" {
+		return nil, paymeErr(-31099, "Заказ недоступен для оплаты", accountField)
 	}
 	createTime := params.Time
+	if order.ProviderPaymentID == params.ID && order.ProviderTimeMS > 0 {
+		createTime = order.ProviderTimeMS
+	}
 	if createTime == 0 {
 		createTime = unixMilli(time.Now())
 	}
@@ -1827,7 +1830,7 @@ func (s *Server) paymePerformTransaction(ctx context.Context, raw json.RawMessag
 		return nil, paymeErr(-31008, "Невозможно выполнить операцию")
 	}
 	now := time.Now()
-	grantID, err := s.applyPaymentSuccess(ctx, paymentSuccess{
+	_, err = s.applyPaymentSuccess(ctx, paymentSuccess{
 		Provider:          payments.ProviderPayme,
 		AmountTiyin:       order.AmountTiyin,
 		InvoiceID:         order.InvoiceID,
@@ -1838,7 +1841,7 @@ func (s *Server) paymePerformTransaction(ctx context.Context, raw json.RawMessag
 	if err != nil {
 		return nil, err
 	}
-	return map[string]any{"transaction": order.ID, "perform_time": unixMilli(now), "state": 2, "grant_id": grantID}, nil
+	return map[string]any{"transaction": order.ID, "perform_time": unixMilli(now), "state": 2}, nil
 }
 
 func (s *Server) paymeCancelTransaction(ctx context.Context, raw json.RawMessage, rawPayload []byte) (map[string]any, error) {
@@ -1900,7 +1903,7 @@ func (s *Server) paymeCheckTransaction(ctx context.Context, raw json.RawMessage)
 		"cancel_time":  cancelTime,
 		"transaction":  order.ID,
 		"state":        paymeState(order.Status),
-		"reason":       nil,
+		"reason":       paymeCancelReason(order.Status, order.ProviderPayload),
 	}, nil
 }
 
@@ -1914,7 +1917,7 @@ func (s *Server) paymeGetStatement(ctx context.Context, raw json.RawMessage) (ma
 	}
 	rows, err := s.db.Query(ctx, `
 		SELECT id, invoice_id, COALESCE(provider_payment_id, ''), COALESCE(provider_time_ms, 0),
-		       amount_tiyin, status, paid_at, updated_at
+		       amount_tiyin, status, paid_at, updated_at, provider_payload
 		FROM payment_orders
 		WHERE provider = 'payme'
 		  AND provider_payment_id IS NOT NULL
@@ -1933,7 +1936,8 @@ func (s *Server) paymeGetStatement(ctx context.Context, raw json.RawMessage) (ma
 		var createTime, amountTiyin int64
 		var paidAt *time.Time
 		var updatedAt time.Time
-		if err := rows.Scan(&id, &invoiceID, &providerPaymentID, &createTime, &amountTiyin, &status, &paidAt, &updatedAt); err != nil {
+		var providerPayload []byte
+		if err := rows.Scan(&id, &invoiceID, &providerPaymentID, &createTime, &amountTiyin, &status, &paidAt, &updatedAt, &providerPayload); err != nil {
 			return nil, err
 		}
 		cancelTime := int64(0)
@@ -1950,7 +1954,7 @@ func (s *Server) paymeGetStatement(ctx context.Context, raw json.RawMessage) (ma
 			"cancel_time":  cancelTime,
 			"transaction":  id,
 			"state":        paymeState(status),
-			"reason":       nil,
+			"reason":       paymeCancelReason(status, providerPayload),
 		})
 	}
 	return map[string]any{"transactions": transactions}, rows.Err()
@@ -1960,10 +1964,10 @@ func (s *Server) providerOrderByInvoice(ctx context.Context, invoiceID string) (
 	var order providerOrder
 	err := s.db.QueryRow(ctx, `
 		SELECT id, invoice_id, provider, COALESCE(provider_payment_id, ''), COALESCE(provider_prepare_id, ''),
-		       COALESCE(provider_time_ms, 0), amount_tiyin, status, paid_at, updated_at
+		       COALESCE(provider_time_ms, 0), amount_tiyin, status, paid_at, updated_at, provider_payload
 		FROM payment_orders
 		WHERE invoice_id = $1
-	`, invoiceID).Scan(&order.ID, &order.InvoiceID, &order.Provider, &order.ProviderPaymentID, &order.ProviderPrepareID, &order.ProviderTimeMS, &order.AmountTiyin, &order.Status, &order.PaidAt, &order.UpdatedAt)
+	`, invoiceID).Scan(&order.ID, &order.InvoiceID, &order.Provider, &order.ProviderPaymentID, &order.ProviderPrepareID, &order.ProviderTimeMS, &order.AmountTiyin, &order.Status, &order.PaidAt, &order.UpdatedAt, &order.ProviderPayload)
 	return order, err
 }
 
@@ -1971,10 +1975,10 @@ func (s *Server) providerOrderByPaymentID(ctx context.Context, provider, payment
 	var order providerOrder
 	err := s.db.QueryRow(ctx, `
 		SELECT id, invoice_id, provider, COALESCE(provider_payment_id, ''), COALESCE(provider_prepare_id, ''),
-		       COALESCE(provider_time_ms, 0), amount_tiyin, status, paid_at, updated_at
+		       COALESCE(provider_time_ms, 0), amount_tiyin, status, paid_at, updated_at, provider_payload
 		FROM payment_orders
 		WHERE provider = $1 AND provider_payment_id = $2
-	`, provider, paymentID).Scan(&order.ID, &order.InvoiceID, &order.Provider, &order.ProviderPaymentID, &order.ProviderPrepareID, &order.ProviderTimeMS, &order.AmountTiyin, &order.Status, &order.PaidAt, &order.UpdatedAt)
+	`, provider, paymentID).Scan(&order.ID, &order.InvoiceID, &order.Provider, &order.ProviderPaymentID, &order.ProviderPrepareID, &order.ProviderTimeMS, &order.AmountTiyin, &order.Status, &order.PaidAt, &order.UpdatedAt, &order.ProviderPayload)
 	return order, err
 }
 
@@ -4680,6 +4684,7 @@ type providerOrder struct {
 	ProviderPaymentID string
 	ProviderPrepareID string
 	ProviderTimeMS    int64
+	ProviderPayload   []byte
 	AmountTiyin       int64
 	Status            string
 	PaidAt            *time.Time
@@ -5750,6 +5755,21 @@ func paymeState(status string) int {
 	default:
 		return 1
 	}
+}
+
+func paymeCancelReason(status string, providerPayload []byte) any {
+	if status != "failed" && status != "refunded" {
+		return nil
+	}
+	var payload struct {
+		Params struct {
+			Reason *int `json:"reason"`
+		} `json:"params"`
+	}
+	if len(providerPayload) > 0 && json.Unmarshal(providerPayload, &payload) == nil && payload.Params.Reason != nil {
+		return *payload.Params.Reason
+	}
+	return 5
 }
 
 func stringFromPayload(payload map[string]any, key string) string {
