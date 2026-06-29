@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"html/template"
 	"math"
 	"net/http"
 	"net/url"
@@ -32,6 +33,48 @@ type Server struct {
 	core core.Adapter
 }
 
+var paymeSandboxPageTemplate = template.Must(template.New("payme-sandbox").Parse(`<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Payme sandbox</title>
+  <style>
+    :root { color-scheme: dark; }
+    body { margin: 0; min-height: 100vh; display: grid; place-items: center; background: #08111d; color: #f7fbff; font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+    main { width: min(420px, calc(100vw - 32px)); padding: 24px; border: 1px solid #243852; border-radius: 16px; background: #101b2a; box-shadow: 0 18px 50px rgba(0,0,0,.25); }
+    small { display: block; margin-bottom: 10px; color: #2fd0c4; font-weight: 900; letter-spacing: .08em; text-transform: uppercase; }
+    h1 { margin: 0 0 10px; font-size: 24px; line-height: 1.15; }
+    p { margin: 0 0 18px; color: #9fb1c8; line-height: 1.45; }
+    dl { display: grid; grid-template-columns: 1fr auto; gap: 8px 16px; margin: 0 0 20px; color: #c8d7ea; }
+    dt { color: #7f93ab; }
+    dd { margin: 0; font-weight: 800; }
+    button, a { display: inline-flex; align-items: center; justify-content: center; width: 100%; min-height: 48px; border-radius: 12px; font: 800 16px system-ui, sans-serif; text-decoration: none; box-sizing: border-box; }
+    button { border: 0; background: #2fd0c4; color: #031116; cursor: pointer; }
+    a { margin-top: 10px; border: 1px solid #31445e; color: #d9e7f8; background: #162336; }
+  </style>
+</head>
+<body>
+  <main>
+    <small>Payme sandbox</small>
+    <h1>{{if .Paid}}Оплата уже проведена{{else}}Тестовая оплата{{end}}</h1>
+    <p>{{if .Paid}}Этот заказ уже оплачен. Можно вернуться на страницу проверки.{{else}}Это внутренняя sandbox-страница Clubpay. Она имитирует успешный Payme callback для проверки полного MVP-флоу.{{end}}</p>
+    <dl>
+      <dt>Заказ</dt><dd>{{.InvoiceID}}</dd>
+      <dt>Сумма</dt><dd>{{.AmountUZS}} сум</dd>
+    </dl>
+    {{if .Paid}}
+      <a href="{{.ReturnURL}}">Вернуться в Clubpay</a>
+    {{else}}
+      <form method="post" action="{{.PayURL}}">
+        <button type="submit">Оплатить тестово</button>
+      </form>
+      <a href="{{.ReturnURL}}">Вернуться без оплаты</a>
+    {{end}}
+  </main>
+</body>
+</html>`))
+
 func NewServer(cfg config.Config, db *pgxpool.Pool, coreAdapter core.Adapter) *Server {
 	return &Server{cfg: cfg, db: db, core: coreAdapter}
 }
@@ -48,6 +91,8 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("POST /api/payments/click/prepare", s.handleClickPrepare)
 	mux.HandleFunc("POST /api/payments/click/complete", s.handleClickComplete)
 	mux.HandleFunc("POST /api/payments/click/callback", s.handleClickCallback)
+	mux.HandleFunc("GET /api/payments/payme/sandbox/{invoice_id}", s.handlePaymeSandboxPage)
+	mux.HandleFunc("POST /api/payments/payme/sandbox/{invoice_id}/pay", s.handlePaymeSandboxPay)
 	mux.HandleFunc("POST /api/payments/payme/callback", s.handlePaymeCallback)
 	mux.HandleFunc("POST /api/payments/sync/{invoice_id}", s.handlePaymentSync)
 	mux.HandleFunc("POST /api/payments/mock/success/{invoice_id}", s.handleMockPaymentSuccess)
@@ -1264,13 +1309,7 @@ func (s *Server) handleCreateCheckout(w http.ResponseWriter, r *http.Request) {
 	case payments.ProviderPayme:
 		var err error
 		if s.isPaymeSandbox() {
-			checkoutURL, err = payments.BuildPaymeSandboxCheckoutURL(
-				s.cfg.PaymeCheckoutURL,
-				defaultString(orderSeed.PaymeMerchantID, s.cfg.PaymeMerchantID),
-				invoiceID,
-				orderSeed.AmountTiyin,
-				returnURL,
-			)
+			checkoutURL = strings.TrimRight(s.cfg.PublicBaseURL, "/") + "/api/payments/payme/sandbox/" + url.PathEscape(invoiceID)
 		} else {
 			checkoutURL, err = payments.BuildPaymeCheckoutURL(
 				s.cfg.PaymeCheckoutURL,
@@ -1509,6 +1548,91 @@ func (s *Server) handleClickCallbackAction(w http.ResponseWriter, r *http.Reques
 	}
 	s.markProviderEvent(r.Context(), eventID, "processed")
 	writeClickResponse(w, clickTransID, merchantTransID, order.ProviderPrepareID, 0, "Success", "merchant_confirm_id", order.ProviderPrepareID, "grant_id", grantID)
+}
+
+func (s *Server) handlePaymeSandboxPage(w http.ResponseWriter, r *http.Request) {
+	if !s.isPaymeSandbox() {
+		writeError(w, http.StatusNotFound, "Payme sandbox is disabled")
+		return
+	}
+	invoiceID := strings.TrimSpace(r.PathValue("invoice_id"))
+	order, err := s.providerOrderByInvoice(r.Context(), invoiceID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		writeError(w, http.StatusNotFound, "order not found")
+		return
+	}
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if order.Provider != payments.ProviderPayme {
+		writeError(w, http.StatusBadRequest, "order is not a Payme order")
+		return
+	}
+	returnURL := s.cfg.FrontendBaseURL + "/payment/return?invoice_id=" + url.QueryEscape(invoiceID)
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.WriteHeader(http.StatusOK)
+	_ = paymeSandboxPageTemplate.Execute(w, map[string]any{
+		"InvoiceID": invoiceID,
+		"AmountUZS": order.AmountTiyin / 100,
+		"Paid":      order.Status == "paid",
+		"PayURL":    strings.TrimRight(s.cfg.PublicBaseURL, "/") + "/api/payments/payme/sandbox/" + url.PathEscape(invoiceID) + "/pay",
+		"ReturnURL": returnURL,
+	})
+}
+
+func (s *Server) handlePaymeSandboxPay(w http.ResponseWriter, r *http.Request) {
+	if !s.isPaymeSandbox() {
+		writeError(w, http.StatusNotFound, "Payme sandbox is disabled")
+		return
+	}
+	invoiceID := strings.TrimSpace(r.PathValue("invoice_id"))
+	order, err := s.providerOrderByInvoice(r.Context(), invoiceID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		writeError(w, http.StatusNotFound, "order not found")
+		return
+	}
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if order.Provider != payments.ProviderPayme {
+		writeError(w, http.StatusBadRequest, "order is not a Payme order")
+		return
+	}
+	returnURL := s.cfg.FrontendBaseURL + "/payment/return?invoice_id=" + url.QueryEscape(invoiceID)
+	if order.Status == "paid" {
+		http.Redirect(w, r, returnURL, http.StatusSeeOther)
+		return
+	}
+	if order.Status != "payment_pending" && order.Status != "created" {
+		writeError(w, http.StatusConflict, "order is not payable")
+		return
+	}
+
+	now := time.Now()
+	providerPaymentID := "payme_sandbox_" + randomHex(12)
+	rawPayload, _ := json.Marshal(map[string]any{
+		"id":     providerPaymentID,
+		"method": "SandboxPerformTransaction",
+		"params": map[string]any{
+			"amount":  order.AmountTiyin,
+			"account": map[string]string{"order_id": invoiceID},
+		},
+	})
+	_, err = s.applyPaymentSuccess(r.Context(), paymentSuccess{
+		Provider:          payments.ProviderPayme,
+		AmountTiyin:       order.AmountTiyin,
+		InvoiceID:         invoiceID,
+		ProviderPaymentID: providerPaymentID,
+		PaidAt:            now,
+		PS:                "payme",
+	}, rawPayload)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	http.Redirect(w, r, returnURL, http.StatusSeeOther)
 }
 
 func (s *Server) handlePaymeCallback(w http.ResponseWriter, r *http.Request) {

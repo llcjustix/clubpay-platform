@@ -38,20 +38,6 @@ func BuildPaymeCheckoutURL(baseURL, merchantID, orderID string, amountTiyin int6
 	return strings.TrimRight(baseURL, "/") + "/" + encoded, nil
 }
 
-func BuildPaymeSandboxCheckoutURL(baseURL, merchantID, orderID string, amountTiyin int64, returnURL string) (string, error) {
-	params, err := paymeCheckoutParams(merchantID, orderID, amountTiyin, returnURL)
-	if err != nil {
-		return "", err
-	}
-	payload := strings.Join(params, ";")
-	if remainder := len(payload) % 3; remainder != 0 {
-		params = append(params, "x="+strings.Repeat("0", 3-remainder))
-		payload = strings.Join(params, ";")
-	}
-	encoded := base64.RawStdEncoding.EncodeToString([]byte(payload))
-	return strings.TrimRight(baseURL, "/") + "/" + encoded, nil
-}
-
 func paymeCheckoutParams(merchantID, orderID string, amountTiyin int64, returnURL string) ([]string, error) {
 	if strings.TrimSpace(merchantID) == "" {
 		return nil, fmt.Errorf("Payme не настроен: нет merchant ID")
