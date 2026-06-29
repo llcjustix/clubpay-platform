@@ -1309,17 +1309,13 @@ func (s *Server) handleCreateCheckout(w http.ResponseWriter, r *http.Request) {
 		checkoutURL = s.cfg.FrontendBaseURL + "/payment/mock?invoice_id=" + invoiceID
 	case payments.ProviderPayme:
 		var err error
-		if s.isPaymeSandbox() {
-			checkoutURL = strings.TrimRight(s.cfg.PublicBaseURL, "/") + "/api/payments/payme/sandbox/" + url.PathEscape(invoiceID)
-		} else {
-			checkoutURL, err = payments.BuildPaymeCheckoutURL(
-				s.cfg.PaymeCheckoutURL,
-				defaultString(orderSeed.PaymeMerchantID, s.cfg.PaymeMerchantID),
-				invoiceID,
-				orderSeed.AmountTiyin,
-				returnURL,
-			)
-		}
+		checkoutURL, err = payments.BuildPaymeCheckoutURL(
+			s.cfg.PaymeCheckoutURL,
+			defaultString(orderSeed.PaymeMerchantID, s.cfg.PaymeMerchantID),
+			invoiceID,
+			orderSeed.AmountTiyin,
+			returnURL,
+		)
 		if err != nil {
 			writeError(w, http.StatusBadGateway, err.Error())
 			return
@@ -1657,7 +1653,7 @@ func (s *Server) handlePaymeCallback(w http.ResponseWriter, r *http.Request) {
 		result, err := s.paymeCheckPerform(r.Context(), rpc.Params)
 		if err != nil {
 			s.markProviderEvent(r.Context(), eventID, "failed")
-			writePaymeError(w, rpc.ID, paymeErrorCode(err), err.Error())
+			writePaymeError(w, rpc.ID, paymeErrorCode(err), err.Error(), paymeErrorData(err))
 			return
 		}
 		s.markProviderEvent(r.Context(), eventID, "processed")
@@ -1666,7 +1662,7 @@ func (s *Server) handlePaymeCallback(w http.ResponseWriter, r *http.Request) {
 		result, err := s.paymeCreateTransaction(r.Context(), rpc.Params, rawPayload)
 		if err != nil {
 			s.markProviderEvent(r.Context(), eventID, "failed")
-			writePaymeError(w, rpc.ID, paymeErrorCode(err), err.Error())
+			writePaymeError(w, rpc.ID, paymeErrorCode(err), err.Error(), paymeErrorData(err))
 			return
 		}
 		s.markProviderEvent(r.Context(), eventID, "processed")
@@ -1675,7 +1671,7 @@ func (s *Server) handlePaymeCallback(w http.ResponseWriter, r *http.Request) {
 		result, err := s.paymePerformTransaction(r.Context(), rpc.Params, rawPayload)
 		if err != nil {
 			s.markProviderEvent(r.Context(), eventID, "failed")
-			writePaymeError(w, rpc.ID, paymeErrorCode(err), err.Error())
+			writePaymeError(w, rpc.ID, paymeErrorCode(err), err.Error(), paymeErrorData(err))
 			return
 		}
 		s.markProviderEvent(r.Context(), eventID, "processed")
@@ -1684,7 +1680,7 @@ func (s *Server) handlePaymeCallback(w http.ResponseWriter, r *http.Request) {
 		result, err := s.paymeCancelTransaction(r.Context(), rpc.Params, rawPayload)
 		if err != nil {
 			s.markProviderEvent(r.Context(), eventID, "failed")
-			writePaymeError(w, rpc.ID, paymeErrorCode(err), err.Error())
+			writePaymeError(w, rpc.ID, paymeErrorCode(err), err.Error(), paymeErrorData(err))
 			return
 		}
 		s.markProviderEvent(r.Context(), eventID, "processed")
@@ -1693,7 +1689,7 @@ func (s *Server) handlePaymeCallback(w http.ResponseWriter, r *http.Request) {
 		result, err := s.paymeCheckTransaction(r.Context(), rpc.Params)
 		if err != nil {
 			s.markProviderEvent(r.Context(), eventID, "failed")
-			writePaymeError(w, rpc.ID, paymeErrorCode(err), err.Error())
+			writePaymeError(w, rpc.ID, paymeErrorCode(err), err.Error(), paymeErrorData(err))
 			return
 		}
 		s.markProviderEvent(r.Context(), eventID, "processed")
@@ -1702,7 +1698,7 @@ func (s *Server) handlePaymeCallback(w http.ResponseWriter, r *http.Request) {
 		result, err := s.paymeGetStatement(r.Context(), rpc.Params)
 		if err != nil {
 			s.markProviderEvent(r.Context(), eventID, "failed")
-			writePaymeError(w, rpc.ID, paymeErrorCode(err), err.Error())
+			writePaymeError(w, rpc.ID, paymeErrorCode(err), err.Error(), paymeErrorData(err))
 			return
 		}
 		s.markProviderEvent(r.Context(), eventID, "processed")
@@ -1745,9 +1741,12 @@ func (s *Server) paymeCheckPerform(ctx context.Context, raw json.RawMessage) (ma
 		return nil, paymeErr(-32700, "Неверные параметры")
 	}
 	orderID := params.Account["order_id"]
+	if strings.TrimSpace(orderID) == "" {
+		return nil, paymeErr(-31050, "Заказ не найден", "order_id")
+	}
 	order, err := s.providerOrderByInvoice(ctx, orderID)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return nil, paymeErr(-31001, "Заказ не найден")
+		return nil, paymeErr(-31050, "Заказ не найден", "order_id")
 	}
 	if err != nil {
 		return nil, err
@@ -1756,10 +1755,10 @@ func (s *Server) paymeCheckPerform(ctx context.Context, raw json.RawMessage) (ma
 		return nil, paymeErr(-31001, "Сумма платежа не совпадает")
 	}
 	if order.Status == "paid" {
-		return nil, paymeErr(-31050, "Заказ уже оплачен")
+		return nil, paymeErr(-31050, "Заказ уже оплачен", "order_id")
 	}
 	if order.Status != "payment_pending" && order.Status != "created" {
-		return nil, paymeErr(-31050, "Заказ недоступен для оплаты")
+		return nil, paymeErr(-31050, "Заказ недоступен для оплаты", "order_id")
 	}
 	return map[string]any{"allow": true}, nil
 }
@@ -1770,9 +1769,12 @@ func (s *Server) paymeCreateTransaction(ctx context.Context, raw json.RawMessage
 		return nil, paymeErr(-32700, "Неверные параметры")
 	}
 	orderID := params.Account["order_id"]
+	if strings.TrimSpace(orderID) == "" {
+		return nil, paymeErr(-31050, "Заказ не найден", "order_id")
+	}
 	order, err := s.providerOrderByInvoice(ctx, orderID)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return nil, paymeErr(-31001, "Заказ не найден")
+		return nil, paymeErr(-31050, "Заказ не найден", "order_id")
 	}
 	if err != nil {
 		return nil, err
@@ -1821,6 +1823,9 @@ func (s *Server) paymePerformTransaction(ctx context.Context, raw json.RawMessag
 	if order.Status == "paid" {
 		return map[string]any{"transaction": order.ID, "perform_time": unixMilli(order.PaidAt), "state": 2}, nil
 	}
+	if order.Status != "payment_pending" && order.Status != "created" {
+		return nil, paymeErr(-31008, "Невозможно выполнить операцию")
+	}
 	now := time.Now()
 	grantID, err := s.applyPaymentSuccess(ctx, paymentSuccess{
 		Provider:          payments.ProviderPayme,
@@ -1848,7 +1853,14 @@ func (s *Server) paymeCancelTransaction(ctx context.Context, raw json.RawMessage
 	if err != nil {
 		return nil, err
 	}
-	cancelTime := unixMilli(time.Now())
+	if order.Status == "failed" || order.Status == "refunded" {
+		return map[string]any{"transaction": order.ID, "cancel_time": unixMilli(order.UpdatedAt), "state": paymeState(order.Status)}, nil
+	}
+	if order.Status != "payment_pending" && order.Status != "created" && order.Status != "paid" {
+		return nil, paymeErr(-31008, "Невозможно выполнить операцию")
+	}
+	cancelledAt := time.Now()
+	cancelTime := unixMilli(cancelledAt)
 	state := -1
 	nextStatus := "failed"
 	if order.Status == "paid" {
@@ -1857,9 +1869,9 @@ func (s *Server) paymeCancelTransaction(ctx context.Context, raw json.RawMessage
 	}
 	_, err = s.db.Exec(ctx, `
 		UPDATE payment_orders
-		SET status = $1, provider_status = 'cancelled', provider_payload = $2, updated_at = now()
+		SET status = $1, provider_status = 'cancelled', provider_payload = $2, updated_at = $4
 		WHERE id = $3 AND status <> 'refunded'
-	`, nextStatus, rawPayload, order.ID)
+	`, nextStatus, rawPayload, order.ID, cancelledAt)
 	if err != nil {
 		return nil, err
 	}
@@ -1878,10 +1890,14 @@ func (s *Server) paymeCheckTransaction(ctx context.Context, raw json.RawMessage)
 	if err != nil {
 		return nil, err
 	}
+	cancelTime := int64(0)
+	if order.Status == "failed" || order.Status == "refunded" {
+		cancelTime = unixMilli(order.UpdatedAt)
+	}
 	return map[string]any{
 		"create_time":  order.ProviderTimeMS,
 		"perform_time": unixMilli(order.PaidAt),
-		"cancel_time":  0,
+		"cancel_time":  cancelTime,
 		"transaction":  order.ID,
 		"state":        paymeState(order.Status),
 		"reason":       nil,
@@ -1944,10 +1960,10 @@ func (s *Server) providerOrderByInvoice(ctx context.Context, invoiceID string) (
 	var order providerOrder
 	err := s.db.QueryRow(ctx, `
 		SELECT id, invoice_id, provider, COALESCE(provider_payment_id, ''), COALESCE(provider_prepare_id, ''),
-		       COALESCE(provider_time_ms, 0), amount_tiyin, status, paid_at
+		       COALESCE(provider_time_ms, 0), amount_tiyin, status, paid_at, updated_at
 		FROM payment_orders
 		WHERE invoice_id = $1
-	`, invoiceID).Scan(&order.ID, &order.InvoiceID, &order.Provider, &order.ProviderPaymentID, &order.ProviderPrepareID, &order.ProviderTimeMS, &order.AmountTiyin, &order.Status, &order.PaidAt)
+	`, invoiceID).Scan(&order.ID, &order.InvoiceID, &order.Provider, &order.ProviderPaymentID, &order.ProviderPrepareID, &order.ProviderTimeMS, &order.AmountTiyin, &order.Status, &order.PaidAt, &order.UpdatedAt)
 	return order, err
 }
 
@@ -1955,10 +1971,10 @@ func (s *Server) providerOrderByPaymentID(ctx context.Context, provider, payment
 	var order providerOrder
 	err := s.db.QueryRow(ctx, `
 		SELECT id, invoice_id, provider, COALESCE(provider_payment_id, ''), COALESCE(provider_prepare_id, ''),
-		       COALESCE(provider_time_ms, 0), amount_tiyin, status, paid_at
+		       COALESCE(provider_time_ms, 0), amount_tiyin, status, paid_at, updated_at
 		FROM payment_orders
 		WHERE provider = $1 AND provider_payment_id = $2
-	`, provider, paymentID).Scan(&order.ID, &order.InvoiceID, &order.Provider, &order.ProviderPaymentID, &order.ProviderPrepareID, &order.ProviderTimeMS, &order.AmountTiyin, &order.Status, &order.PaidAt)
+	`, provider, paymentID).Scan(&order.ID, &order.InvoiceID, &order.Provider, &order.ProviderPaymentID, &order.ProviderPrepareID, &order.ProviderTimeMS, &order.AmountTiyin, &order.Status, &order.PaidAt, &order.UpdatedAt)
 	return order, err
 }
 
@@ -4649,6 +4665,7 @@ type providerOrder struct {
 	AmountTiyin       int64
 	Status            string
 	PaidAt            *time.Time
+	UpdatedAt         time.Time
 	ClickSecretKey    string
 	ClickServiceID    string
 }
@@ -4689,6 +4706,7 @@ type paymeAuthCredentials struct {
 type paymeAPIError struct {
 	Code    int
 	Message string
+	Data    string
 }
 
 func (e paymeAPIError) Error() string {
@@ -5246,18 +5264,22 @@ func writePaymeResult(w http.ResponseWriter, id any, result any) {
 	writeJSON(w, http.StatusOK, map[string]any{"jsonrpc": "2.0", "id": id, "result": result})
 }
 
-func writePaymeError(w http.ResponseWriter, id any, code int, message string) {
+func writePaymeError(w http.ResponseWriter, id any, code int, message string, data ...string) {
+	errorPayload := map[string]any{
+		"code": code,
+		"message": map[string]string{
+			"ru": message,
+			"uz": message,
+			"en": message,
+		},
+	}
+	if len(data) > 0 && strings.TrimSpace(data[0]) != "" {
+		errorPayload["data"] = strings.TrimSpace(data[0])
+	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"jsonrpc": "2.0",
 		"id":      id,
-		"error": map[string]any{
-			"code": code,
-			"message": map[string]string{
-				"ru": message,
-				"uz": message,
-				"en": message,
-			},
-		},
+		"error":   errorPayload,
 	})
 }
 
@@ -5648,8 +5670,12 @@ func paymeEventExternalID(rpc paymeRPCRequest, orderRef string) string {
 	return ""
 }
 
-func paymeErr(code int, message string) error {
-	return paymeAPIError{Code: code, Message: message}
+func paymeErr(code int, message string, data ...string) error {
+	apiErr := paymeAPIError{Code: code, Message: message}
+	if len(data) > 0 {
+		apiErr.Data = strings.TrimSpace(data[0])
+	}
+	return apiErr
 }
 
 func paymeErrorCode(err error) int {
@@ -5658,6 +5684,14 @@ func paymeErrorCode(err error) int {
 		return paymeErr.Code
 	}
 	return -32400
+}
+
+func paymeErrorData(err error) string {
+	var paymeErr paymeAPIError
+	if errors.As(err, &paymeErr) {
+		return paymeErr.Data
+	}
+	return ""
 }
 
 func paymeState(status string) int {
