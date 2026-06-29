@@ -1643,8 +1643,8 @@ func (s *Server) handlePaymeCallback(w http.ResponseWriter, r *http.Request) {
 	}
 	rawPayload, _ := json.Marshal(rpc)
 	orderRef := paymeOrderRef(rpc)
-	secret, _ := s.paymeSecretForRequest(r.Context(), rpc, orderRef)
-	if !s.verifyPaymeAuth(r, secret) {
+	credentials, _ := s.paymeCredentialsForRequest(r.Context(), rpc, orderRef)
+	if !s.verifyPaymeAuth(r, credentials) {
 		writePaymeError(w, rpc.ID, -32504, "Недостаточно прав для выполнения метода")
 		return
 	}
@@ -1960,39 +1960,44 @@ func (s *Server) providerOrderByPaymentID(ctx context.Context, provider, payment
 	return order, err
 }
 
-func (s *Server) paymeSecretForRequest(ctx context.Context, rpc paymeRPCRequest, orderRef string) (string, error) {
+func (s *Server) paymeCredentialsForRequest(ctx context.Context, rpc paymeRPCRequest, orderRef string) (paymeAuthCredentials, error) {
 	if orderRef != "" {
-		var secret string
+		var credentials paymeAuthCredentials
 		err := s.db.QueryRow(ctx, `
-			SELECT COALESCE(c.payme_secret_key, '')
+			SELECT COALESCE(c.payme_merchant_id, ''), COALESCE(c.payme_secret_key, '')
 			FROM payment_orders po
 			JOIN clubs c ON c.id = po.club_id
 			WHERE po.invoice_id = $1
-		`, orderRef).Scan(&secret)
+		`, orderRef).Scan(&credentials.MerchantID, &credentials.SecretKey)
 		if err == nil {
-			return defaultString(secret, s.cfg.PaymeSecretKey), nil
+			credentials.MerchantID = defaultString(credentials.MerchantID, s.cfg.PaymeMerchantID)
+			credentials.SecretKey = defaultString(credentials.SecretKey, s.cfg.PaymeSecretKey)
+			return credentials, nil
 		}
 	}
 	if rpc.Method == "PerformTransaction" || rpc.Method == "CancelTransaction" || rpc.Method == "CheckTransaction" {
 		var params paymeTransactionParams
 		if json.Unmarshal(rpc.Params, &params) == nil && params.ID != "" {
-			var secret string
+			var credentials paymeAuthCredentials
 			err := s.db.QueryRow(ctx, `
-				SELECT COALESCE(c.payme_secret_key, '')
+				SELECT COALESCE(c.payme_merchant_id, ''), COALESCE(c.payme_secret_key, '')
 				FROM payment_orders po
 				JOIN clubs c ON c.id = po.club_id
 				WHERE po.provider = 'payme' AND po.provider_payment_id = $1
-			`, params.ID).Scan(&secret)
+			`, params.ID).Scan(&credentials.MerchantID, &credentials.SecretKey)
 			if err == nil {
-				return defaultString(secret, s.cfg.PaymeSecretKey), nil
+				credentials.MerchantID = defaultString(credentials.MerchantID, s.cfg.PaymeMerchantID)
+				credentials.SecretKey = defaultString(credentials.SecretKey, s.cfg.PaymeSecretKey)
+				return credentials, nil
 			}
 		}
 	}
-	return s.cfg.PaymeSecretKey, nil
+	return paymeAuthCredentials{MerchantID: s.cfg.PaymeMerchantID, SecretKey: s.cfg.PaymeSecretKey}, nil
 }
 
-func (s *Server) verifyPaymeAuth(r *http.Request, secret string) bool {
-	if strings.TrimSpace(secret) == "" && !strings.EqualFold(s.cfg.AppEnv, "production") {
+func (s *Server) verifyPaymeAuth(r *http.Request, credentials paymeAuthCredentials) bool {
+	secret := strings.TrimSpace(credentials.SecretKey)
+	if secret == "" && !strings.EqualFold(s.cfg.AppEnv, "production") {
 		return true
 	}
 	header := strings.TrimSpace(r.Header.Get("Authorization"))
@@ -2003,7 +2008,12 @@ func (s *Server) verifyPaymeAuth(r *http.Request, secret string) bool {
 	if err != nil {
 		return false
 	}
-	return string(decoded) == "Paycom:"+secret
+	login, password, ok := strings.Cut(string(decoded), ":")
+	if !ok || strings.TrimSpace(login) == "" || password != secret {
+		return false
+	}
+	merchantID := strings.TrimSpace(credentials.MerchantID)
+	return strings.EqualFold(login, "Paycom") || merchantID == "" || login == merchantID
 }
 
 func (s *Server) handleCoreEvent(w http.ResponseWriter, r *http.Request) {
@@ -4664,6 +4674,11 @@ type paymeCancelParams struct {
 type paymeStatementParams struct {
 	From int64 `json:"from"`
 	To   int64 `json:"to"`
+}
+
+type paymeAuthCredentials struct {
+	MerchantID string
+	SecretKey  string
 }
 
 type paymeAPIError struct {
