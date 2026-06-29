@@ -13,13 +13,72 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      - name: Pull base images
+        run: |
+          retry() {
+            local attempt=1
+            local max_attempts=5
+            local delay=15
+
+            until "$@"; do
+              if [ "$attempt" -ge "$max_attempts" ]; then
+                echo "Command failed after $attempt attempts: $*"
+                return 1
+              fi
+
+              echo "Command failed, retrying in ${delay}s: $*"
+              sleep "$delay"
+              attempt=$((attempt + 1))
+              delay=$((delay * 2))
+            done
+          }
+
+          retry docker pull golang:1.22-alpine
+          retry docker pull node:22-alpine
+
       - name: Build API
         run: |
-          docker build -t clubpay-api:latest .
+          retry() {
+            local attempt=1
+            local max_attempts=3
+            local delay=20
+
+            until "$@"; do
+              if [ "$attempt" -ge "$max_attempts" ]; then
+                echo "Command failed after $attempt attempts: $*"
+                return 1
+              fi
+
+              echo "Command failed, retrying in ${delay}s: $*"
+              sleep "$delay"
+              attempt=$((attempt + 1))
+              delay=$((delay * 2))
+            done
+          }
+
+          retry docker build -t clubpay-api:latest .
 
       - name: Build Web
         run: |
-          docker build \
+          retry() {
+            local attempt=1
+            local max_attempts=3
+            local delay=20
+
+            until "$@"; do
+              if [ "$attempt" -ge "$max_attempts" ]; then
+                echo "Command failed after $attempt attempts: $*"
+                return 1
+              fi
+
+              echo "Command failed, retrying in ${delay}s: $*"
+              sleep "$delay"
+              attempt=$((attempt + 1))
+              delay=$((delay * 2))
+            done
+          }
+
+          retry docker build \
             --build-arg VITE_API_BASE_URL=https://api-clubpay.justix.uz \
             -t clubpay-web:latest \
             ./web
