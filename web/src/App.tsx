@@ -168,6 +168,17 @@ type Order = {
   created_at: string;
 };
 
+type CheckoutResponse = {
+  checkout_url: string;
+  order: {
+    invoice_id: string;
+    provider: PaymentProvider;
+    amount_uzs: number;
+    duration_minutes: number;
+    duration_seconds?: number;
+  };
+};
+
 type VoucherDelivery = {
   status: string;
   phone?: string;
@@ -513,6 +524,7 @@ function QRPage({ token }: { token: string }) {
   const [loading, setLoading] = useState(true);
   const [creating, setCreating] = useState(false);
   const [redeeming, setRedeeming] = useState(false);
+  const [createdCheckout, setCreatedCheckout] = useState<CheckoutResponse | null>(null);
   const [error, setError] = useState('');
 
   function loadQR() {
@@ -585,8 +597,9 @@ function QRPage({ token }: { token: string }) {
     }
     setCreating(true);
     setError('');
+    setCreatedCheckout(null);
     try {
-      const payload = await api<{ checkout_url: string }>('/api/checkouts', {
+      const payload = await api<CheckoutResponse>('/api/checkouts', {
         method: 'POST',
         body: JSON.stringify({
           qr_token: token,
@@ -596,12 +609,23 @@ function QRPage({ token }: { token: string }) {
           ...(voucherReadyForAutoApply ? { voucher_code: voucherCode.trim() } : {}),
         }),
       });
+      localStorage.setItem('clubpay:last_order_id', payload.order.invoice_id);
+      if (paymentProvider === 'payme') {
+        setCreatedCheckout(payload);
+        return;
+      }
       window.location.href = payload.checkout_url;
     } catch (err) {
       setError(String((err as Error).message || err));
     } finally {
       setCreating(false);
     }
+  }
+
+  async function copyCreatedOrderID() {
+    if (!createdCheckout?.order.invoice_id) return;
+    await navigator.clipboard.writeText(createdCheckout.order.invoice_id);
+    setVoucherMessage('Order ID скопирован');
   }
 
   async function redeemVoucher() {
@@ -775,6 +799,20 @@ function QRPage({ token }: { token: string }) {
         </section>
 
         {voucherMessage && <Notice tone="success">{voucherMessage}</Notice>}
+        {createdCheckout && (
+          <section className="qr-order-card">
+            <div>
+              <p>Payme заказ создан</p>
+              <h2>Order ID</h2>
+              <code>{createdCheckout.order.invoice_id}</code>
+              <span>Этот ID нужен для проверки оплаты в Payme sandbox.</span>
+            </div>
+            <div className="qr-order-actions">
+              <Button size="sm" variant="ghost" icon={<Copy size={13} />} onClick={copyCreatedOrderID}>Скопировать</Button>
+              <LinkButton href={createdCheckout.checkout_url} variant="secondary" icon={<CreditCard size={16} />}>Открыть Payme</LinkButton>
+            </div>
+          </section>
+        )}
         {voucherError && <Notice tone="danger">{voucherError}</Notice>}
         {error && <Notice tone="danger">{error}</Notice>}
       </section>
@@ -1714,6 +1752,10 @@ function PaymentReturnPage() {
         {paid ? <CheckCircle2 size={44} /> : failed ? <AlertCircle size={44} /> : <Clock3 size={44} />}
         <h1>{paid ? 'Оплата принята' : failed ? 'Оплата не прошла' : 'Ждём подтверждение оплаты'}</h1>
         <p>{order ? `${order.pc_label} · ${order.tariff} · ${providerLabel(order.provider)} · ${orderStatusLabel(order.status)}` : 'Загружаем статус заказа...'}</p>
+        <div className="payment-order-meta">
+          <span>Order ID</span>
+          <code>{order?.invoice_id || invoiceID}</code>
+        </div>
         {order?.receipt_url && <LinkButton href={order.receipt_url} icon={<ReceiptText size={16} />}>Квитанция оплаты</LinkButton>}
         <div className="button-row centered-actions">
           <Button variant="ghost" icon={<RefreshCw size={16} />} onClick={syncProvider} disabled={!order || paid || failed}>
