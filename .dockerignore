@@ -1,5 +1,7 @@
 .git
 .DS_Store
+.env
+.env.*
 outputs
 work
 web/node_modules
