@@ -1263,13 +1263,23 @@ func (s *Server) handleCreateCheckout(w http.ResponseWriter, r *http.Request) {
 		checkoutURL = s.cfg.FrontendBaseURL + "/payment/mock?invoice_id=" + invoiceID
 	case payments.ProviderPayme:
 		var err error
-		checkoutURL, err = payments.BuildPaymeCheckoutURL(
-			s.cfg.PaymeCheckoutURL,
-			defaultString(orderSeed.PaymeMerchantID, s.cfg.PaymeMerchantID),
-			invoiceID,
-			orderSeed.AmountTiyin,
-			returnURL,
-		)
+		if s.isPaymeSandbox() {
+			checkoutURL, err = payments.BuildPaymeSandboxCheckoutURL(
+				s.cfg.PaymeCheckoutURL,
+				defaultString(orderSeed.PaymeMerchantID, s.cfg.PaymeMerchantID),
+				invoiceID,
+				orderSeed.AmountTiyin,
+				returnURL,
+			)
+		} else {
+			checkoutURL, err = payments.BuildPaymeCheckoutURL(
+				s.cfg.PaymeCheckoutURL,
+				defaultString(orderSeed.PaymeMerchantID, s.cfg.PaymeMerchantID),
+				invoiceID,
+				orderSeed.AmountTiyin,
+				returnURL,
+			)
+		}
 		if err != nil {
 			writeError(w, http.StatusBadGateway, err.Error())
 			return
@@ -5230,7 +5240,7 @@ func (s *Server) paymentProviderOptions(clickMerchantID, clickServiceID, clickSe
 			"provider":   payments.ProviderPayme,
 			"label":      "Payme",
 			"configured": paymeReady,
-			"sandbox":    strings.Contains(strings.ToLower(s.cfg.PaymeCheckoutURL), "test.paycom.uz"),
+			"sandbox":    s.isPaymeSandbox(),
 			"message":    paymeMessage,
 		},
 		{
@@ -5263,6 +5273,10 @@ func (s *Server) ensureCheckoutProviderReady(provider string, seed checkoutSeed)
 	return nil
 }
 
+func (s *Server) isPaymeSandbox() bool {
+	return strings.Contains(strings.ToLower(s.cfg.PaymeCheckoutURL), "test.paycom.uz")
+}
+
 func (s *Server) paymeReady(clubMerchantID, clubSecretKey string) (bool, string) {
 	merchantID := defaultString(clubMerchantID, s.cfg.PaymeMerchantID)
 	secretKey := defaultString(clubSecretKey, s.cfg.PaymeSecretKey)
@@ -5276,7 +5290,7 @@ func (s *Server) paymeReady(clubMerchantID, clubSecretKey string) (bool, string)
 	if len(missing) > 0 {
 		return false, "Payme не настроен: укажите " + strings.Join(missing, " и ")
 	}
-	if strings.Contains(strings.ToLower(s.cfg.PaymeCheckoutURL), "test.paycom.uz") {
+	if s.isPaymeSandbox() {
 		return true, "Payme sandbox готов"
 	}
 	return true, "Payme готов"

@@ -88,7 +88,7 @@ FRONTEND_BASE_URL=https://your-frontend-domain
 1. В Payme Business создать веб-кассу и взять `Merchant ID` и `TEST_KEY`.
 2. В настройках веб-кассы указать Endpoint URL: `https://your-domain/api/payments/payme/callback`.
 3. В Clubpay задать `PAYME_MERCHANT_ID` и `PAYME_SECRET_KEY` (`TEST_KEY`) через env или настройки клуба.
-4. Открыть QR, выбрать Payme и оплатить через `https://test.paycom.uz`.
+4. Открыть QR, выбрать Payme и перейти по checkout-ссылке. Для sandbox используется `https://test.paycom.uz/{base64}` с raw-base64 без `=` и техническим filler-параметром, потому что песочница Payme не разбирает часть валидных base64 payload. Для production используется обычный GET/base64 checkout с return URL.
 5. Payme sandbox должен дернуть Merchant API: `CheckPerformTransaction`, `CreateTransaction`, `PerformTransaction`, `CheckTransaction`, `CancelTransaction`, `GetStatement`.
 
 ## Click testing

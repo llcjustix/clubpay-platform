@@ -1402,12 +1402,16 @@ function SettingsPage({ auth, selectedClubID, currentPath, onClubChange, onLogou
 
   return (
     <main className="shell">
-      <WorkspaceHeader auth={auth} selectedClubID={selectedClubID} currentPath={currentPath} onClubChange={onClubChange} onLogout={onLogout} eyebrow="Настройки" title={settingsTitle} />
-      {canManageNetwork && (
-        <div className="page-actions">
-          <Button variant="secondary" icon={<Plus size={16} />} onClick={startNewClub}>Новый клуб</Button>
-        </div>
-      )}
+      <WorkspaceHeader
+        auth={auth}
+        selectedClubID={selectedClubID}
+        currentPath={currentPath}
+        onClubChange={onClubChange}
+        onLogout={onLogout}
+        eyebrow="Настройки"
+        title={settingsTitle}
+        clubAction={canManageNetwork ? <Button size="sm" variant="secondary" icon={<Plus size={13} />} onClick={startNewClub}>Новый клуб</Button> : undefined}
+      />
       {message && <Notice tone="success">{message}</Notice>}
       {error && <Notice tone="danger">{error}</Notice>}
       {!creatingClub && clubForm?.id && (
@@ -1722,7 +1726,7 @@ function PaymentReturnPage() {
   );
 }
 
-function WorkspaceHeader({ auth, selectedClubID, currentPath, onClubChange, onLogout, eyebrow, title }: WorkspaceProps & { eyebrow: string; title: string }) {
+function WorkspaceHeader({ auth, selectedClubID, currentPath, onClubChange, onLogout, eyebrow, title, clubAction }: WorkspaceProps & { eyebrow: string; title: string; clubAction?: React.ReactNode }) {
   const canOpenOwner = canViewOwner(auth, selectedClubID);
   const canOpenSettings = canViewSettings(auth, selectedClubID);
   const selectedClub = auth.clubs.find((club) => club.id === selectedClubID) || auth.clubs[0];
@@ -1741,6 +1745,7 @@ function WorkspaceHeader({ auth, selectedClubID, currentPath, onClubChange, onLo
         ) : (
           <span className="club-static">{selectedClub ? `${selectedClub.name} · ${roleLabel(selectedClub.role)}` : 'Клуб не выбран'}</span>
         )}
+        {clubAction}
         {canOpenOwner && <AppLink className={`btn ghost sm ${currentPath.startsWith('/reports') || currentPath.startsWith('/owner') ? 'active' : ''}`} href="/reports"><Banknote size={13} /><span>Дашборд</span></AppLink>}
         {canOpenSettings && <AppLink className={`btn ghost sm ${currentPath.startsWith('/settings') ? 'active' : ''}`} href="/settings"><Settings size={13} /><span>Настройки</span></AppLink>}
         <Button size="sm" variant="secondary" icon={<LogOut size={13} />} onClick={onLogout}>Выйти</Button>

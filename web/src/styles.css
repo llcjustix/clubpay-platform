@@ -146,37 +146,49 @@ h2 {
   font-weight: 800;
 }
 
-.page-actions {
-  display: flex;
-  justify-content: flex-end;
-  margin: -8px 0 16px;
+.button-row .btn:not(.full) {
+  min-height: 32px;
+  padding: 0 10px;
+  font-size: 12px;
+}
+
+.button-row .btn:not(.full) svg {
+  width: 13px;
+  height: 13px;
 }
 
 .settings-subnav {
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
-  margin: 0 0 16px;
+  margin: 0 0 12px;
 }
 
 .settings-subnav .btn {
-  min-height: 48px;
-  padding: 0 18px;
+  min-height: 32px;
+  padding: 0 10px;
+  font-size: 12px;
+}
+
+.settings-subnav .btn svg {
+  width: 13px;
+  height: 13px;
 }
 
 .tab-row {
   display: flex;
   flex-wrap: wrap;
-  gap: 8px;
+  gap: 6px;
 }
 
 .tab-row button {
-  min-height: 36px;
+  min-height: 30px;
   border: 1px solid #2a3a50;
   border-radius: 8px;
-  padding: 0 12px;
+  padding: 0 10px;
   background: #0a111a;
   color: #cfe0f5;
+  font-size: 12px;
   font-weight: 850;
   cursor: pointer;
 }
@@ -1198,11 +1210,11 @@ select {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 3px;
+  gap: 8px;
   width: 100%;
   border: 1px solid #26374d;
   border-radius: 8px;
-  padding: 10px 12px;
+  padding: 8px 10px;
   background: #0c121b;
   color: #eaf2ff;
   cursor: pointer;
@@ -1217,18 +1229,19 @@ select {
 .editable-row strong {
   display: block;
   color: #f8fbff;
+  font-size: 13px;
 }
 
 .editable-row small {
   display: block;
   color: #91a3b7;
-  font-size: 12px;
+  font-size: 11px;
 }
 
 .editable-row em {
   flex: 0 0 auto;
   color: var(--accent);
-  font-size: 12px;
+  font-size: 11px;
   font-style: normal;
   font-weight: 900;
 }
