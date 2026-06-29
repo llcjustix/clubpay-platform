@@ -11,6 +11,7 @@ CREATE TABLE IF NOT EXISTS clubs (
   status TEXT NOT NULL DEFAULT 'active',
   click_merchant_id TEXT,
   click_service_id TEXT,
+  click_merchant_user_id TEXT,
   click_secret_key TEXT,
   payme_merchant_id TEXT,
   payme_secret_key TEXT,
@@ -25,6 +26,7 @@ ALTER TABLE clubs DROP COLUMN IF EXISTS rahmat_store_id;
 ALTER TABLE clubs DROP COLUMN IF EXISTS rahmat_recipient_uuid;
 ALTER TABLE clubs ADD COLUMN IF NOT EXISTS click_merchant_id TEXT;
 ALTER TABLE clubs ADD COLUMN IF NOT EXISTS click_service_id TEXT;
+ALTER TABLE clubs ADD COLUMN IF NOT EXISTS click_merchant_user_id TEXT;
 ALTER TABLE clubs ADD COLUMN IF NOT EXISTS click_secret_key TEXT;
 ALTER TABLE clubs ADD COLUMN IF NOT EXISTS payme_merchant_id TEXT;
 ALTER TABLE clubs ADD COLUMN IF NOT EXISTS payme_secret_key TEXT;
@@ -33,6 +35,7 @@ ALTER TABLE clubs ADD COLUMN IF NOT EXISTS ofd_mxik TEXT;
 ALTER TABLE clubs ADD COLUMN IF NOT EXISTS ofd_package_code TEXT;
 UPDATE clubs SET click_merchant_id = NULL WHERE lower(COALESCE(click_merchant_id, '')) IN ('click_test_merchant', 'test_merchant');
 UPDATE clubs SET click_service_id = NULL WHERE lower(COALESCE(click_service_id, '')) IN ('click_test_service', 'test_service');
+UPDATE clubs SET click_merchant_user_id = NULL WHERE lower(COALESCE(click_merchant_user_id, '')) IN ('click_test_user', 'test_user');
 UPDATE clubs SET click_secret_key = NULL WHERE lower(COALESCE(click_secret_key, '')) IN ('click_test_secret', 'test_secret');
 UPDATE clubs SET payme_merchant_id = NULL WHERE lower(COALESCE(payme_merchant_id, '')) IN ('payme_test_merchant', 'test_merchant');
 UPDATE clubs SET payme_secret_key = NULL WHERE lower(COALESCE(payme_secret_key, '')) IN ('payme_test_secret', 'test_secret');

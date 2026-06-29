@@ -21,6 +21,7 @@ type Config struct {
 	ClickCheckoutURL       string
 	ClickMerchantID        string
 	ClickServiceID         string
+	ClickMerchantUserID    string
 	ClickSecretKey         string
 	PaymeCheckoutURL       string
 	PaymeMerchantID        string
@@ -64,6 +65,7 @@ func Load() (Config, error) {
 		ClickCheckoutURL:        strings.TrimRight(env("CLICK_CHECKOUT_URL", "https://my.click.uz/services/pay"), "/"),
 		ClickMerchantID:         env("CLICK_MERCHANT_ID", ""),
 		ClickServiceID:          env("CLICK_SERVICE_ID", ""),
+		ClickMerchantUserID:     env("CLICK_MERCHANT_USER_ID", ""),
 		ClickSecretKey:          env("CLICK_SECRET_KEY", ""),
 		PaymeCheckoutURL:        strings.TrimRight(env("PAYME_CHECKOUT_URL", paymeCheckoutURL), "/"),
 		PaymeMerchantID:         env("PAYME_MERCHANT_ID", ""),

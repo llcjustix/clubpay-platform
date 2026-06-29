@@ -126,6 +126,7 @@ type ClubSettings = {
   status: string;
   click_merchant_id: string;
   click_service_id: string;
+  click_merchant_user_id: string;
   click_secret_key: string;
   payme_merchant_id: string;
   payme_secret_key: string;
@@ -256,6 +257,7 @@ const EMPTY_CLUB_FORM: ClubSettings = {
   status: 'active',
   click_merchant_id: '',
   click_service_id: '',
+  click_merchant_user_id: '',
   click_secret_key: '',
   payme_merchant_id: '',
   payme_secret_key: '',
@@ -1446,6 +1448,7 @@ function SettingsPage({ auth, selectedClubID, currentPath, onClubChange, onLogou
                 <>
                   <Field label="Click merchant ID" value={clubForm.click_merchant_id} onChange={(value) => setClubForm({ ...clubForm, click_merchant_id: value })} help="Обязательный ID поставщика Click для платежной ссылки." />
                   <Field label="Click service ID" value={clubForm.click_service_id} onChange={(value) => setClubForm({ ...clubForm, click_service_id: value })} help="Обязательный ID сервиса Click, по нему создается платежная ссылка." />
+                  <Field label="Click merchant user ID" value={clubForm.click_merchant_user_id} onChange={(value) => setClubForm({ ...clubForm, click_merchant_user_id: value })} help="ID пользователя мерчанта Click, который выдают вместе с service ID." />
                   <Field label="Click secret key" type="password" value={clubForm.click_secret_key} onChange={(value) => setClubForm({ ...clubForm, click_secret_key: value })} help="Секрет для проверки Prepare/Complete callback." />
                   <Field label="Payme merchant ID" value={clubForm.payme_merchant_id} onChange={(value) => setClubForm({ ...clubForm, payme_merchant_id: value })} help="ID кассы/мерчанта Payme для checkout-ссылки." />
                   <Field label="Payme secret key" type="password" value={clubForm.payme_secret_key} onChange={(value) => setClubForm({ ...clubForm, payme_secret_key: value })} help="Для sandbox укажите TEST_KEY из Payme Business; для production — боевой secret." />
@@ -1884,7 +1887,7 @@ function Metric({ icon, label, value }: { icon: React.ReactNode; label: string; 
 }
 
 function ClubConnectionSummary({ club }: { club: ClubSettings }) {
-  const clickReady = club.click_connected ?? Boolean(club.click_service_id);
+  const clickReady = club.click_connected ?? Boolean(club.click_merchant_id && club.click_service_id && club.click_merchant_user_id);
   const paymeReady = club.payme_connected ?? Boolean(club.payme_merchant_id);
   const paymentReady = club.payment_connected ?? (clickReady || paymeReady);
   const payoutReady = club.payouts_connected ?? club.platform_fee_bps > 0;

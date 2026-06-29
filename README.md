@@ -39,6 +39,7 @@ DEFAULT_PAYMENT_PROVIDER=mock
 CLICK_CHECKOUT_URL=https://my.click.uz/services/pay
 CLICK_MERCHANT_ID=
 CLICK_SERVICE_ID=
+CLICK_MERCHANT_USER_ID=
 CLICK_SECRET_KEY=
 
 PAYME_CHECKOUT_URL=https://test.paycom.uz
@@ -94,9 +95,9 @@ FRONTEND_BASE_URL=https://your-frontend-domain
 
 ## Click testing
 
-Платежная ссылка Click строится только когда есть `CLICK_MERCHANT_ID`, `CLICK_SERVICE_ID` и `CLICK_SECRET_KEY`. Без этих значений QR-страница не даст открыть Click, чтобы не получать ошибку `Поставщик не найден или заблокирован`.
+Платежная ссылка Click строится только когда есть `CLICK_MERCHANT_ID`, `CLICK_SERVICE_ID`, `CLICK_MERCHANT_USER_ID` и `CLICK_SECRET_KEY`. Без этих значений QR-страница не даст открыть Click, чтобы не получать ошибку `Поставщик не найден или заблокирован`.
 
-Публичная Click-дока описывает ссылку `https://my.click.uz/services/pay/?service_id=...&merchant_id=...&amount=...&transaction_param=...&return_url=...` и обязательный SHOP API callback-контур Prepare/Complete. Открытых sandbox credentials в публичной доке не указано, поэтому до выдачи тестовых/боевых доступов можно тестировать только локальную обработку callback-ов и полный mock-flow.
+Платежная ссылка строится как `https://my.click.uz/services/pay/?service_id=...&merchant_id=...&merchant_user_id=...&amount=...&transaction_param=...&return_url=...`; после оплаты Click вызывает обязательный SHOP API callback-контур Prepare/Complete. Открытых sandbox credentials в публичной доке не указано, поэтому до выдачи тестовых/боевых доступов можно тестировать только локальную обработку callback-ов и полный mock-flow.
 
 ## Важные решения MVP
 

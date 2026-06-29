@@ -54,16 +54,20 @@ func paymeCheckoutParams(merchantID, orderID string, amountTiyin int64, returnUR
 	return params, nil
 }
 
-func BuildClickCheckoutURL(baseURL, merchantID, serviceID, orderID string, amountTiyin int64, returnURL string) (string, error) {
+func BuildClickCheckoutURL(baseURL, merchantID, serviceID, merchantUserID, orderID string, amountTiyin int64, returnURL string) (string, error) {
 	if strings.TrimSpace(merchantID) == "" {
 		return "", fmt.Errorf("Click не настроен: нет merchant ID")
 	}
 	if strings.TrimSpace(serviceID) == "" {
 		return "", fmt.Errorf("Click не настроен: нет service ID")
 	}
+	if strings.TrimSpace(merchantUserID) == "" {
+		return "", fmt.Errorf("Click не настроен: нет merchant user ID")
+	}
 	values := url.Values{}
 	values.Set("merchant_id", merchantID)
 	values.Set("service_id", serviceID)
+	values.Set("merchant_user_id", merchantUserID)
 	values.Set("transaction_param", orderID)
 	values.Set("amount", formatClickAmount(amountTiyin))
 	if returnURL != "" {

@@ -247,14 +247,14 @@ func (s *Server) handleBackofficeCreateClub(w http.ResponseWriter, r *http.Reque
 	err := s.db.QueryRow(r.Context(), `
 		INSERT INTO clubs (
 			name, slug, legal_name, tin, address, timezone, status,
-			click_merchant_id, click_service_id, click_secret_key,
+			click_merchant_id, click_service_id, click_merchant_user_id, click_secret_key,
 			payme_merchant_id, payme_secret_key,
 			platform_fee_bps, ofd_mxik, ofd_package_code
 		)
-		VALUES ($1, $2, $3, $4, $5, $6, COALESCE(NULLIF($7, ''), 'active'), $8, $9, $10, $11, $12, $13, $14, $15)
+		VALUES ($1, $2, $3, $4, $5, $6, COALESCE(NULLIF($7, ''), 'active'), $8, $9, $10, $11, $12, $13, $14, $15, $16)
 		RETURNING id
 	`, req.Name, slug, req.LegalName, req.TIN, req.Address, defaultString(req.Timezone, "Asia/Tashkent"),
-		req.Status, req.ClickMerchantID, req.ClickServiceID, req.ClickSecretKey, req.PaymeMerchantID, req.PaymeSecretKey,
+		req.Status, req.ClickMerchantID, req.ClickServiceID, req.ClickMerchantUserID, req.ClickSecretKey, req.PaymeMerchantID, req.PaymeSecretKey,
 		req.PlatformFeeBPS, req.OFDMXIK, req.OFDPackageCode).Scan(&id)
 	if err != nil {
 		if writeConflictIfUnique(w, err, "club name or slug already exists") {
@@ -316,16 +316,17 @@ func (s *Server) handleBackofficeUpdateClub(w http.ResponseWriter, r *http.Reque
 			    status = $8,
 			    click_merchant_id = $9,
 			    click_service_id = $10,
-			    click_secret_key = $11,
-			    payme_merchant_id = $12,
-			    payme_secret_key = $13,
-			    platform_fee_bps = $14,
-			    ofd_mxik = $15,
-			    ofd_package_code = $16
+			    click_merchant_user_id = $11,
+			    click_secret_key = $12,
+			    payme_merchant_id = $13,
+			    payme_secret_key = $14,
+			    platform_fee_bps = $15,
+			    ofd_mxik = $16,
+			    ofd_package_code = $17
 			WHERE id = $1
 		`, clubID, strings.TrimSpace(req.Name), slugify(req.Name), req.LegalName, req.TIN,
 			req.Address, defaultString(req.Timezone, "Asia/Tashkent"), defaultString(req.Status, "active"),
-			req.ClickMerchantID, req.ClickServiceID, req.ClickSecretKey, req.PaymeMerchantID, req.PaymeSecretKey,
+			req.ClickMerchantID, req.ClickServiceID, req.ClickMerchantUserID, req.ClickSecretKey, req.PaymeMerchantID, req.PaymeSecretKey,
 			req.PlatformFeeBPS, req.OFDMXIK, req.OFDPackageCode)
 	} else {
 		_, err = s.db.Exec(r.Context(), `
@@ -1057,7 +1058,7 @@ func (s *Server) handleQR(w http.ResponseWriter, r *http.Request) {
 	var zoneStatus string
 	err := s.db.QueryRow(ctx, `
 		SELECT c.id, c.name, p.id, p.external_pc_id, p.number, p.label, p.status_cache, z.id, z.name, z.hourly_price_tiyin, z.status,
-		       COALESCE(c.click_merchant_id, ''), COALESCE(c.click_service_id, ''), COALESCE(c.click_secret_key, ''),
+		       COALESCE(c.click_merchant_id, ''), COALESCE(c.click_service_id, ''), COALESCE(c.click_merchant_user_id, ''), COALESCE(c.click_secret_key, ''),
 		       COALESCE(c.payme_merchant_id, ''), COALESCE(c.payme_secret_key, '')
 		FROM qr_codes q
 		JOIN pc_refs p ON p.id = q.pc_ref_id
@@ -1067,7 +1068,7 @@ func (s *Server) handleQR(w http.ResponseWriter, r *http.Request) {
 		  AND c.status = 'active' AND z.status <> 'deleted' AND p.status_cache <> 'deleted'
 	`, token).Scan(
 		&pc.ClubID, &pc.ClubName, &pc.PCID, &pc.ExternalPCID, &pc.Number, &pc.Label, &pc.Status, &pc.ZoneID, &pc.ZoneName, &pc.HourlyPriceTiyin,
-		&zoneStatus, &pc.ClickMerchantID, &pc.ClickServiceID, &pc.ClickSecretKey, &pc.PaymeMerchantID, &pc.PaymeSecretKey,
+		&zoneStatus, &pc.ClickMerchantID, &pc.ClickServiceID, &pc.ClickMerchantUserID, &pc.ClickSecretKey, &pc.PaymeMerchantID, &pc.PaymeSecretKey,
 	)
 	if errors.Is(err, pgx.ErrNoRows) {
 		writeError(w, http.StatusNotFound, "QR token not found")
@@ -1126,7 +1127,7 @@ func (s *Server) handleQR(w http.ResponseWriter, r *http.Request) {
 			"hourly_price_uzs":   pc.HourlyPriceTiyin / 100,
 		},
 		"tariffs":           tariffs,
-		"payment_providers": s.paymentProviderOptions(pc.ClickMerchantID, pc.ClickServiceID, pc.ClickSecretKey, pc.PaymeMerchantID, pc.PaymeSecretKey),
+		"payment_providers": s.paymentProviderOptions(pc.ClickMerchantID, pc.ClickServiceID, pc.ClickMerchantUserID, pc.ClickSecretKey, pc.PaymeMerchantID, pc.PaymeSecretKey),
 		"telegram": map[string]any{
 			"bot_link":     telegramLink,
 			"bot_username": telegramUsername,
@@ -1175,7 +1176,7 @@ func (s *Server) handleCreateCheckout(w http.ResponseWriter, r *http.Request) {
 	var orderSeed checkoutSeed
 	err := s.db.QueryRow(ctx, `
 		SELECT c.id, c.name, p.id, p.external_pc_id, p.status_cache, z.id, z.hourly_price_tiyin,
-		       COALESCE(c.click_merchant_id, ''), COALESCE(c.click_service_id, ''), COALESCE(c.click_secret_key, ''),
+		       COALESCE(c.click_merchant_id, ''), COALESCE(c.click_service_id, ''), COALESCE(c.click_merchant_user_id, ''), COALESCE(c.click_secret_key, ''),
 		       COALESCE(c.payme_merchant_id, ''), COALESCE(c.payme_secret_key, ''), COALESCE(c.platform_fee_bps, 0),
 		       COALESCE(c.ofd_mxik, ''), COALESCE(c.ofd_package_code, '')
 		FROM qr_codes q
@@ -1187,7 +1188,7 @@ func (s *Server) handleCreateCheckout(w http.ResponseWriter, r *http.Request) {
 	`, req.QRToken).Scan(
 		&orderSeed.ClubID, &orderSeed.ClubName, &orderSeed.PCID, &orderSeed.ExternalPCID, &orderSeed.PCStatus,
 		&orderSeed.ZoneID, &orderSeed.HourlyPriceTiyin,
-		&orderSeed.ClickMerchantID, &orderSeed.ClickServiceID, &orderSeed.ClickSecretKey,
+		&orderSeed.ClickMerchantID, &orderSeed.ClickServiceID, &orderSeed.ClickMerchantUserID, &orderSeed.ClickSecretKey,
 		&orderSeed.PaymeMerchantID, &orderSeed.PaymeSecretKey, &orderSeed.PlatformFeeBPS,
 		&orderSeed.OFDMXIK, &orderSeed.OFDPackageCode,
 	)
@@ -1329,6 +1330,7 @@ func (s *Server) handleCreateCheckout(w http.ResponseWriter, r *http.Request) {
 			s.cfg.ClickCheckoutURL,
 			defaultString(orderSeed.ClickMerchantID, s.cfg.ClickMerchantID),
 			defaultString(orderSeed.ClickServiceID, s.cfg.ClickServiceID),
+			defaultString(orderSeed.ClickMerchantUserID, s.cfg.ClickMerchantUserID),
 			invoiceID,
 			orderSeed.AmountTiyin,
 			returnURL,
@@ -2331,6 +2333,7 @@ func (s *Server) edgeSnapshotData(ctx context.Context, clubID string, includeTec
 		       timezone, status,
 		       COALESCE(click_merchant_id, '') AS click_merchant_id,
 		       COALESCE(click_service_id, '') AS click_service_id,
+		       COALESCE(click_merchant_user_id, '') AS click_merchant_user_id,
 		       COALESCE(click_secret_key, '') AS click_secret_key,
 		       COALESCE(payme_merchant_id, '') AS payme_merchant_id,
 		       COALESCE(payme_secret_key, '') AS payme_secret_key,
@@ -2567,17 +2570,18 @@ func (s *Server) applyEdgeSnapshotData(ctx context.Context, clubID string, paylo
 				SELECT * FROM jsonb_to_recordset($1::jsonb) AS x(
 					id uuid, name text, slug text, legal_name text, tin text, address text,
 					timezone text, status text, click_merchant_id text, click_service_id text,
-					click_secret_key text, payme_merchant_id text, payme_secret_key text,
+					click_merchant_user_id text, click_secret_key text, payme_merchant_id text, payme_secret_key text,
 					platform_fee_bps int, ofd_mxik text, ofd_package_code text, created_at timestamptz
 				)
 			)
-			INSERT INTO clubs (id, name, slug, legal_name, tin, address, timezone, status, click_merchant_id, click_service_id, click_secret_key, payme_merchant_id, payme_secret_key, platform_fee_bps, ofd_mxik, ofd_package_code, created_at)
-			SELECT id, name, slug, legal_name, tin, address, COALESCE(NULLIF(timezone, ''), 'Asia/Tashkent'), COALESCE(NULLIF(status, ''), 'active'), click_merchant_id, click_service_id, click_secret_key, payme_merchant_id, payme_secret_key, COALESCE(platform_fee_bps, 0), ofd_mxik, ofd_package_code, COALESCE(created_at, now())
+			INSERT INTO clubs (id, name, slug, legal_name, tin, address, timezone, status, click_merchant_id, click_service_id, click_merchant_user_id, click_secret_key, payme_merchant_id, payme_secret_key, platform_fee_bps, ofd_mxik, ofd_package_code, created_at)
+			SELECT id, name, slug, legal_name, tin, address, COALESCE(NULLIF(timezone, ''), 'Asia/Tashkent'), COALESCE(NULLIF(status, ''), 'active'), click_merchant_id, click_service_id, click_merchant_user_id, click_secret_key, payme_merchant_id, payme_secret_key, COALESCE(platform_fee_bps, 0), ofd_mxik, ofd_package_code, COALESCE(created_at, now())
 			FROM input
 			ON CONFLICT (id) DO UPDATE SET
 			  name = EXCLUDED.name, slug = EXCLUDED.slug, legal_name = EXCLUDED.legal_name, tin = EXCLUDED.tin,
 			  address = EXCLUDED.address, timezone = EXCLUDED.timezone, status = EXCLUDED.status,
 			  click_merchant_id = EXCLUDED.click_merchant_id, click_service_id = EXCLUDED.click_service_id,
+			  click_merchant_user_id = EXCLUDED.click_merchant_user_id,
 			  click_secret_key = EXCLUDED.click_secret_key, payme_merchant_id = EXCLUDED.payme_merchant_id,
 			  payme_secret_key = EXCLUDED.payme_secret_key, platform_fee_bps = EXCLUDED.platform_fee_bps,
 			  ofd_mxik = EXCLUDED.ofd_mxik, ofd_package_code = EXCLUDED.ofd_package_code
@@ -4504,7 +4508,7 @@ func (s *Server) markProviderEvent(ctx context.Context, id, status string) {
 
 type qrPC struct {
 	ClubID, ClubName, PCID, ExternalPCID, Label, Status, ZoneID, ZoneName string
-	ClickMerchantID, ClickServiceID, ClickSecretKey                       string
+	ClickMerchantID, ClickServiceID, ClickMerchantUserID, ClickSecretKey  string
 	PaymeMerchantID, PaymeSecretKey                                       string
 	Number                                                                int
 	HourlyPriceTiyin                                                      int64
@@ -4536,21 +4540,22 @@ type loginRequest struct {
 }
 
 type clubSettingsRequest struct {
-	Name            string `json:"name"`
-	Slug            string `json:"slug"`
-	LegalName       string `json:"legal_name"`
-	TIN             string `json:"tin"`
-	Address         string `json:"address"`
-	Timezone        string `json:"timezone"`
-	Status          string `json:"status"`
-	ClickMerchantID string `json:"click_merchant_id"`
-	ClickServiceID  string `json:"click_service_id"`
-	ClickSecretKey  string `json:"click_secret_key"`
-	PaymeMerchantID string `json:"payme_merchant_id"`
-	PaymeSecretKey  string `json:"payme_secret_key"`
-	PlatformFeeBPS  int    `json:"platform_fee_bps"`
-	OFDMXIK         string `json:"ofd_mxik"`
-	OFDPackageCode  string `json:"ofd_package_code"`
+	Name                string `json:"name"`
+	Slug                string `json:"slug"`
+	LegalName           string `json:"legal_name"`
+	TIN                 string `json:"tin"`
+	Address             string `json:"address"`
+	Timezone            string `json:"timezone"`
+	Status              string `json:"status"`
+	ClickMerchantID     string `json:"click_merchant_id"`
+	ClickServiceID      string `json:"click_service_id"`
+	ClickMerchantUserID string `json:"click_merchant_user_id"`
+	ClickSecretKey      string `json:"click_secret_key"`
+	PaymeMerchantID     string `json:"payme_merchant_id"`
+	PaymeSecretKey      string `json:"payme_secret_key"`
+	PlatformFeeBPS      int    `json:"platform_fee_bps"`
+	OFDMXIK             string `json:"ofd_mxik"`
+	OFDPackageCode      string `json:"ofd_package_code"`
 }
 
 type zoneRequest struct {
@@ -4598,20 +4603,20 @@ type createCheckoutRequest struct {
 }
 
 type checkoutSeed struct {
-	ClubID, ClubName, PCID, ExternalPCID, PCStatus  string
-	ExtensionGrantID                                string
-	ZoneID                                          string
-	TariffID, TariffName                            string
-	DurationMinutes                                 int
-	DurationSeconds                                 int
-	VoucherID                                       string
-	VoucherSeconds                                  int
-	AmountTiyin                                     int64
-	HourlyPriceTiyin                                int64
-	ClickMerchantID, ClickServiceID, ClickSecretKey string
-	PaymeMerchantID, PaymeSecretKey                 string
-	PlatformFeeBPS                                  int
-	OFDMXIK, OFDPackageCode                         string
+	ClubID, ClubName, PCID, ExternalPCID, PCStatus                       string
+	ExtensionGrantID                                                     string
+	ZoneID                                                               string
+	TariffID, TariffName                                                 string
+	DurationMinutes                                                      int
+	DurationSeconds                                                      int
+	VoucherID                                                            string
+	VoucherSeconds                                                       int
+	AmountTiyin                                                          int64
+	HourlyPriceTiyin                                                     int64
+	ClickMerchantID, ClickServiceID, ClickMerchantUserID, ClickSecretKey string
+	PaymeMerchantID, PaymeSecretKey                                      string
+	PlatformFeeBPS                                                       int
+	OFDMXIK, OFDPackageCode                                              string
 }
 
 type paymentOrderForCallback struct {
@@ -5005,7 +5010,7 @@ func (s *Server) clubSettings(ctx context.Context, clubID string, includeTechnic
 	clubRows, err := s.db.Query(ctx, `
 		SELECT id, name, COALESCE(slug, ''), COALESCE(legal_name, ''), COALESCE(tin, ''), COALESCE(address, ''),
 		       timezone, status,
-		       COALESCE(click_merchant_id, ''), COALESCE(click_service_id, ''), COALESCE(click_secret_key, ''),
+		       COALESCE(click_merchant_id, ''), COALESCE(click_service_id, ''), COALESCE(click_merchant_user_id, ''), COALESCE(click_secret_key, ''),
 		       COALESCE(payme_merchant_id, ''), COALESCE(payme_secret_key, ''),
 		       platform_fee_bps, COALESCE(ofd_mxik, ''), COALESCE(ofd_package_code, ''), created_at
 		FROM clubs
@@ -5017,17 +5022,17 @@ func (s *Server) clubSettings(ctx context.Context, clubID string, includeTechnic
 	defer clubRows.Close()
 	if clubRows.Next() {
 		var id, name, slug, legalName, tin, address, timezone, status string
-		var clickMerchantID, clickServiceID, clickSecretKey, paymeMerchantID, paymeSecretKey, mxik, packageCode string
+		var clickMerchantID, clickServiceID, clickMerchantUserID, clickSecretKey, paymeMerchantID, paymeSecretKey, mxik, packageCode string
 		var feeBPS int
 		var createdAt time.Time
 		if err := clubRows.Scan(
 			&id, &name, &slug, &legalName, &tin, &address, &timezone, &status,
-			&clickMerchantID, &clickServiceID, &clickSecretKey, &paymeMerchantID, &paymeSecretKey,
+			&clickMerchantID, &clickServiceID, &clickMerchantUserID, &clickSecretKey, &paymeMerchantID, &paymeSecretKey,
 			&feeBPS, &mxik, &packageCode, &createdAt,
 		); err != nil {
 			return nil, err
 		}
-		clickConnected, _ := s.clickReady(clickMerchantID, clickServiceID, clickSecretKey)
+		clickConnected, _ := s.clickReady(clickMerchantID, clickServiceID, clickMerchantUserID, clickSecretKey)
 		paymeConnected, _ := s.paymeReady(paymeMerchantID, paymeSecretKey)
 		paymentConnected := clickConnected || paymeConnected
 		payoutsConnected := feeBPS > 0
@@ -5035,6 +5040,7 @@ func (s *Server) clubSettings(ctx context.Context, clubID string, includeTechnic
 		if !includeTechnicalFields {
 			clickMerchantID = ""
 			clickServiceID = ""
+			clickMerchantUserID = ""
 			clickSecretKey = ""
 			paymeMerchantID = ""
 			paymeSecretKey = ""
@@ -5044,7 +5050,8 @@ func (s *Server) clubSettings(ctx context.Context, clubID string, includeTechnic
 		club = map[string]any{
 			"id": id, "name": name, "slug": slug, "legal_name": legalName, "tin": tin, "address": address,
 			"timezone": timezone, "status": status,
-			"click_merchant_id": clickMerchantID, "click_service_id": clickServiceID, "click_secret_key": clickSecretKey,
+			"click_merchant_id": clickMerchantID, "click_service_id": clickServiceID,
+			"click_merchant_user_id": clickMerchantUserID, "click_secret_key": clickSecretKey,
 			"payme_merchant_id": paymeMerchantID, "payme_secret_key": paymeSecretKey,
 			"platform_fee_bps": feeBPS, "ofd_mxik": mxik, "ofd_package_code": packageCode, "created_at": createdAt,
 			"payment_connected": paymentConnected, "click_connected": clickConnected, "payme_connected": paymeConnected,
@@ -5371,9 +5378,9 @@ func defaultString(value, fallback string) string {
 	return value
 }
 
-func (s *Server) paymentProviderOptions(clickMerchantID, clickServiceID, clickSecretKey, paymeMerchantID, paymeSecretKey string) []map[string]any {
+func (s *Server) paymentProviderOptions(clickMerchantID, clickServiceID, clickMerchantUserID, clickSecretKey, paymeMerchantID, paymeSecretKey string) []map[string]any {
 	paymeReady, paymeMessage := s.paymeReady(paymeMerchantID, paymeSecretKey)
-	clickReady, clickMessage := s.clickReady(clickMerchantID, clickServiceID, clickSecretKey)
+	clickReady, clickMessage := s.clickReady(clickMerchantID, clickServiceID, clickMerchantUserID, clickSecretKey)
 	return []map[string]any{
 		{
 			"provider":   payments.ProviderPayme,
@@ -5400,7 +5407,7 @@ func (s *Server) ensureCheckoutProviderReady(provider string, seed checkoutSeed)
 			return errors.New(message)
 		}
 	case payments.ProviderClick:
-		ready, message := s.clickReady(seed.ClickMerchantID, seed.ClickServiceID, seed.ClickSecretKey)
+		ready, message := s.clickReady(seed.ClickMerchantID, seed.ClickServiceID, seed.ClickMerchantUserID, seed.ClickSecretKey)
 		if !ready {
 			return errors.New(message)
 		}
@@ -5435,16 +5442,20 @@ func (s *Server) paymeReady(clubMerchantID, clubSecretKey string) (bool, string)
 	return true, "Payme готов"
 }
 
-func (s *Server) clickReady(clubMerchantID, clubServiceID, clubSecretKey string) (bool, string) {
+func (s *Server) clickReady(clubMerchantID, clubServiceID, clubMerchantUserID, clubSecretKey string) (bool, string) {
 	merchantID := defaultString(clubMerchantID, s.cfg.ClickMerchantID)
 	serviceID := defaultString(clubServiceID, s.cfg.ClickServiceID)
+	merchantUserID := defaultString(clubMerchantUserID, s.cfg.ClickMerchantUserID)
 	secretKey := defaultString(clubSecretKey, s.cfg.ClickSecretKey)
-	missing := make([]string, 0, 3)
+	missing := make([]string, 0, 4)
 	if !usableProviderCredential(merchantID) {
 		missing = append(missing, "merchant ID")
 	}
 	if !usableProviderCredential(serviceID) {
 		missing = append(missing, "service ID")
+	}
+	if !usableProviderCredential(merchantUserID) {
+		missing = append(missing, "merchant user ID")
 	}
 	if !usableProviderCredential(secretKey) {
 		missing = append(missing, "secret key")
