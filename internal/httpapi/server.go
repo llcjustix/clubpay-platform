@@ -1642,7 +1642,7 @@ func (s *Server) handlePaymeCallback(w http.ResponseWriter, r *http.Request) {
 	rawPayload, _ := json.Marshal(rpc)
 	orderRef := paymeOrderRef(rpc)
 	credentials, _ := s.paymeCredentialsForRequest(r.Context(), rpc, orderRef)
-	if !s.verifyPaymeAuth(r, credentials) {
+	if !s.verifyPaymeAuth(r.Context(), r, credentials) {
 		writePaymeError(w, rpc.ID, -32504, "Недостаточно прав для выполнения метода")
 		return
 	}
@@ -1740,13 +1740,13 @@ func (s *Server) paymeCheckPerform(ctx context.Context, raw json.RawMessage) (ma
 	if err := json.Unmarshal(raw, &params); err != nil {
 		return nil, paymeErr(-32700, "Неверные параметры")
 	}
-	orderID := params.Account["order_id"]
+	orderID, accountField := paymeAccountOrderID(params.Account)
 	if strings.TrimSpace(orderID) == "" {
-		return nil, paymeErr(-31050, "Заказ не найден", "order_id")
+		return nil, paymeErr(-31050, "Заказ не найден", accountField)
 	}
 	order, err := s.providerOrderByInvoice(ctx, orderID)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return nil, paymeErr(-31050, "Заказ не найден", "order_id")
+		return nil, paymeErr(-31050, "Заказ не найден", accountField)
 	}
 	if err != nil {
 		return nil, err
@@ -1755,10 +1755,10 @@ func (s *Server) paymeCheckPerform(ctx context.Context, raw json.RawMessage) (ma
 		return nil, paymeErr(-31001, "Сумма платежа не совпадает")
 	}
 	if order.Status == "paid" {
-		return nil, paymeErr(-31050, "Заказ уже оплачен", "order_id")
+		return nil, paymeErr(-31050, "Заказ уже оплачен", accountField)
 	}
 	if order.Status != "payment_pending" && order.Status != "created" {
-		return nil, paymeErr(-31050, "Заказ недоступен для оплаты", "order_id")
+		return nil, paymeErr(-31050, "Заказ недоступен для оплаты", accountField)
 	}
 	return map[string]any{"allow": true}, nil
 }
@@ -1768,13 +1768,13 @@ func (s *Server) paymeCreateTransaction(ctx context.Context, raw json.RawMessage
 	if err := json.Unmarshal(raw, &params); err != nil {
 		return nil, paymeErr(-32700, "Неверные параметры")
 	}
-	orderID := params.Account["order_id"]
+	orderID, accountField := paymeAccountOrderID(params.Account)
 	if strings.TrimSpace(orderID) == "" {
-		return nil, paymeErr(-31050, "Заказ не найден", "order_id")
+		return nil, paymeErr(-31050, "Заказ не найден", accountField)
 	}
 	order, err := s.providerOrderByInvoice(ctx, orderID)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return nil, paymeErr(-31050, "Заказ не найден", "order_id")
+		return nil, paymeErr(-31050, "Заказ не найден", accountField)
 	}
 	if err != nil {
 		return nil, err
@@ -2013,25 +2013,43 @@ func (s *Server) paymeCredentialsForRequest(ctx context.Context, rpc paymeRPCReq
 	return paymeAuthCredentials{MerchantID: s.cfg.PaymeMerchantID, SecretKey: s.cfg.PaymeSecretKey}, nil
 }
 
-func (s *Server) verifyPaymeAuth(r *http.Request, credentials paymeAuthCredentials) bool {
-	secret := strings.TrimSpace(credentials.SecretKey)
-	if secret == "" && !strings.EqualFold(s.cfg.AppEnv, "production") {
-		return true
-	}
+func (s *Server) verifyPaymeAuth(ctx context.Context, r *http.Request, credentials paymeAuthCredentials) bool {
 	header := strings.TrimSpace(r.Header.Get("Authorization"))
 	if !strings.HasPrefix(strings.ToLower(header), "basic ") {
-		return false
+		return strings.TrimSpace(credentials.SecretKey) == "" && !strings.EqualFold(s.cfg.AppEnv, "production")
 	}
 	decoded, err := base64.StdEncoding.DecodeString(strings.TrimSpace(header[6:]))
 	if err != nil {
 		return false
 	}
 	login, password, ok := strings.Cut(string(decoded), ":")
-	if !ok || strings.TrimSpace(login) == "" || password != secret {
+	login = strings.TrimSpace(login)
+	if !ok || login == "" {
 		return false
 	}
-	merchantID := strings.TrimSpace(credentials.MerchantID)
-	return strings.EqualFold(login, "Paycom") || merchantID == "" || login == merchantID
+	if paymeCredentialMatches(credentials, login, password) {
+		return true
+	}
+	if paymeCredentialMatches(paymeAuthCredentials{MerchantID: s.cfg.PaymeMerchantID, SecretKey: s.cfg.PaymeSecretKey}, login, password) {
+		return true
+	}
+
+	rows, err := s.db.Query(ctx, `
+		SELECT COALESCE(payme_merchant_id, ''), COALESCE(payme_secret_key, '')
+		FROM clubs
+		WHERE status = 'active' AND COALESCE(payme_secret_key, '') <> ''
+	`)
+	if err != nil {
+		return false
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var candidate paymeAuthCredentials
+		if err := rows.Scan(&candidate.MerchantID, &candidate.SecretKey); err == nil && paymeCredentialMatches(candidate, login, password) {
+			return true
+		}
+	}
+	return false
 }
 
 func (s *Server) handleCoreEvent(w http.ResponseWriter, r *http.Request) {
@@ -5654,9 +5672,27 @@ func unixMilli(value any) int64 {
 func paymeOrderRef(rpc paymeRPCRequest) string {
 	var params paymeOrderParams
 	if json.Unmarshal(rpc.Params, &params) == nil && params.Account != nil {
-		return params.Account["order_id"]
+		orderID, _ := paymeAccountOrderID(params.Account)
+		return orderID
 	}
 	return ""
+}
+
+func paymeAccountOrderID(account map[string]string) (string, string) {
+	if account == nil {
+		return "", "order_id"
+	}
+	for _, key := range []string{"order_id", "account"} {
+		if value := strings.TrimSpace(account[key]); value != "" {
+			return value, key
+		}
+	}
+	for key, value := range account {
+		if strings.TrimSpace(value) != "" {
+			return strings.TrimSpace(value), key
+		}
+	}
+	return "", "order_id"
 }
 
 func paymeEventExternalID(rpc paymeRPCRequest, orderRef string) string {
@@ -5692,6 +5728,15 @@ func paymeErrorData(err error) string {
 		return paymeErr.Data
 	}
 	return ""
+}
+
+func paymeCredentialMatches(credentials paymeAuthCredentials, login, password string) bool {
+	secret := strings.TrimSpace(credentials.SecretKey)
+	if secret == "" || password != secret {
+		return false
+	}
+	merchantID := strings.TrimSpace(credentials.MerchantID)
+	return strings.EqualFold(login, "Paycom") || merchantID == "" || login == merchantID
 }
 
 func paymeState(status string) int {
