@@ -35,6 +35,7 @@ docker compose up --build
 
 ```bash
 DEFAULT_PAYMENT_PROVIDER=mock
+MOCK_PAYMENTS_ENABLED=true
 
 CLICK_CHECKOUT_URL=https://my.click.uz/services/pay
 CLICK_MERCHANT_ID=
@@ -83,6 +84,8 @@ FRONTEND_BASE_URL=https://your-frontend-domain
 5. На странице возврата или в панели менеджера нажать `Тестовая оплата`.
 6. Проверить, что ПК стал `Занят`, а игровая сессия стала `Сессия запущена`.
 7. Завершить сессию в панели менеджера и при необходимости получить ваучер остатка.
+
+Для развернутого тестового стенда `Тест` включается флагом `MOCK_PAYMENTS_ENABLED=true`. Перед реальным production-запуском его нужно выключить, иначе публичный QR сможет создавать сессии без реальной оплаты.
 
 ## Payme sandbox-flow
 

@@ -18,6 +18,7 @@ type Config struct {
 	CloudBaseURL    string
 
 	DefaultPaymentProvider string
+	MockPaymentsEnabled    bool
 	ClickCheckoutURL       string
 	ClickMerchantID        string
 	ClickServiceID         string
@@ -62,6 +63,7 @@ func Load() (Config, error) {
 		AdminAPIToken:           env("ADMIN_API_TOKEN", ""),
 		CloudBaseURL:            strings.TrimRight(env("CLOUD_BASE_URL", ""), "/"),
 		DefaultPaymentProvider:  strings.ToLower(env("DEFAULT_PAYMENT_PROVIDER", "mock")),
+		MockPaymentsEnabled:     envBool("MOCK_PAYMENTS_ENABLED", !strings.EqualFold(appEnv, "production")),
 		ClickCheckoutURL:        strings.TrimRight(env("CLICK_CHECKOUT_URL", "https://my.click.uz/services/pay"), "/"),
 		ClickMerchantID:         env("CLICK_MERCHANT_ID", ""),
 		ClickServiceID:          env("CLICK_SERVICE_ID", ""),

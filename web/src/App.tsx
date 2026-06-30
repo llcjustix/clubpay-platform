@@ -32,7 +32,6 @@ import {
 import './styles.css';
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8080';
-const IS_DEV = import.meta.env.DEV;
 const ADMIN_REFRESH_MS = 2000;
 const OWNER_REFRESH_MS = 5000;
 const TOKEN_KEY = 'clubpay_token';
@@ -534,7 +533,7 @@ function QRPage({ token }: { token: string }) {
         setData(payload);
         setSelected(payload.tariffs[0]?.id || '');
         const firstReadyProvider = payload.payment_providers.find((provider) => provider.configured)?.provider;
-        setPaymentProvider(firstReadyProvider || (IS_DEV ? 'mock' : 'payme'));
+        setPaymentProvider(firstReadyProvider || 'payme');
       })
       .catch((err) => setError(String(err.message || err)))
       .finally(() => setLoading(false));
@@ -574,11 +573,7 @@ function QRPage({ token }: { token: string }) {
 
   const selectedTariff = useMemo(() => data?.tariffs.find((tariff) => tariff.id === selected), [data, selected]);
   const providerOptions = useMemo(() => {
-    const options = data?.payment_providers || [];
-    return [
-      ...options,
-      ...(IS_DEV ? [{ provider: 'mock' as PaymentProvider, label: 'Тест', configured: true, sandbox: true, message: 'Локальная тестовая оплата без внешнего провайдера' }] : []),
-    ];
+    return data?.payment_providers || [];
   }, [data]);
   const selectedProviderOption = providerOptions.find((provider) => provider.provider === paymentProvider);
   const paymentMethodReady = Boolean(selectedProviderOption?.configured);

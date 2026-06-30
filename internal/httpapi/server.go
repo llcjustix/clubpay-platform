@@ -1371,8 +1371,8 @@ func (s *Server) handleCreateCheckout(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleMockPaymentSuccess(w http.ResponseWriter, r *http.Request) {
-	if strings.EqualFold(s.cfg.AppEnv, "production") {
-		writeError(w, http.StatusForbidden, "mock payments are disabled in production")
+	if !s.cfg.MockPaymentsEnabled {
+		writeError(w, http.StatusForbidden, "mock payments are disabled")
 		return
 	}
 	invoiceID := r.PathValue("invoice_id")
@@ -5426,7 +5426,7 @@ func defaultString(value, fallback string) string {
 func (s *Server) paymentProviderOptions(clickMerchantID, clickServiceID, clickMerchantUserID, clickSecretKey, paymeMerchantID, paymeSecretKey string) []map[string]any {
 	paymeReady, paymeMessage := s.paymeReady(paymeMerchantID, paymeSecretKey)
 	clickReady, clickMessage := s.clickReady(clickMerchantID, clickServiceID, clickMerchantUserID, clickSecretKey)
-	return []map[string]any{
+	providers := []map[string]any{
 		{
 			"provider":   payments.ProviderPayme,
 			"label":      "Payme",
@@ -5442,6 +5442,16 @@ func (s *Server) paymentProviderOptions(clickMerchantID, clickServiceID, clickMe
 			"message":    clickMessage,
 		},
 	}
+	if s.cfg.MockPaymentsEnabled {
+		providers = append(providers, map[string]any{
+			"provider":   payments.ProviderMock,
+			"label":      "Тест",
+			"configured": true,
+			"sandbox":    true,
+			"message":    "Тестовая оплата без внешнего провайдера",
+		})
+	}
+	return providers
 }
 
 func (s *Server) ensureCheckoutProviderReady(provider string, seed checkoutSeed) error {
@@ -5457,8 +5467,8 @@ func (s *Server) ensureCheckoutProviderReady(provider string, seed checkoutSeed)
 			return errors.New(message)
 		}
 	case payments.ProviderMock:
-		if strings.EqualFold(s.cfg.AppEnv, "production") {
-			return errors.New("Тестовая оплата отключена в production")
+		if !s.cfg.MockPaymentsEnabled {
+			return errors.New("Тестовая оплата отключена")
 		}
 	}
 	return nil
