@@ -13,75 +13,57 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Pull base images
+      # - name: Pull base images
+      #   run: |
+      #     retry() {
+      #       local attempt=1
+      #       local max_attempts=5
+      #       local delay=15
+
+      #       until "$@"; do
+      #         if [ "$attempt" -ge "$max_attempts" ]; then
+      #           echo "Command failed after $attempt attempts: $*"
+      #           return 1
+      #         fi
+
+      #         echo "Command failed, retrying in ${delay}s: $*"
+      #         sleep "$delay"
+      #         attempt=$((attempt + 1))
+      #         delay=$((delay * 2))
+      #       done
+      #     }
+
+      #     retry docker pull golang:1.22-alpine
+      #     retry docker pull node:22-alpine
+
+      - name: Login to Docker Hub
         run: |
-          retry() {
-            local attempt=1
-            local max_attempts=5
-            local delay=15
-
-            until "$@"; do
-              if [ "$attempt" -ge "$max_attempts" ]; then
-                echo "Command failed after $attempt attempts: $*"
-                return 1
-              fi
-
-              echo "Command failed, retrying in ${delay}s: $*"
-              sleep "$delay"
-              attempt=$((attempt + 1))
-              delay=$((delay * 2))
-            done
-          }
-
-          retry docker pull golang:1.22-alpine
-          retry docker pull node:22-alpine
+          echo "${{ secrets.DOCKERHUB_TOKEN }}" | docker login \
+            -u "${{ secrets.DOCKER_USERNAME }}" \
+            --password-stdin
 
       - name: Build API
         run: |
-          retry() {
-            local attempt=1
-            local max_attempts=3
-            local delay=20
-
-            until "$@"; do
-              if [ "$attempt" -ge "$max_attempts" ]; then
-                echo "Command failed after $attempt attempts: $*"
-                return 1
-              fi
-
-              echo "Command failed, retrying in ${delay}s: $*"
-              sleep "$delay"
-              attempt=$((attempt + 1))
-              delay=$((delay * 2))
-            done
-          }
-
-          retry docker build -t clubpay-api:latest .
+          docker build \
+            -t ${{ secrets.DOCKER_USERNAME }}/clubpay-api:${{ github.sha }} \
+            -t ${{ secrets.DOCKER_USERNAME }}/clubpay-api:latest \
+            .
 
       - name: Build Web
         run: |
-          retry() {
-            local attempt=1
-            local max_attempts=3
-            local delay=20
-
-            until "$@"; do
-              if [ "$attempt" -ge "$max_attempts" ]; then
-                echo "Command failed after $attempt attempts: $*"
-                return 1
-              fi
-
-              echo "Command failed, retrying in ${delay}s: $*"
-              sleep "$delay"
-              attempt=$((attempt + 1))
-              delay=$((delay * 2))
-            done
-          }
-
-          retry docker build \
+          docker build \
             --build-arg VITE_API_BASE_URL=https://api-clubpay.justix.uz \
-            -t clubpay-web:latest \
+            -t ${{ secrets.DOCKER_USERNAME }}/clubpay-web:${{ github.sha }} \
+            -t ${{ secrets.DOCKER_USERNAME }}/clubpay-web:latest \
             ./web
+
+      - name: Push images
+        run: |
+          docker push ${{ secrets.DOCKER_USERNAME }}/clubpay-api:${{ github.sha }}
+          docker push ${{ secrets.DOCKER_USERNAME }}/clubpay-api:latest
+
+          docker push ${{ secrets.DOCKER_USERNAME }}/clubpay-web:${{ github.sha }}
+          docker push ${{ secrets.DOCKER_USERNAME }}/clubpay-web:latest
 
       - name: Sync docker-compose
         run: |
@@ -91,5 +73,14 @@ jobs:
       - name: Deploy
         run: |
           cd /home/ubuntu/clubpay-platform
+
+          export DB_HOST="${{ secrets.DB_HOST }}"
+          export DB_PORT="${{ secrets.DB_PORT }}"
+          export DB_NAME="${{ secrets.DB_NAME }}"
+          export DB_USER="${{ secrets.DB_USER }}"
+          export DB_PASSWORD="${{ secrets.DB_PASSWORD }}"
+          export DOCKER_USERNAME="${{ secrets.DOCKER_USERNAME }}"
+
+          docker compose pull
           docker compose up -d --remove-orphans
           docker ps
