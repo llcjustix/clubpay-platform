@@ -69,7 +69,8 @@ func BuildClickCheckoutURL(baseURL, merchantID, serviceID, merchantUserID, order
 	values.Set("service_id", serviceID)
 	values.Set("merchant_user_id", merchantUserID)
 	values.Set("transaction_param", orderID)
-	values.Set("amount", formatClickAmount(amountTiyin))
+	values.Set("order_id", orderID)
+	values.Set("amount", FormatClickAmount(amountTiyin))
 	if returnURL != "" {
 		values.Set("return_url", returnURL)
 	}
@@ -89,9 +90,24 @@ func ClickSign(secretKey, clickTransID, serviceID, merchantTransID, merchantPrep
 	return hex.EncodeToString(sum[:])
 }
 
-func formatClickAmount(amountTiyin int64) string {
+func FormatClickAmount(amountTiyin int64) string {
 	if amountTiyin%100 == 0 {
 		return strconv.FormatInt(amountTiyin/100, 10)
 	}
 	return fmt.Sprintf("%.2f", float64(amountTiyin)/100)
+}
+
+func ClickAmountValue(amountTiyin int64) any {
+	formatted := FormatClickAmount(amountTiyin)
+	if !strings.Contains(formatted, ".") {
+		value, err := strconv.ParseInt(formatted, 10, 64)
+		if err == nil {
+			return value
+		}
+	}
+	value, err := strconv.ParseFloat(formatted, 64)
+	if err != nil {
+		return 0
+	}
+	return value
 }

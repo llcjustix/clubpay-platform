@@ -3,6 +3,7 @@ package httpapi
 import (
 	"bytes"
 	"context"
+	"crypto/md5"
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/base64"
@@ -31,6 +32,10 @@ type Server struct {
 	cfg  config.Config
 	db   *pgxpool.Pool
 	core core.Adapter
+}
+
+type coreEventSubscriber interface {
+	SetEventHandler(core.EventHandler)
 }
 
 var paymeSandboxPageTemplate = template.Must(template.New("payme-sandbox").Parse(`<!doctype html>
@@ -75,13 +80,60 @@ var paymeSandboxPageTemplate = template.Must(template.New("payme-sandbox").Parse
 </body>
 </html>`))
 
+var paymeCheckoutPageTemplate = template.Must(template.New("payme-checkout").Parse(`<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Переход в Payme</title>
+  <style>
+    :root { color-scheme: dark; }
+    body { margin: 0; min-height: 100vh; display: grid; place-items: center; background: #08111d; color: #f7fbff; font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+    main { width: min(420px, calc(100vw - 32px)); padding: 24px; border: 1px solid #243852; border-radius: 16px; background: #101b2a; box-shadow: 0 18px 50px rgba(0,0,0,.25); }
+    small { display: block; margin-bottom: 10px; color: #2fd0c4; font-weight: 900; letter-spacing: .08em; text-transform: uppercase; }
+    h1 { margin: 0 0 10px; font-size: 24px; line-height: 1.15; }
+    p { margin: 0 0 18px; color: #9fb1c8; line-height: 1.45; }
+    button, a { display: inline-flex; align-items: center; justify-content: center; width: 100%; min-height: 48px; border-radius: 12px; font: 800 16px system-ui, sans-serif; text-decoration: none; box-sizing: border-box; }
+    button { border: 0; background: #2fd0c4; color: #031116; cursor: pointer; }
+    a { margin-top: 10px; border: 1px solid #31445e; color: #d9e7f8; background: #162336; }
+  </style>
+</head>
+<body>
+  <main>
+    <small>Payme</small>
+    <h1>Открываем оплату</h1>
+    <p>Если переход не начался автоматически, нажмите кнопку ниже.</p>
+    <form id="payme-form" method="post" action="{{.ActionURL}}">
+      <input type="hidden" name="merchant" value="{{.MerchantID}}">
+      <input type="hidden" name="amount" value="{{.Amount}}">
+      <input type="hidden" name="account[order_id]" value="{{.InvoiceID}}">
+      <input type="hidden" name="lang" value="ru">
+      <input type="hidden" name="callback" value="{{.ReturnURL}}">
+      <input type="hidden" name="callback_timeout" value="1500">
+      <input type="hidden" name="description" value="{{.Description}}">
+      {{if .Detail}}<input type="hidden" name="detail" value="{{.Detail}}">{{end}}
+      <button type="submit">Перейти в Payme</button>
+    </form>
+    <a href="{{.ReturnURL}}">Вернуться в Clubpay</a>
+  </main>
+  <script>
+    document.getElementById('payme-form').submit();
+  </script>
+</body>
+</html>`))
+
 func NewServer(cfg config.Config, db *pgxpool.Pool, coreAdapter core.Adapter) *Server {
-	return &Server{cfg: cfg, db: db, core: coreAdapter}
+	server := &Server{cfg: cfg, db: db, core: coreAdapter}
+	if subscriber, ok := coreAdapter.(coreEventSubscriber); ok {
+		subscriber.SetEventHandler(server.handleCoreWSEvent)
+	}
+	return server
 }
 
 func (s *Server) Routes() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /api/health", s.handleHealth)
+	mux.HandleFunc("GET /api/node/status", s.handleNodeStatus)
 	mux.HandleFunc("POST /api/auth/login", s.handleLogin)
 	mux.HandleFunc("GET /api/auth/me", s.handleMe)
 	mux.HandleFunc("POST /api/auth/logout", s.handleLogout)
@@ -91,12 +143,17 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("POST /api/payments/click/prepare", s.handleClickPrepare)
 	mux.HandleFunc("POST /api/payments/click/complete", s.handleClickComplete)
 	mux.HandleFunc("POST /api/payments/click/callback", s.handleClickCallback)
+	mux.HandleFunc("GET /api/payments/payme/checkout/{invoice_id}", s.handlePaymeCheckoutPage)
 	mux.HandleFunc("GET /api/payments/payme/sandbox/{invoice_id}", s.handlePaymeSandboxPage)
 	mux.HandleFunc("POST /api/payments/payme/sandbox/{invoice_id}/pay", s.handlePaymeSandboxPay)
 	mux.HandleFunc("POST /api/payments/payme/callback", s.handlePaymeCallback)
 	mux.HandleFunc("POST /api/payments/sync/{invoice_id}", s.handlePaymentSync)
 	mux.HandleFunc("POST /api/payments/mock/success/{invoice_id}", s.handleMockPaymentSuccess)
 	mux.HandleFunc("POST /api/core/events", s.handleCoreEvent)
+	mux.HandleFunc("GET /api/core/bootstrap", s.handleCoreBootstrap)
+	if coreWS, ok := s.core.(http.Handler); ok {
+		mux.Handle("GET /api/core/ws", coreWS)
+	}
 	mux.HandleFunc("GET /api/edge/snapshot", s.handleEdgeSnapshot)
 	mux.HandleFunc("POST /api/edge/events", s.handleEdgeEvents)
 	mux.HandleFunc("GET /api/admin/catalog", s.handleAdminCatalog)
@@ -132,7 +189,69 @@ func (s *Server) Routes() http.Handler {
 }
 
 func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "service": "clubpay-api"})
+	writeJSON(w, http.StatusOK, s.nodeStatusPayload())
+}
+
+func (s *Server) handleNodeStatus(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, http.StatusOK, s.nodeStatusPayload())
+}
+
+func (s *Server) nodeStatusPayload() map[string]any {
+	mode := strings.ToLower(strings.TrimSpace(s.cfg.NodeMode))
+	if mode == "" {
+		mode = "cloud"
+	}
+	nodeID := ""
+	clubID := ""
+	if s.localNodeMode() {
+		nodeID = s.edgeNodeID()
+		clubID = strings.TrimSpace(s.cfg.EdgeClubID)
+	}
+	syncEnabled := s.localNodeMode() && strings.TrimSpace(s.cfg.CloudBaseURL) != "" && strings.TrimSpace(s.cfg.EdgeClubID) != ""
+	return map[string]any{
+		"ok":                              true,
+		"service":                         "clubpay-api",
+		"node_mode":                       mode,
+		"node_id":                         nodeID,
+		"club_id":                         clubID,
+		"local_authority":                 s.localNodeMode(),
+		"sync_enabled":                    syncEnabled,
+		"cloud_base_url_configured":       strings.TrimSpace(s.cfg.CloudBaseURL) != "",
+		"manager_online_payments_enabled": s.cfg.ManagerOnlinePayments,
+		"online_payments_enabled":         !s.onlinePaymentsDisabledForNode(),
+		"split_payments_enabled":          s.cfg.SplitPaymentsEnabled,
+		"capabilities":                    s.nodeCapabilities(),
+	}
+}
+
+func (s *Server) nodeCapabilities() []string {
+	if s.managerNodeMode() {
+		capabilities := []string{"manager_panel", "cash_sessions", "vouchers", "core_commands", "local_database", "cloud_sync"}
+		if s.cfg.ManagerOnlinePayments {
+			capabilities = append(capabilities, "online_checkout")
+		}
+		return capabilities
+	}
+	if s.edgeNodeMode() {
+		return []string{"qr_checkout", "manager_panel", "cash_sessions", "vouchers", "core_commands", "local_database", "provider_callbacks", "cloud_sync"}
+	}
+	return []string{"qr_checkout", "manager_panel", "owner_dashboard", "settings", "provider_callbacks", "edge_snapshot_server"}
+}
+
+func (s *Server) localNodeMode() bool {
+	return s.edgeNodeMode() || s.managerNodeMode()
+}
+
+func (s *Server) edgeNodeMode() bool {
+	return strings.EqualFold(s.cfg.NodeMode, "edge")
+}
+
+func (s *Server) managerNodeMode() bool {
+	return strings.EqualFold(s.cfg.NodeMode, "manager")
+}
+
+func (s *Server) onlinePaymentsDisabledForNode() bool {
+	return s.managerNodeMode() && !s.cfg.ManagerOnlinePayments
 }
 
 func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
@@ -248,14 +367,16 @@ func (s *Server) handleBackofficeCreateClub(w http.ResponseWriter, r *http.Reque
 		INSERT INTO clubs (
 			name, slug, legal_name, tin, address, timezone, status,
 			click_merchant_id, click_service_id, click_merchant_user_id, click_secret_key,
-			payme_merchant_id, payme_secret_key,
-			platform_fee_bps, ofd_mxik, ofd_package_code
+			click_club_cntrg_id, click_platform_cntrg_id,
+			payme_merchant_id, payme_secret_key, payme_club_receiver_id, payme_platform_receiver_id,
+			platform_fee_bps, ofd_mxik, ofd_package_code, ofd_service_name, ofd_unit_code, ofd_vat_percent
 		)
-		VALUES ($1, $2, $3, $4, $5, $6, COALESCE(NULLIF($7, ''), 'active'), $8, $9, $10, $11, $12, $13, $14, $15, $16)
+		VALUES ($1, $2, $3, $4, $5, $6, COALESCE(NULLIF($7, ''), 'active'), $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23)
 		RETURNING id
 	`, req.Name, slug, req.LegalName, req.TIN, req.Address, defaultString(req.Timezone, "Asia/Tashkent"),
-		req.Status, req.ClickMerchantID, req.ClickServiceID, req.ClickMerchantUserID, req.ClickSecretKey, req.PaymeMerchantID, req.PaymeSecretKey,
-		req.PlatformFeeBPS, req.OFDMXIK, req.OFDPackageCode).Scan(&id)
+		req.Status, req.ClickMerchantID, req.ClickServiceID, req.ClickMerchantUserID, req.ClickSecretKey, req.ClickClubCntrgID, req.ClickPlatformCntrgID,
+		req.PaymeMerchantID, req.PaymeSecretKey, req.PaymeClubReceiverID, req.PaymePlatformReceiverID,
+		req.PlatformFeeBPS, req.OFDMXIK, req.OFDPackageCode, req.OFDServiceName, req.OFDUnitCode, req.OFDVATPercent).Scan(&id)
 	if err != nil {
 		if writeConflictIfUnique(w, err, "club name or slug already exists") {
 			return
@@ -318,16 +439,24 @@ func (s *Server) handleBackofficeUpdateClub(w http.ResponseWriter, r *http.Reque
 			    click_service_id = $10,
 			    click_merchant_user_id = $11,
 			    click_secret_key = $12,
-			    payme_merchant_id = $13,
-			    payme_secret_key = $14,
-			    platform_fee_bps = $15,
-			    ofd_mxik = $16,
-			    ofd_package_code = $17
+			    click_club_cntrg_id = $13,
+			    click_platform_cntrg_id = $14,
+			    payme_merchant_id = $15,
+			    payme_secret_key = $16,
+			    payme_club_receiver_id = $17,
+			    payme_platform_receiver_id = $18,
+			    platform_fee_bps = $19,
+			    ofd_mxik = $20,
+			    ofd_package_code = $21,
+			    ofd_service_name = $22,
+			    ofd_unit_code = $23,
+			    ofd_vat_percent = $24
 			WHERE id = $1
 		`, clubID, strings.TrimSpace(req.Name), slugify(req.Name), req.LegalName, req.TIN,
 			req.Address, defaultString(req.Timezone, "Asia/Tashkent"), defaultString(req.Status, "active"),
-			req.ClickMerchantID, req.ClickServiceID, req.ClickMerchantUserID, req.ClickSecretKey, req.PaymeMerchantID, req.PaymeSecretKey,
-			req.PlatformFeeBPS, req.OFDMXIK, req.OFDPackageCode)
+			req.ClickMerchantID, req.ClickServiceID, req.ClickMerchantUserID, req.ClickSecretKey, req.ClickClubCntrgID, req.ClickPlatformCntrgID,
+			req.PaymeMerchantID, req.PaymeSecretKey, req.PaymeClubReceiverID, req.PaymePlatformReceiverID,
+			req.PlatformFeeBPS, req.OFDMXIK, req.OFDPackageCode, req.OFDServiceName, req.OFDUnitCode, req.OFDVATPercent)
 	} else {
 		_, err = s.db.Exec(r.Context(), `
 			UPDATE clubs
@@ -1055,18 +1184,19 @@ func (s *Server) handleQR(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var pc qrPC
-	var zoneStatus string
+	var qrType, zoneStatus string
 	err := s.db.QueryRow(ctx, `
-		SELECT c.id, c.name, p.id, p.external_pc_id, p.number, p.label, p.status_cache, z.id, z.name, z.hourly_price_tiyin, z.status,
-		       COALESCE(c.click_merchant_id, ''), COALESCE(c.click_service_id, ''), COALESCE(c.click_merchant_user_id, ''), COALESCE(c.click_secret_key, ''),
-		       COALESCE(c.payme_merchant_id, ''), COALESCE(c.payme_secret_key, '')
-		FROM qr_codes q
+			SELECT q.type, c.id, c.name, p.id, p.external_pc_id, p.number, p.label, p.status_cache, z.id, z.name, z.hourly_price_tiyin, z.status,
+			       COALESCE(c.click_merchant_id, ''), COALESCE(c.click_service_id, ''), COALESCE(c.click_merchant_user_id, ''), COALESCE(c.click_secret_key, ''),
+			       COALESCE(c.payme_merchant_id, ''), COALESCE(c.payme_secret_key, '')
+			FROM qr_codes q
 		JOIN pc_refs p ON p.id = q.pc_ref_id
 		JOIN clubs c ON c.id = q.club_id
 		JOIN zones z ON z.id = p.zone_id
-		WHERE q.public_token = $1 AND q.status = 'active' AND q.type = 'static_pc'
-		  AND c.status = 'active' AND z.status <> 'deleted' AND p.status_cache <> 'deleted'
-	`, token).Scan(
+			WHERE q.public_token = $1 AND q.status = 'active' AND q.type IN ('static_pc', 'session_extend')
+			  AND c.status = 'active' AND z.status <> 'deleted' AND p.status_cache <> 'deleted'
+		`, token).Scan(
+		&qrType,
 		&pc.ClubID, &pc.ClubName, &pc.PCID, &pc.ExternalPCID, &pc.Number, &pc.Label, &pc.Status, &pc.ZoneID, &pc.ZoneName, &pc.HourlyPriceTiyin,
 		&zoneStatus, &pc.ClickMerchantID, &pc.ClickServiceID, &pc.ClickMerchantUserID, &pc.ClickSecretKey, &pc.PaymeMerchantID, &pc.PaymeSecretKey,
 	)
@@ -1082,6 +1212,29 @@ func (s *Server) handleQR(w http.ResponseWriter, r *http.Request) {
 		pc.Status = "maintenance"
 	} else {
 		pc.Status = s.syncCorePCStatus(ctx, pc.PCID, pc.ExternalPCID, pc.Status)
+	}
+	var activeSession map[string]any
+	if pc.Status == "occupied" {
+		grant, ok, err := activeGrantForPC(ctx, s.db, pc.PCID)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		if ok {
+			activeSession = map[string]any{"can_extend": qrType == "session_extend"}
+			if grant.PlannedEndsAt != nil {
+				remaining := int(time.Until(*grant.PlannedEndsAt).Seconds())
+				if remaining < 0 {
+					remaining = 0
+				}
+				activeSession["planned_ends_at"] = grant.PlannedEndsAt.UTC()
+				activeSession["remaining_seconds"] = remaining
+			} else if grant.DurationSeconds > 0 {
+				activeSession["remaining_seconds"] = grant.DurationSeconds
+			} else if grant.DurationMinutes > 0 {
+				activeSession["remaining_seconds"] = grant.DurationMinutes * 60
+			}
+		}
 	}
 
 	rows, err := s.db.Query(ctx, `
@@ -1126,6 +1279,8 @@ func (s *Server) handleQR(w http.ResponseWriter, r *http.Request) {
 			"hourly_price_tiyin": pc.HourlyPriceTiyin,
 			"hourly_price_uzs":   pc.HourlyPriceTiyin / 100,
 		},
+		"qr_type":           qrType,
+		"active_session":    activeSession,
 		"tariffs":           tariffs,
 		"payment_providers": s.paymentProviderOptions(pc.ClickMerchantID, pc.ClickServiceID, pc.ClickMerchantUserID, pc.ClickSecretKey, pc.PaymeMerchantID, pc.PaymeSecretKey),
 		"telegram": map[string]any{
@@ -1175,22 +1330,28 @@ func (s *Server) handleCreateCheckout(w http.ResponseWriter, r *http.Request) {
 	}
 	var orderSeed checkoutSeed
 	err := s.db.QueryRow(ctx, `
-		SELECT c.id, c.name, p.id, p.external_pc_id, p.status_cache, z.id, z.hourly_price_tiyin,
-		       COALESCE(c.click_merchant_id, ''), COALESCE(c.click_service_id, ''), COALESCE(c.click_merchant_user_id, ''), COALESCE(c.click_secret_key, ''),
-		       COALESCE(c.payme_merchant_id, ''), COALESCE(c.payme_secret_key, ''), COALESCE(c.platform_fee_bps, 0),
-		       COALESCE(c.ofd_mxik, ''), COALESCE(c.ofd_package_code, '')
+			SELECT q.type, c.id, c.name, p.id, p.external_pc_id, p.status_cache, z.id, z.hourly_price_tiyin,
+			       COALESCE(c.click_merchant_id, ''), COALESCE(c.click_service_id, ''), COALESCE(c.click_merchant_user_id, ''), COALESCE(c.click_secret_key, ''),
+			       COALESCE(c.click_club_cntrg_id, ''), COALESCE(c.click_platform_cntrg_id, ''),
+			       COALESCE(c.payme_merchant_id, ''), COALESCE(c.payme_secret_key, ''),
+		       COALESCE(c.payme_club_receiver_id, ''), COALESCE(c.payme_platform_receiver_id, ''),
+		       COALESCE(c.platform_fee_bps, 0), COALESCE(c.legal_name, ''), COALESCE(c.tin, ''),
+		       COALESCE(c.ofd_mxik, ''), COALESCE(c.ofd_package_code, ''), COALESCE(c.ofd_service_name, ''), COALESCE(c.ofd_unit_code, ''), COALESCE(c.ofd_vat_percent, 0)
 		FROM qr_codes q
 		JOIN clubs c ON c.id = q.club_id
 		JOIN pc_refs p ON p.id = q.pc_ref_id
 		JOIN zones z ON z.id = p.zone_id
 		WHERE q.public_token = $1 AND q.status = 'active'
-		  AND c.status = 'active' AND z.status = 'active' AND p.status_cache <> 'deleted'
-	`, req.QRToken).Scan(
+			  AND c.status = 'active' AND z.status = 'active' AND p.status_cache <> 'deleted'
+		`, req.QRToken).Scan(
+		&orderSeed.QRType,
 		&orderSeed.ClubID, &orderSeed.ClubName, &orderSeed.PCID, &orderSeed.ExternalPCID, &orderSeed.PCStatus,
 		&orderSeed.ZoneID, &orderSeed.HourlyPriceTiyin,
 		&orderSeed.ClickMerchantID, &orderSeed.ClickServiceID, &orderSeed.ClickMerchantUserID, &orderSeed.ClickSecretKey,
-		&orderSeed.PaymeMerchantID, &orderSeed.PaymeSecretKey, &orderSeed.PlatformFeeBPS,
-		&orderSeed.OFDMXIK, &orderSeed.OFDPackageCode,
+		&orderSeed.ClickClubCntrgID, &orderSeed.ClickPlatformCntrgID,
+		&orderSeed.PaymeMerchantID, &orderSeed.PaymeSecretKey, &orderSeed.PaymeClubReceiverID, &orderSeed.PaymePlatformReceiverID,
+		&orderSeed.PlatformFeeBPS, &orderSeed.LegalName, &orderSeed.TIN,
+		&orderSeed.OFDMXIK, &orderSeed.OFDPackageCode, &orderSeed.OFDServiceName, &orderSeed.OFDUnitCode, &orderSeed.OFDVATPercent,
 	)
 	if errors.Is(err, pgx.ErrNoRows) {
 		writeError(w, http.StatusNotFound, "QR token not found")
@@ -1219,11 +1380,15 @@ func (s *Server) handleCreateCheckout(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	orderSeed.PCStatus = s.syncCorePCStatus(ctx, orderSeed.PCID, orderSeed.ExternalPCID, orderSeed.PCStatus)
-	if !isPayablePCStatus(orderSeed.PCStatus) {
-		if orderSeed.PCStatus != "occupied" {
-			writeError(w, http.StatusConflict, "PC is not available")
+	if !canUseQRForSession(orderSeed.PCStatus, orderSeed.QRType) {
+		if orderSeed.PCStatus == "occupied" && orderSeed.QRType != "session_extend" {
+			writeError(w, http.StatusConflict, "PC is occupied. Use session QR to extend")
 			return
 		}
+		writeError(w, http.StatusConflict, "PC is not available")
+		return
+	}
+	if orderSeed.PCStatus == "occupied" {
 		grant, ok, err := activeGrantForPC(ctx, s.db, orderSeed.PCID)
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, err.Error())
@@ -1247,7 +1412,7 @@ func (s *Server) handleCreateCheckout(w http.ResponseWriter, r *http.Request) {
 		orderSeed.DurationSeconds = orderSeed.DurationMinutes * 60
 	}
 	if strings.TrimSpace(req.VoucherCode) != "" {
-		voucherID, voucherSeconds, err := s.validVoucherForPC(ctx, req.VoucherCode, orderSeed.ClubID, orderSeed.PCID, orderSeed.PCStatus)
+		voucherID, voucherSeconds, err := s.validVoucherForPC(ctx, req.VoucherCode, orderSeed.ClubID, orderSeed.PCID, orderSeed.PCStatus, orderSeed.QRType)
 		if err != nil {
 			writeError(w, http.StatusBadRequest, err.Error())
 			return
@@ -1268,6 +1433,17 @@ func (s *Server) handleCreateCheckout(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	platformSplitAmount, clubSplitAmount := s.splitAmountsForClub(orderSeed.AmountTiyin, orderSeed.PlatformFeeBPS)
+	splitPayload := s.providerSplitPayload(provider, splitSeed{
+		ClickClubCntrgID:        orderSeed.ClickClubCntrgID,
+		ClickPlatformCntrgID:    orderSeed.ClickPlatformCntrgID,
+		PaymeClubReceiverID:     orderSeed.PaymeClubReceiverID,
+		PaymePlatformReceiverID: orderSeed.PaymePlatformReceiverID,
+		PlatformAmountTiyin:     platformSplitAmount,
+		ClubAmountTiyin:         clubSplitAmount,
+	})
+	fiscalPayload := s.orderFiscalPayload(orderSeed)
+	splitPayloadJSON, _ := json.Marshal(splitPayload)
+	fiscalPayloadJSON, _ := json.Marshal(fiscalPayload)
 	providerPrepareID := ""
 	if provider == payments.ProviderClick {
 		providerPrepareID = randomNumericID()
@@ -1289,12 +1465,12 @@ func (s *Server) handleCreateCheckout(w http.ResponseWriter, r *http.Request) {
 		INSERT INTO payment_orders (
 			invoice_id, club_id, pc_ref_id, tariff_block_id, amount_tiyin, duration_minutes, duration_seconds, voucher_id,
 			provider, provider_prepare_id, status, split_platform_amount_tiyin, split_club_amount_tiyin, expires_at,
-			extension_grant_id
+			extension_grant_id, split_payload, fiscal_payload
 		)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, NULLIF($8, '')::uuid, $9, NULLIF($10, ''), 'created', $11, $12, $13, NULLIF($14, '')::uuid)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, NULLIF($8, '')::uuid, $9, NULLIF($10, ''), 'created', $11, $12, $13, NULLIF($14, '')::uuid, $15, $16)
 		RETURNING id
 	`, invoiceID, orderSeed.ClubID, orderSeed.PCID, tariffIDArg, orderSeed.AmountTiyin, orderSeed.DurationMinutes, orderSeed.DurationSeconds, orderSeed.VoucherID,
-		provider, providerPrepareID, platformSplitAmount, clubSplitAmount, expiresAt, orderSeed.ExtensionGrantID).Scan(&orderID)
+		provider, providerPrepareID, platformSplitAmount, clubSplitAmount, expiresAt, orderSeed.ExtensionGrantID, splitPayloadJSON, fiscalPayloadJSON).Scan(&orderID)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -1308,18 +1484,7 @@ func (s *Server) handleCreateCheckout(w http.ResponseWriter, r *http.Request) {
 		providerPaymentID = "mock_" + randomHex(12)
 		checkoutURL = s.cfg.FrontendBaseURL + "/payment/mock?invoice_id=" + invoiceID
 	case payments.ProviderPayme:
-		var err error
-		checkoutURL, err = payments.BuildPaymeCheckoutURL(
-			s.cfg.PaymeCheckoutURL,
-			defaultString(orderSeed.PaymeMerchantID, s.cfg.PaymeMerchantID),
-			invoiceID,
-			orderSeed.AmountTiyin,
-			returnURL,
-		)
-		if err != nil {
-			writeError(w, http.StatusBadGateway, err.Error())
-			return
-		}
+		checkoutURL = strings.TrimRight(s.cfg.PublicBaseURL, "/") + "/api/payments/payme/checkout/" + url.PathEscape(invoiceID)
 	case payments.ProviderClick:
 		var err error
 		checkoutURL, err = payments.BuildClickCheckoutURL(
@@ -1364,6 +1529,7 @@ func (s *Server) handleCreateCheckout(w http.ResponseWriter, r *http.Request) {
 			"voucher_seconds":             orderSeed.VoucherSeconds,
 			"split_platform_amount_tiyin": platformSplitAmount,
 			"split_club_amount_tiyin":     clubSplitAmount,
+			"split_payload":               splitPayload,
 			"expires_at":                  expiresAt,
 		},
 		"checkout_url": checkoutURL,
@@ -1441,14 +1607,18 @@ func (s *Server) handleClickCallback(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleClickCallbackAction(w http.ResponseWriter, r *http.Request, expectedAction string) {
+	if isJSONRequest(r) {
+		s.handleClickShopSplitCallbackAction(w, r, expectedAction)
+		return
+	}
 	if err := r.ParseForm(); err != nil {
 		writeClickResponse(w, "", "", "", -8, "Invalid form")
 		return
 	}
 	payload := formPayload(r)
 	rawPayload, _ := json.Marshal(payload)
-	clickTransID := r.FormValue("click_trans_id")
-	merchantTransID := r.FormValue("merchant_trans_id")
+	clickTransID := firstFormValue(r, "click_trans_id", "click_paydoc_id", "payment_id")
+	merchantTransID := firstFormValue(r, "merchant_trans_id", "transaction_param", "order_id")
 	merchantPrepareID := r.FormValue("merchant_prepare_id")
 	amountText := r.FormValue("amount")
 	action := defaultString(r.FormValue("action"), expectedAction)
@@ -1492,22 +1662,29 @@ func (s *Server) handleClickCallbackAction(w http.ResponseWriter, r *http.Reques
 			writeClickResponse(w, clickTransID, merchantTransID, order.ProviderPrepareID, -4, "Already paid")
 			return
 		}
+		split := s.clickSplitForOrder(order)
+		splitPayload, _ := json.Marshal(split)
 		_, err = s.db.Exec(r.Context(), `
 			UPDATE payment_orders
 			SET provider = 'click',
 			    provider_payment_id = COALESCE(NULLIF(provider_payment_id, ''), $1),
 			    provider_status = 'prepared',
 			    provider_payload = $2,
+			    split_payload = $4,
 			    updated_at = now()
 			WHERE invoice_id = $3
-		`, clickTransID, rawPayload, merchantTransID)
+		`, clickTransID, rawPayload, merchantTransID, splitPayload)
 		if err != nil {
 			s.markProviderEvent(r.Context(), eventID, "failed")
 			writeClickResponse(w, clickTransID, merchantTransID, order.ProviderPrepareID, -8, err.Error())
 			return
 		}
 		s.markProviderEvent(r.Context(), eventID, "processed")
-		writeClickResponse(w, clickTransID, merchantTransID, order.ProviderPrepareID, 0, "Success")
+		extra := []any{}
+		if len(split) > 0 {
+			extra = append(extra, "split", split)
+		}
+		writeClickResponse(w, clickTransID, merchantTransID, order.ProviderPrepareID, 0, "Success", extra...)
 		return
 	}
 	if r.FormValue("error") != "0" && r.FormValue("error") != "" {
@@ -1546,6 +1723,172 @@ func (s *Server) handleClickCallbackAction(w http.ResponseWriter, r *http.Reques
 	}
 	s.markProviderEvent(r.Context(), eventID, "processed")
 	writeClickResponse(w, clickTransID, merchantTransID, order.ProviderPrepareID, 0, "Success", "merchant_confirm_id", order.ProviderPrepareID, "grant_id", grantID)
+}
+
+func (s *Server) handleClickShopSplitCallbackAction(w http.ResponseWriter, r *http.Request, expectedAction string) {
+	var req clickShopSplitRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeClickShopSplitResponse(w, "", "", "", -8, "Invalid JSON")
+		return
+	}
+	action := req.actionString()
+	clickPaydocID := jsonScalarString(req.ClickPaydocID)
+	attemptTransID := jsonScalarString(req.AttemptTransID)
+	merchantPrepareID := jsonScalarString(req.MerchantPrepareID)
+	serviceID := jsonScalarString(req.ServiceID)
+	params := decodeJSONParamStrings(req.Params)
+	rawPayload, _ := json.Marshal(req)
+	eventID, _ := s.insertProviderEvent(r.Context(), payments.ProviderClick, "shop_split_action_"+action, clickPaydocID, rawPayload)
+
+	expectedJSONAction := expectedClickShopSplitAction(expectedAction)
+	if expectedJSONAction != "" && action != expectedJSONAction {
+		s.markProviderEvent(r.Context(), eventID, "invalid_action")
+		writeClickShopSplitResponse(w, clickPaydocID, attemptTransID, merchantPrepareID, -3, "Action not found")
+		return
+	}
+	merchantTransID := firstNonEmpty(params["order_id"], params["transaction_param"], params["merchant_trans_id"], params["invoice_id"])
+	if merchantTransID == "" {
+		s.markProviderEvent(r.Context(), eventID, "missing_order_id")
+		writeClickShopSplitResponse(w, clickPaydocID, attemptTransID, merchantPrepareID, -5, "Order not found")
+		return
+	}
+	order, err := s.clickOrderByInvoice(r.Context(), merchantTransID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		s.markProviderEvent(r.Context(), eventID, "not_found")
+		writeClickShopSplitResponse(w, clickPaydocID, attemptTransID, merchantPrepareID, -5, "Order not found")
+		return
+	}
+	if err != nil {
+		s.markProviderEvent(r.Context(), eventID, "failed")
+		writeClickShopSplitResponse(w, clickPaydocID, attemptTransID, merchantPrepareID, -8, err.Error())
+		return
+	}
+	secret := defaultString(order.ClickSecretKey, s.cfg.ClickSecretKey)
+	paramsValues := orderedJSONParamValues(req.Params)
+	if !verifyClickShopSplitSign(secret, clickPaydocID, attemptTransID, serviceID, paramsValues, action, req.SignTime, req.SignString) {
+		s.markProviderEvent(r.Context(), eventID, "invalid_sign")
+		writeClickShopSplitResponse(w, clickPaydocID, attemptTransID, merchantPrepareID, -1, "Sign check failed")
+		return
+	}
+	amountText := firstNonEmpty(params["amount"], params["amount_uzs"])
+	amountTiyin := clickAmountToTiyin(amountText)
+	if amountTiyin != order.AmountTiyin {
+		s.markProviderEvent(r.Context(), eventID, "amount_mismatch")
+		writeClickShopSplitResponse(w, clickPaydocID, attemptTransID, order.ProviderPrepareID, -2, "Incorrect amount")
+		return
+	}
+	switch action {
+	case "1":
+		if order.Status == "paid" {
+			s.markProviderEvent(r.Context(), eventID, "already_paid")
+			writeClickShopSplitResponse(w, clickPaydocID, attemptTransID, order.ProviderPrepareID, -4, "Already paid")
+			return
+		}
+		split := s.clickSplitForOrder(order)
+		splitPayload, _ := json.Marshal(split)
+		_, err = s.db.Exec(r.Context(), `
+			UPDATE payment_orders
+			SET provider = 'click',
+			    provider_payment_id = COALESCE(NULLIF(provider_payment_id, ''), $1),
+			    provider_status = 'prepared',
+			    provider_payload = $2,
+			    split_payload = $4,
+			    updated_at = now()
+			WHERE invoice_id = $3
+		`, clickPaydocID, rawPayload, merchantTransID, splitPayload)
+		if err != nil {
+			s.markProviderEvent(r.Context(), eventID, "failed")
+			writeClickShopSplitResponse(w, clickPaydocID, attemptTransID, order.ProviderPrepareID, -8, err.Error())
+			return
+		}
+		s.markProviderEvent(r.Context(), eventID, "processed")
+		extra := []any{"params", map[string]any{"order_id": merchantTransID}}
+		if len(split) > 0 {
+			extra = append(extra, "split", split)
+		}
+		writeClickShopSplitResponse(w, clickPaydocID, attemptTransID, order.ProviderPrepareID, 0, "Success", extra...)
+	case "2":
+		if merchantPrepareID != "" && order.ProviderPrepareID != "" && merchantPrepareID != order.ProviderPrepareID {
+			s.markProviderEvent(r.Context(), eventID, "prepare_mismatch")
+			writeClickShopSplitResponse(w, clickPaydocID, attemptTransID, "", -6, "Transaction not found")
+			return
+		}
+		paidAt := parseOptionalTime(req.SignTime)
+		if paidAt == nil {
+			now := time.Now()
+			paidAt = &now
+		}
+		grantID, err := s.applyPaymentSuccess(r.Context(), paymentSuccess{
+			Provider:          payments.ProviderClick,
+			AmountTiyin:       amountTiyin,
+			InvoiceID:         merchantTransID,
+			ProviderPaymentID: clickPaydocID,
+			ReceiptURL:        "",
+			PaidAt:            *paidAt,
+			PS:                "click",
+		}, rawPayload)
+		if err != nil {
+			s.markProviderEvent(r.Context(), eventID, "failed")
+			writeClickShopSplitResponse(w, clickPaydocID, attemptTransID, "", -8, err.Error())
+			return
+		}
+		s.markProviderEvent(r.Context(), eventID, "processed")
+		writeClickShopSplitResponse(w, clickPaydocID, attemptTransID, "", 0, "Success", "merchant_confirm_id", numericResponseValue(order.ProviderPrepareID), "grant_id", grantID)
+	default:
+		s.markProviderEvent(r.Context(), eventID, "invalid_action")
+		writeClickShopSplitResponse(w, clickPaydocID, attemptTransID, merchantPrepareID, -3, "Action not found")
+	}
+}
+
+func (s *Server) handlePaymeCheckoutPage(w http.ResponseWriter, r *http.Request) {
+	invoiceID := strings.TrimSpace(r.PathValue("invoice_id"))
+	if invoiceID == "" {
+		writeError(w, http.StatusBadRequest, "invoice_id is required")
+		return
+	}
+	if s.isPaymeSandbox() {
+		http.Redirect(w, r, strings.TrimRight(s.cfg.PublicBaseURL, "/")+"/api/payments/payme/sandbox/"+url.PathEscape(invoiceID), http.StatusSeeOther)
+		return
+	}
+	order, err := s.providerOrderByInvoice(r.Context(), invoiceID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		writeError(w, http.StatusNotFound, "order not found")
+		return
+	}
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if order.Provider != payments.ProviderPayme {
+		writeError(w, http.StatusBadRequest, "order is not a Payme order")
+		return
+	}
+	returnURL := s.cfg.FrontendBaseURL + "/payment/return?invoice_id=" + url.QueryEscape(invoiceID)
+	if order.Status == "paid" {
+		http.Redirect(w, r, returnURL, http.StatusSeeOther)
+		return
+	}
+	if order.Status != "payment_pending" && order.Status != "created" {
+		writeError(w, http.StatusConflict, "order is not payable")
+		return
+	}
+	merchantID := defaultString(order.PaymeMerchantID, s.cfg.PaymeMerchantID)
+	if !usableProviderCredential(merchantID) {
+		writeError(w, http.StatusBadGateway, "Payme не настроен: нет merchant ID")
+		return
+	}
+	detail := paymeDetailBase64(order.FiscalPayload)
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.WriteHeader(http.StatusOK)
+	_ = paymeCheckoutPageTemplate.Execute(w, map[string]any{
+		"ActionURL":   s.cfg.PaymeCheckoutURL,
+		"MerchantID":  merchantID,
+		"InvoiceID":   invoiceID,
+		"Amount":      order.AmountTiyin,
+		"ReturnURL":   returnURL,
+		"Description": "Компьютерное время Clubpay",
+		"Detail":      detail,
+	})
 }
 
 func (s *Server) handlePaymeSandboxPage(w http.ResponseWriter, r *http.Request) {
@@ -1724,15 +2067,7 @@ func (s *Server) handlePaymentSync(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) clickOrderByInvoice(ctx context.Context, invoiceID string) (providerOrder, error) {
-	var order providerOrder
-	err := s.db.QueryRow(ctx, `
-		SELECT po.id, po.invoice_id, po.amount_tiyin, po.status, COALESCE(po.provider_prepare_id, ''),
-		       COALESCE(c.click_secret_key, ''), COALESCE(c.click_service_id, '')
-		FROM payment_orders po
-		JOIN clubs c ON c.id = po.club_id
-		WHERE po.invoice_id = $1
-	`, invoiceID).Scan(&order.ID, &order.InvoiceID, &order.AmountTiyin, &order.Status, &order.ProviderPrepareID, &order.ClickSecretKey, &order.ClickServiceID)
-	return order, err
+	return s.providerOrderByInvoice(ctx, invoiceID)
 }
 
 func (s *Server) paymeCheckPerform(ctx context.Context, raw json.RawMessage) (map[string]any, error) {
@@ -1795,6 +2130,8 @@ func (s *Server) paymeCreateTransaction(ctx context.Context, raw json.RawMessage
 	if createTime == 0 {
 		createTime = unixMilli(time.Now())
 	}
+	receivers := s.paymeReceiversForOrder(order)
+	receiversPayload, _ := json.Marshal(receivers)
 	_, err = s.db.Exec(ctx, `
 		UPDATE payment_orders
 		SET provider = 'payme',
@@ -1802,13 +2139,18 @@ func (s *Server) paymeCreateTransaction(ctx context.Context, raw json.RawMessage
 		    provider_time_ms = $2,
 		    provider_status = 'created',
 		    provider_payload = $3,
+		    split_payload = $5,
 		    updated_at = now()
 		WHERE invoice_id = $4
-	`, params.ID, createTime, rawPayload, orderID)
+	`, params.ID, createTime, rawPayload, orderID, receiversPayload)
 	if err != nil {
 		return nil, err
 	}
-	return map[string]any{"create_time": createTime, "transaction": order.ID, "state": 1}, nil
+	result := map[string]any{"create_time": createTime, "transaction": order.ID, "state": 1}
+	if len(receivers) > 0 {
+		result["receivers"] = receivers
+	}
+	return result, nil
 }
 
 func (s *Server) paymePerformTransaction(ctx context.Context, raw json.RawMessage, rawPayload []byte) (map[string]any, error) {
@@ -1963,22 +2305,46 @@ func (s *Server) paymeGetStatement(ctx context.Context, raw json.RawMessage) (ma
 func (s *Server) providerOrderByInvoice(ctx context.Context, invoiceID string) (providerOrder, error) {
 	var order providerOrder
 	err := s.db.QueryRow(ctx, `
-		SELECT id, invoice_id, provider, COALESCE(provider_payment_id, ''), COALESCE(provider_prepare_id, ''),
-		       COALESCE(provider_time_ms, 0), amount_tiyin, status, paid_at, updated_at, provider_payload
-		FROM payment_orders
+		SELECT po.id, po.invoice_id, po.provider, COALESCE(po.provider_payment_id, ''), COALESCE(po.provider_prepare_id, ''),
+		       COALESCE(po.provider_time_ms, 0), po.amount_tiyin, po.status, po.paid_at, po.updated_at, po.provider_payload,
+		       po.split_platform_amount_tiyin, po.split_club_amount_tiyin, po.fiscal_payload,
+		       COALESCE(c.click_secret_key, ''), COALESCE(c.click_service_id, ''),
+		       COALESCE(c.click_club_cntrg_id, ''), COALESCE(c.click_platform_cntrg_id, ''),
+		       COALESCE(c.payme_club_receiver_id, ''), COALESCE(c.payme_platform_receiver_id, ''),
+		       COALESCE(c.payme_merchant_id, '')
+		FROM payment_orders po
+		JOIN clubs c ON c.id = po.club_id
 		WHERE invoice_id = $1
-	`, invoiceID).Scan(&order.ID, &order.InvoiceID, &order.Provider, &order.ProviderPaymentID, &order.ProviderPrepareID, &order.ProviderTimeMS, &order.AmountTiyin, &order.Status, &order.PaidAt, &order.UpdatedAt, &order.ProviderPayload)
+	`, invoiceID).Scan(
+		&order.ID, &order.InvoiceID, &order.Provider, &order.ProviderPaymentID, &order.ProviderPrepareID, &order.ProviderTimeMS,
+		&order.AmountTiyin, &order.Status, &order.PaidAt, &order.UpdatedAt, &order.ProviderPayload,
+		&order.SplitPlatformAmountTiyin, &order.SplitClubAmountTiyin, &order.FiscalPayload, &order.ClickSecretKey, &order.ClickServiceID,
+		&order.ClickClubCntrgID, &order.ClickPlatformCntrgID, &order.PaymeClubReceiverID, &order.PaymePlatformReceiverID,
+		&order.PaymeMerchantID,
+	)
 	return order, err
 }
 
 func (s *Server) providerOrderByPaymentID(ctx context.Context, provider, paymentID string) (providerOrder, error) {
 	var order providerOrder
 	err := s.db.QueryRow(ctx, `
-		SELECT id, invoice_id, provider, COALESCE(provider_payment_id, ''), COALESCE(provider_prepare_id, ''),
-		       COALESCE(provider_time_ms, 0), amount_tiyin, status, paid_at, updated_at, provider_payload
-		FROM payment_orders
+		SELECT po.id, po.invoice_id, po.provider, COALESCE(po.provider_payment_id, ''), COALESCE(po.provider_prepare_id, ''),
+		       COALESCE(po.provider_time_ms, 0), po.amount_tiyin, po.status, po.paid_at, po.updated_at, po.provider_payload,
+		       po.split_platform_amount_tiyin, po.split_club_amount_tiyin, po.fiscal_payload,
+		       COALESCE(c.click_secret_key, ''), COALESCE(c.click_service_id, ''),
+		       COALESCE(c.click_club_cntrg_id, ''), COALESCE(c.click_platform_cntrg_id, ''),
+		       COALESCE(c.payme_club_receiver_id, ''), COALESCE(c.payme_platform_receiver_id, ''),
+		       COALESCE(c.payme_merchant_id, '')
+		FROM payment_orders po
+		JOIN clubs c ON c.id = po.club_id
 		WHERE provider = $1 AND provider_payment_id = $2
-	`, provider, paymentID).Scan(&order.ID, &order.InvoiceID, &order.Provider, &order.ProviderPaymentID, &order.ProviderPrepareID, &order.ProviderTimeMS, &order.AmountTiyin, &order.Status, &order.PaidAt, &order.UpdatedAt, &order.ProviderPayload)
+	`, provider, paymentID).Scan(
+		&order.ID, &order.InvoiceID, &order.Provider, &order.ProviderPaymentID, &order.ProviderPrepareID, &order.ProviderTimeMS,
+		&order.AmountTiyin, &order.Status, &order.PaidAt, &order.UpdatedAt, &order.ProviderPayload,
+		&order.SplitPlatformAmountTiyin, &order.SplitClubAmountTiyin, &order.FiscalPayload, &order.ClickSecretKey, &order.ClickServiceID,
+		&order.ClickClubCntrgID, &order.ClickPlatformCntrgID, &order.PaymeClubReceiverID, &order.PaymePlatformReceiverID,
+		&order.PaymeMerchantID,
+	)
 	return order, err
 }
 
@@ -2065,21 +2431,190 @@ func (s *Server) handleCoreEvent(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid json")
 		return
 	}
-	if req.EventID == "" || req.EventType == "" {
-		writeError(w, http.StatusBadRequest, "event_id and event_type are required")
+	result, status, err := s.processCoreEvent(r.Context(), req)
+	if err != nil {
+		writeError(w, status, err.Error())
 		return
 	}
+	writeJSON(w, http.StatusOK, result)
+}
+
+func (s *Server) handleCoreWSEvent(ctx context.Context, event core.EventMessage) error {
+	_, _, err := s.processCoreEvent(ctx, coreEventRequest{
+		EventID:       event.EventID,
+		EventType:     event.Name,
+		ClubID:        event.ClubID,
+		ExternalPCID:  event.ExternalPCID,
+		CoreSessionID: event.CoreSessionID,
+		GrantID:       event.GrantID,
+		OccurredAt:    event.TS,
+		Payload:       event.Payload,
+	})
+	return err
+}
+
+func (s *Server) processCoreEvent(ctx context.Context, req coreEventRequest) (map[string]any, int, error) {
+	if req.Payload == nil {
+		req.Payload = map[string]any{}
+	}
+	req.EventType = normalizeCoreEventType(req.EventType)
+	if req.EventID == "" {
+		req.EventID = "core_" + randomHex(12)
+	}
+	if req.EventType == "" {
+		return nil, http.StatusBadRequest, fmt.Errorf("event_type is required")
+	}
+	req.ExternalPCID = defaultString(req.ExternalPCID, stringFromPayload(req.Payload, "external_pc_id"))
+	req.CoreSessionID = defaultString(req.CoreSessionID, stringFromPayload(req.Payload, "core_session_id"))
+	req.CoreSessionID = defaultString(req.CoreSessionID, stringFromPayload(req.Payload, "session_id"))
+	req.GrantID = defaultString(req.GrantID, stringFromPayload(req.Payload, "grant_id"))
+
 	occurredAt := parseOptionalTime(req.OccurredAt)
 	payload, _ := json.Marshal(req.Payload)
 	var eventRowID string
-	err := s.db.QueryRow(r.Context(), `
+	err := s.db.QueryRow(ctx, `
 		INSERT INTO core_events (event_id, event_type, club_id, external_pc_id, core_session_id, grant_id, payload, occurred_at)
 		VALUES ($1, $2, NULLIF($3, '')::uuid, $4, $5, NULLIF($6, '')::uuid, $7, $8)
 		ON CONFLICT (event_id) DO NOTHING
 		RETURNING id
 	`, req.EventID, req.EventType, req.ClubID, req.ExternalPCID, req.CoreSessionID, req.GrantID, payload, occurredAt).Scan(&eventRowID)
 	if errors.Is(err, pgx.ErrNoRows) {
-		writeJSON(w, http.StatusOK, map[string]any{"success": true, "duplicate": true})
+		return map[string]any{"success": true, "duplicate": true}, http.StatusOK, nil
+	}
+	if err != nil {
+		return nil, http.StatusInternalServerError, err
+	}
+
+	result := map[string]any{"success": true, "event_id": req.EventID}
+	processStatus := "processed"
+	switch req.EventType {
+	case "pc_status_changed":
+		status := normalizeCoreStatus(defaultString(stringFromPayload(req.Payload, "status"), stringFromPayload(req.Payload, "pc_state")))
+		if req.ExternalPCID != "" && isKnownPCStatus(status) {
+			_, err = s.db.Exec(ctx, `UPDATE pc_refs SET status_cache = $1 WHERE external_pc_id = $2`, status, req.ExternalPCID)
+		}
+	case "agent_online":
+		status := normalizeCoreStatus(defaultString(stringFromPayload(req.Payload, "status"), stringFromPayload(req.Payload, "pc_state")))
+		if req.ExternalPCID != "" && isKnownPCStatus(status) {
+			_, err = s.db.Exec(ctx, `UPDATE pc_refs SET status_cache = $1 WHERE external_pc_id = $2`, status, req.ExternalPCID)
+		} else if req.ExternalPCID != "" {
+			_, err = s.db.Exec(ctx, `
+				UPDATE pc_refs
+				SET status_cache = CASE WHEN status_cache IN ('offline', 'unknown') THEN 'available' ELSE status_cache END
+				WHERE external_pc_id = $1
+			`, req.ExternalPCID)
+		}
+	case "agent_offline", "controller_offline":
+		if req.ExternalPCID != "" {
+			_, err = s.db.Exec(ctx, `UPDATE pc_refs SET status_cache = 'offline' WHERE external_pc_id = $1`, req.ExternalPCID)
+		}
+	case "session_started":
+		endsAt := parseOptionalTime(defaultString(stringFromPayload(req.Payload, "ends_at"), stringFromPayload(req.Payload, "planned_ends_at")))
+		_, err = s.db.Exec(ctx, `
+			UPDATE game_access_grants
+			SET status = 'accepted',
+			    core_session_id = COALESCE(NULLIF($1, ''), core_session_id),
+			    accepted_at = COALESCE($2, now()),
+			    planned_ends_at = COALESCE($3, planned_ends_at),
+			    last_error = NULL
+			WHERE id = NULLIF($4, '')::uuid
+		`, req.CoreSessionID, occurredAt, endsAt, req.GrantID)
+		if err == nil && req.ExternalPCID != "" {
+			_, err = s.db.Exec(ctx, `UPDATE pc_refs SET status_cache = 'occupied' WHERE external_pc_id = $1`, req.ExternalPCID)
+		}
+	case "session_extended":
+		endsAt := parseOptionalTime(defaultString(stringFromPayload(req.Payload, "new_ends_at"), defaultString(stringFromPayload(req.Payload, "ends_at"), stringFromPayload(req.Payload, "planned_ends_at"))))
+		_, err = s.db.Exec(ctx, `
+			UPDATE game_access_grants
+			SET core_session_id = COALESCE(NULLIF($1, ''), core_session_id),
+			    planned_ends_at = COALESCE($2, planned_ends_at),
+			    last_error = NULL
+			WHERE id = NULLIF($3, '')::uuid OR core_session_id = $4
+		`, req.CoreSessionID, endsAt, req.GrantID, req.CoreSessionID)
+		if err == nil && req.ExternalPCID != "" {
+			_, err = s.db.Exec(ctx, `UPDATE pc_refs SET status_cache = 'occupied' WHERE external_pc_id = $1`, req.ExternalPCID)
+		}
+	case "session_ended":
+		grantID := req.GrantID
+		if grantID == "" && req.CoreSessionID != "" {
+			_ = s.db.QueryRow(ctx, `SELECT id FROM game_access_grants WHERE core_session_id = $1 ORDER BY created_at DESC LIMIT 1`, req.CoreSessionID).Scan(&grantID)
+		}
+		remainingSeconds := intFromPayload(req.Payload, "remaining_seconds")
+		if remainingSeconds <= 0 {
+			remainingSeconds = intFromPayload(req.Payload, "remaining_minutes") * 60
+		}
+		reason := defaultString(stringFromPayload(req.Payload, "reason"), "core_event")
+		result, err = s.finishGrant(ctx, grantID, reason, remainingSeconds)
+	case "session_failed", "command_failed":
+		message := defaultString(stringFromPayload(req.Payload, "message"), "core command failed")
+		_, err = s.db.Exec(ctx, `
+			UPDATE game_access_grants
+			SET status = 'start_failed', last_error = $1
+			WHERE id = NULLIF($2, '')::uuid OR core_session_id = $3
+		`, message, req.GrantID, req.CoreSessionID)
+	case "heartbeat", "time_low":
+		processStatus = "ignored"
+	default:
+		processStatus = "ignored"
+	}
+	if err != nil {
+		processStatus = "failed"
+		_, _ = s.db.Exec(ctx, `UPDATE core_events SET status = $1, processed_at = now() WHERE id = $2`, processStatus, eventRowID)
+		return nil, http.StatusBadRequest, err
+	}
+	_, _ = s.db.Exec(ctx, `UPDATE core_events SET status = $1, processed_at = now() WHERE id = $2`, processStatus, eventRowID)
+	return result, http.StatusOK, nil
+}
+
+func (s *Server) handleCoreBootstrap(w http.ResponseWriter, r *http.Request) {
+	if !s.requireCore(w, r) {
+		return
+	}
+	externalPCID := strings.TrimSpace(r.URL.Query().Get("external_pc_id"))
+	if externalPCID == "" {
+		externalPCID = strings.TrimSpace(r.URL.Query().Get("pc_id"))
+	}
+	clubIDFilter := strings.TrimSpace(r.URL.Query().Get("club_id"))
+	if externalPCID == "" {
+		writeError(w, http.StatusBadRequest, "external_pc_id is required")
+		return
+	}
+
+	var row struct {
+		ClubID           string
+		ClubName         string
+		ClubSlug         *string
+		PCID             string
+		ExternalPCID     string
+		Number           int
+		Label            string
+		Status           string
+		ZoneID           string
+		ZoneName         string
+		HourlyPriceTiyin int64
+		ZoneStatus       string
+		QRToken          string
+	}
+	err := s.db.QueryRow(r.Context(), `
+		SELECT c.id, c.name, c.slug, p.id, p.external_pc_id, p.number, p.label, p.status_cache,
+		       z.id, z.name, z.hourly_price_tiyin, z.status, COALESCE(q.public_token, '')
+		FROM pc_refs p
+		JOIN clubs c ON c.id = p.club_id
+		JOIN zones z ON z.id = p.zone_id
+		LEFT JOIN qr_codes q ON q.pc_ref_id = p.id AND q.status = 'active' AND q.type = 'static_pc'
+		WHERE p.external_pc_id = $1
+		  AND p.status_cache <> 'deleted'
+		  AND c.status = 'active'
+		  AND z.status <> 'deleted'
+		  AND (NULLIF($2, '')::uuid IS NULL OR c.id = NULLIF($2, '')::uuid)
+		ORDER BY q.created_at DESC NULLS LAST, p.created_at DESC
+		LIMIT 1
+	`, externalPCID, clubIDFilter).Scan(
+		&row.ClubID, &row.ClubName, &row.ClubSlug, &row.PCID, &row.ExternalPCID, &row.Number, &row.Label, &row.Status,
+		&row.ZoneID, &row.ZoneName, &row.HourlyPriceTiyin, &row.ZoneStatus, &row.QRToken,
+	)
+	if errors.Is(err, pgx.ErrNoRows) {
+		writeError(w, http.StatusNotFound, "pc not found")
 		return
 	}
 	if err != nil {
@@ -2087,61 +2622,52 @@ func (s *Server) handleCoreEvent(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	result := map[string]any{"success": true, "event_id": req.EventID}
-	processStatus := "processed"
-	switch req.EventType {
-	case "pc_status_changed":
-		status := stringFromPayload(req.Payload, "status")
-		if req.ExternalPCID != "" && isKnownPCStatus(status) {
-			_, err = s.db.Exec(r.Context(), `UPDATE pc_refs SET status_cache = $1 WHERE external_pc_id = $2`, status, req.ExternalPCID)
-		}
-	case "agent_offline", "controller_offline":
-		if req.ExternalPCID != "" {
-			_, err = s.db.Exec(r.Context(), `UPDATE pc_refs SET status_cache = 'offline' WHERE external_pc_id = $1`, req.ExternalPCID)
-		}
-	case "session_started":
-		endsAt := parseOptionalTime(stringFromPayload(req.Payload, "ends_at"))
-		_, err = s.db.Exec(r.Context(), `
-			UPDATE game_access_grants
-			SET status = 'accepted',
-			    core_session_id = COALESCE(NULLIF($1, ''), core_session_id),
-			    accepted_at = COALESCE($2, now()),
-			    planned_ends_at = $3,
-			    last_error = NULL
-			WHERE id = NULLIF($4, '')::uuid
-		`, req.CoreSessionID, occurredAt, endsAt, req.GrantID)
-		if err == nil && req.ExternalPCID != "" {
-			_, err = s.db.Exec(r.Context(), `UPDATE pc_refs SET status_cache = 'occupied' WHERE external_pc_id = $1`, req.ExternalPCID)
-		}
-	case "session_ended":
-		grantID := req.GrantID
-		if grantID == "" && req.CoreSessionID != "" {
-			_ = s.db.QueryRow(r.Context(), `SELECT id FROM game_access_grants WHERE core_session_id = $1 ORDER BY created_at DESC LIMIT 1`, req.CoreSessionID).Scan(&grantID)
-		}
-		remainingSeconds := intFromPayload(req.Payload, "remaining_seconds")
-		if remainingSeconds <= 0 {
-			remainingSeconds = intFromPayload(req.Payload, "remaining_minutes") * 60
-		}
-		reason := defaultString(stringFromPayload(req.Payload, "reason"), "core_event")
-		result, err = s.finishGrant(r.Context(), grantID, reason, remainingSeconds)
-	case "session_failed", "command_failed":
-		message := defaultString(stringFromPayload(req.Payload, "message"), "core command failed")
-		_, err = s.db.Exec(r.Context(), `
-			UPDATE game_access_grants
-			SET status = 'start_failed', last_error = $1
-			WHERE id = NULLIF($2, '')::uuid OR core_session_id = $3
-		`, message, req.GrantID, req.CoreSessionID)
-	default:
-		processStatus = "ignored"
-	}
+	tariffRows, err := s.db.Query(r.Context(), `
+		SELECT id, name, duration_minutes, price_tiyin
+		FROM tariff_blocks
+		WHERE club_id = $1 AND zone_id = $2 AND status = 'active'
+		ORDER BY sort_order, duration_minutes
+	`, row.ClubID, row.ZoneID)
 	if err != nil {
-		processStatus = "failed"
-		_, _ = s.db.Exec(r.Context(), `UPDATE core_events SET status = $1, processed_at = now() WHERE id = $2`, processStatus, eventRowID)
-		writeError(w, http.StatusBadRequest, err.Error())
+		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	_, _ = s.db.Exec(r.Context(), `UPDATE core_events SET status = $1, processed_at = now() WHERE id = $2`, processStatus, eventRowID)
-	writeJSON(w, http.StatusOK, result)
+	defer tariffRows.Close()
+	packages := make([]map[string]any, 0)
+	for tariffRows.Next() {
+		var id, name string
+		var duration int
+		var price int64
+		if err := tariffRows.Scan(&id, &name, &duration, &price); err != nil {
+			writeError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		packages = append(packages, map[string]any{
+			"id": id, "name": name, "duration_minutes": duration, "duration_seconds": duration * 60,
+			"price_tiyin": price, "price_uzs": price / 100,
+		})
+	}
+
+	qrURL := ""
+	if row.QRToken != "" {
+		qrURL = s.cfg.FrontendBaseURL + "/qr/" + row.QRToken
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"server_time":    time.Now().UTC().Format(time.RFC3339),
+		"config_version": "mvp-core-agent-v1",
+		"club": map[string]any{
+			"id": row.ClubID, "name": row.ClubName, "slug": row.ClubSlug,
+		},
+		"pc": map[string]any{
+			"id": row.PCID, "external_pc_id": row.ExternalPCID, "number": row.Number, "label": row.Label, "status": row.Status,
+		},
+		"zone": map[string]any{
+			"id": row.ZoneID, "name": row.ZoneName, "status": row.ZoneStatus,
+			"hourly_price_tiyin": row.HourlyPriceTiyin, "hourly_price_uzs": row.HourlyPriceTiyin / 100,
+		},
+		"packages": packages,
+		"qr_url":   qrURL,
+	})
 }
 
 func (s *Server) handleEdgeSnapshot(w http.ResponseWriter, r *http.Request) {
@@ -2220,7 +2746,7 @@ func (s *Server) handleEdgeEvents(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) RunEdgeSync(ctx context.Context) {
-	if !strings.EqualFold(s.cfg.NodeMode, "edge") {
+	if !s.localNodeMode() {
 		return
 	}
 	if strings.TrimSpace(s.cfg.CloudBaseURL) == "" || strings.TrimSpace(s.cfg.EdgeClubID) == "" {
@@ -2359,7 +2885,14 @@ func (s *Server) edgeNodeID() string {
 		return strings.TrimSpace(s.cfg.EdgeNodeID)
 	}
 	if strings.TrimSpace(s.cfg.EdgeClubID) != "" {
-		return "edge-" + strings.TrimSpace(s.cfg.EdgeClubID)
+		prefix := "edge-"
+		if s.managerNodeMode() {
+			prefix = "manager-"
+		}
+		return prefix + strings.TrimSpace(s.cfg.EdgeClubID)
+	}
+	if s.managerNodeMode() {
+		return "manager-local"
 	}
 	return "edge-local"
 }
@@ -2373,10 +2906,17 @@ func (s *Server) edgeSnapshotData(ctx context.Context, clubID string, includeTec
 		       COALESCE(click_service_id, '') AS click_service_id,
 		       COALESCE(click_merchant_user_id, '') AS click_merchant_user_id,
 		       COALESCE(click_secret_key, '') AS click_secret_key,
+		       COALESCE(click_club_cntrg_id, '') AS click_club_cntrg_id,
+		       COALESCE(click_platform_cntrg_id, '') AS click_platform_cntrg_id,
 		       COALESCE(payme_merchant_id, '') AS payme_merchant_id,
 		       COALESCE(payme_secret_key, '') AS payme_secret_key,
+		       COALESCE(payme_club_receiver_id, '') AS payme_club_receiver_id,
+		       COALESCE(payme_platform_receiver_id, '') AS payme_platform_receiver_id,
 		       platform_fee_bps, COALESCE(ofd_mxik, '') AS ofd_mxik,
 		       COALESCE(ofd_package_code, '') AS ofd_package_code,
+		       COALESCE(ofd_service_name, '') AS ofd_service_name,
+		       COALESCE(ofd_unit_code, '') AS ofd_unit_code,
+		       COALESCE(ofd_vat_percent, 0) AS ofd_vat_percent,
 		       created_at
 		FROM clubs
 		WHERE id = $1
@@ -2389,7 +2929,7 @@ func (s *Server) edgeSnapshotData(ctx context.Context, clubID string, includeTec
 	}
 	club := clubRows[0]
 	if !includeTechnical {
-		for _, key := range []string{"click_secret_key", "payme_secret_key"} {
+		for _, key := range []string{"click_secret_key", "payme_secret_key", "click_club_cntrg_id", "click_platform_cntrg_id", "payme_club_receiver_id", "payme_platform_receiver_id"} {
 			club[key] = ""
 		}
 	}
@@ -2456,7 +2996,8 @@ func (s *Server) edgeSnapshotData(ctx context.Context, clubID string, includeTec
 		       provider_payload, club_id, pc_ref_id, tariff_block_id, amount_tiyin, duration_minutes, duration_seconds,
 		       status, COALESCE(provider_status, '') AS provider_status, COALESCE(checkout_url, '') AS checkout_url,
 		       COALESCE(receipt_url, '') AS receipt_url, receipt_kind, fiscal_status,
-		       split_platform_amount_tiyin, split_club_amount_tiyin, expires_at, paid_at, extension_grant_id, voucher_id,
+		       split_platform_amount_tiyin, split_club_amount_tiyin, split_payload, fiscal_payload, COALESCE(fiscal_error, '') AS fiscal_error,
+		       expires_at, paid_at, extension_grant_id, voucher_id,
 		       created_at, updated_at
 		FROM payment_orders
 		WHERE club_id = $1
@@ -2608,21 +3149,27 @@ func (s *Server) applyEdgeSnapshotData(ctx context.Context, clubID string, paylo
 				SELECT * FROM jsonb_to_recordset($1::jsonb) AS x(
 					id uuid, name text, slug text, legal_name text, tin text, address text,
 					timezone text, status text, click_merchant_id text, click_service_id text,
-					click_merchant_user_id text, click_secret_key text, payme_merchant_id text, payme_secret_key text,
-					platform_fee_bps int, ofd_mxik text, ofd_package_code text, created_at timestamptz
+					click_merchant_user_id text, click_secret_key text, click_club_cntrg_id text, click_platform_cntrg_id text,
+					payme_merchant_id text, payme_secret_key text, payme_club_receiver_id text, payme_platform_receiver_id text,
+					platform_fee_bps int, ofd_mxik text, ofd_package_code text, ofd_service_name text, ofd_unit_code text,
+					ofd_vat_percent int, created_at timestamptz
 				)
 			)
-			INSERT INTO clubs (id, name, slug, legal_name, tin, address, timezone, status, click_merchant_id, click_service_id, click_merchant_user_id, click_secret_key, payme_merchant_id, payme_secret_key, platform_fee_bps, ofd_mxik, ofd_package_code, created_at)
-			SELECT id, name, slug, legal_name, tin, address, COALESCE(NULLIF(timezone, ''), 'Asia/Tashkent'), COALESCE(NULLIF(status, ''), 'active'), click_merchant_id, click_service_id, click_merchant_user_id, click_secret_key, payme_merchant_id, payme_secret_key, COALESCE(platform_fee_bps, 0), ofd_mxik, ofd_package_code, COALESCE(created_at, now())
+			INSERT INTO clubs (id, name, slug, legal_name, tin, address, timezone, status, click_merchant_id, click_service_id, click_merchant_user_id, click_secret_key, click_club_cntrg_id, click_platform_cntrg_id, payme_merchant_id, payme_secret_key, payme_club_receiver_id, payme_platform_receiver_id, platform_fee_bps, ofd_mxik, ofd_package_code, ofd_service_name, ofd_unit_code, ofd_vat_percent, created_at)
+			SELECT id, name, slug, legal_name, tin, address, COALESCE(NULLIF(timezone, ''), 'Asia/Tashkent'), COALESCE(NULLIF(status, ''), 'active'), click_merchant_id, click_service_id, click_merchant_user_id, click_secret_key, click_club_cntrg_id, click_platform_cntrg_id, payme_merchant_id, payme_secret_key, payme_club_receiver_id, payme_platform_receiver_id, COALESCE(platform_fee_bps, 0), ofd_mxik, ofd_package_code, ofd_service_name, ofd_unit_code, COALESCE(ofd_vat_percent, 0), COALESCE(created_at, now())
 			FROM input
 			ON CONFLICT (id) DO UPDATE SET
 			  name = EXCLUDED.name, slug = EXCLUDED.slug, legal_name = EXCLUDED.legal_name, tin = EXCLUDED.tin,
 			  address = EXCLUDED.address, timezone = EXCLUDED.timezone, status = EXCLUDED.status,
 			  click_merchant_id = EXCLUDED.click_merchant_id, click_service_id = EXCLUDED.click_service_id,
 			  click_merchant_user_id = EXCLUDED.click_merchant_user_id,
-			  click_secret_key = EXCLUDED.click_secret_key, payme_merchant_id = EXCLUDED.payme_merchant_id,
-			  payme_secret_key = EXCLUDED.payme_secret_key, platform_fee_bps = EXCLUDED.platform_fee_bps,
-			  ofd_mxik = EXCLUDED.ofd_mxik, ofd_package_code = EXCLUDED.ofd_package_code
+			  click_secret_key = EXCLUDED.click_secret_key,
+			  click_club_cntrg_id = EXCLUDED.click_club_cntrg_id, click_platform_cntrg_id = EXCLUDED.click_platform_cntrg_id,
+			  payme_merchant_id = EXCLUDED.payme_merchant_id, payme_secret_key = EXCLUDED.payme_secret_key,
+			  payme_club_receiver_id = EXCLUDED.payme_club_receiver_id, payme_platform_receiver_id = EXCLUDED.payme_platform_receiver_id,
+			  platform_fee_bps = EXCLUDED.platform_fee_bps,
+			  ofd_mxik = EXCLUDED.ofd_mxik, ofd_package_code = EXCLUDED.ofd_package_code,
+			  ofd_service_name = EXCLUDED.ofd_service_name, ofd_unit_code = EXCLUDED.ofd_unit_code, ofd_vat_percent = EXCLUDED.ofd_vat_percent
 		`, []any{club}); err != nil {
 			return err
 		}
@@ -2708,13 +3255,14 @@ func (s *Server) applyEdgeSnapshotData(ctx context.Context, clubID string, paylo
 				provider_payload jsonb, club_id uuid, pc_ref_id uuid, tariff_block_id uuid, amount_tiyin bigint,
 				duration_minutes int, duration_seconds int, status text, provider_status text, checkout_url text, receipt_url text,
 				receipt_kind text, fiscal_status text, split_platform_amount_tiyin bigint, split_club_amount_tiyin bigint,
+				split_payload jsonb, fiscal_payload jsonb, fiscal_error text,
 				expires_at timestamptz, paid_at timestamptz, extension_grant_id uuid, voucher_id uuid, created_at timestamptz, updated_at timestamptz
 			)
 		)
-		INSERT INTO payment_orders (id, invoice_id, provider, provider_payment_id, provider_prepare_id, provider_time_ms, provider_payload, club_id, pc_ref_id, tariff_block_id, amount_tiyin, duration_minutes, duration_seconds, status, provider_status, checkout_url, receipt_url, receipt_kind, fiscal_status, split_platform_amount_tiyin, split_club_amount_tiyin, expires_at, paid_at, extension_grant_id, voucher_id, created_at, updated_at)
-		SELECT id, invoice_id, COALESCE(NULLIF(provider, ''), 'mock'), NULLIF(provider_payment_id, ''), NULLIF(provider_prepare_id, ''), provider_time_ms, COALESCE(provider_payload, '{}'::jsonb), club_id, pc_ref_id, tariff_block_id, amount_tiyin, duration_minutes, COALESCE(NULLIF(duration_seconds, 0), duration_minutes * 60), COALESCE(NULLIF(status, ''), 'created'), NULLIF(provider_status, ''), NULLIF(checkout_url, ''), NULLIF(receipt_url, ''), COALESCE(NULLIF(receipt_kind, ''), 'provider_receipt'), COALESCE(NULLIF(fiscal_status, ''), 'not_requested'), COALESCE(split_platform_amount_tiyin, 0), COALESCE(split_club_amount_tiyin, 0), expires_at, paid_at, extension_grant_id, voucher_id, COALESCE(created_at, now()), COALESCE(updated_at, now())
+		INSERT INTO payment_orders (id, invoice_id, provider, provider_payment_id, provider_prepare_id, provider_time_ms, provider_payload, club_id, pc_ref_id, tariff_block_id, amount_tiyin, duration_minutes, duration_seconds, status, provider_status, checkout_url, receipt_url, receipt_kind, fiscal_status, split_platform_amount_tiyin, split_club_amount_tiyin, split_payload, fiscal_payload, fiscal_error, expires_at, paid_at, extension_grant_id, voucher_id, created_at, updated_at)
+		SELECT id, invoice_id, COALESCE(NULLIF(provider, ''), 'mock'), NULLIF(provider_payment_id, ''), NULLIF(provider_prepare_id, ''), provider_time_ms, COALESCE(provider_payload, '{}'::jsonb), club_id, pc_ref_id, tariff_block_id, amount_tiyin, duration_minutes, COALESCE(NULLIF(duration_seconds, 0), duration_minutes * 60), COALESCE(NULLIF(status, ''), 'created'), NULLIF(provider_status, ''), NULLIF(checkout_url, ''), NULLIF(receipt_url, ''), COALESCE(NULLIF(receipt_kind, ''), 'provider_receipt'), COALESCE(NULLIF(fiscal_status, ''), 'not_requested'), COALESCE(split_platform_amount_tiyin, 0), COALESCE(split_club_amount_tiyin, 0), COALESCE(split_payload, '[]'::jsonb), COALESCE(fiscal_payload, '{}'::jsonb), NULLIF(fiscal_error, ''), expires_at, paid_at, extension_grant_id, voucher_id, COALESCE(created_at, now()), COALESCE(updated_at, now())
 		FROM input
-		ON CONFLICT (id) DO UPDATE SET provider_payment_id = EXCLUDED.provider_payment_id, provider_prepare_id = EXCLUDED.provider_prepare_id, provider_time_ms = EXCLUDED.provider_time_ms, provider_payload = EXCLUDED.provider_payload, amount_tiyin = EXCLUDED.amount_tiyin, duration_minutes = EXCLUDED.duration_minutes, duration_seconds = EXCLUDED.duration_seconds, status = EXCLUDED.status, provider_status = EXCLUDED.provider_status, checkout_url = EXCLUDED.checkout_url, receipt_url = EXCLUDED.receipt_url, receipt_kind = EXCLUDED.receipt_kind, fiscal_status = EXCLUDED.fiscal_status, split_platform_amount_tiyin = EXCLUDED.split_platform_amount_tiyin, split_club_amount_tiyin = EXCLUDED.split_club_amount_tiyin, expires_at = EXCLUDED.expires_at, paid_at = EXCLUDED.paid_at, extension_grant_id = EXCLUDED.extension_grant_id, voucher_id = EXCLUDED.voucher_id, updated_at = EXCLUDED.updated_at
+		ON CONFLICT (id) DO UPDATE SET provider_payment_id = EXCLUDED.provider_payment_id, provider_prepare_id = EXCLUDED.provider_prepare_id, provider_time_ms = EXCLUDED.provider_time_ms, provider_payload = EXCLUDED.provider_payload, amount_tiyin = EXCLUDED.amount_tiyin, duration_minutes = EXCLUDED.duration_minutes, duration_seconds = EXCLUDED.duration_seconds, status = EXCLUDED.status, provider_status = EXCLUDED.provider_status, checkout_url = EXCLUDED.checkout_url, receipt_url = EXCLUDED.receipt_url, receipt_kind = EXCLUDED.receipt_kind, fiscal_status = EXCLUDED.fiscal_status, split_platform_amount_tiyin = EXCLUDED.split_platform_amount_tiyin, split_club_amount_tiyin = EXCLUDED.split_club_amount_tiyin, split_payload = EXCLUDED.split_payload, fiscal_payload = EXCLUDED.fiscal_payload, fiscal_error = EXCLUDED.fiscal_error, expires_at = EXCLUDED.expires_at, paid_at = EXCLUDED.paid_at, extension_grant_id = EXCLUDED.extension_grant_id, voucher_id = EXCLUDED.voucher_id, updated_at = EXCLUDED.updated_at
 	`, payload["payment_orders"]); err != nil {
 		return err
 	}
@@ -2868,7 +3416,7 @@ func (s *Server) applyPaymentSuccess(ctx context.Context, success paymentSuccess
 		    status = 'paid',
 		    receipt_url = NULLIF($3, ''),
 		    receipt_kind = 'provider_receipt',
-		    fiscal_status = 'pending',
+		    fiscal_status = CASE WHEN fiscal_payload <> '{}'::jsonb THEN 'pending' ELSE 'not_requested' END,
 		    paid_at = $4,
 		    updated_at = now()
 		WHERE id = $5
@@ -3300,12 +3848,13 @@ func (s *Server) handleAdminPCStatus(w http.ResponseWriter, r *http.Request) {
 	if _, ok := s.requireClubRole(w, r, auth, clubID, "owner", "manager", "admin"); !ok {
 		return
 	}
+	var externalPCID string
 	err = s.db.QueryRow(r.Context(), `
 		UPDATE pc_refs
 		SET status_cache = $1
 		WHERE id = $2
-		RETURNING club_id
-	`, req.Status, pcID).Scan(&clubID)
+		RETURNING club_id, external_pc_id
+	`, req.Status, pcID).Scan(&clubID, &externalPCID)
 	if errors.Is(err, pgx.ErrNoRows) {
 		writeError(w, http.StatusNotFound, "pc not found")
 		return
@@ -3319,7 +3868,34 @@ func (s *Server) handleAdminPCStatus(w http.ResponseWriter, r *http.Request) {
 		INSERT INTO audit_logs (club_id, action, entity_type, entity_id, metadata)
 		VALUES ($1, 'admin_pc_status', 'pc_ref', $2, $3)
 	`, clubID, pcID, metadata)
-	writeJSON(w, http.StatusOK, map[string]any{"success": true, "pc_id": pcID, "status": req.Status})
+
+	coreWarning := ""
+	switch req.Status {
+	case "available":
+		if err := s.core.SetRepair(r.Context(), externalPCID, false); err != nil {
+			coreWarning = err.Error()
+		}
+		if err := s.core.Unlock(r.Context(), externalPCID, defaultString(req.Reason, "admin_available")); err != nil && coreWarning == "" {
+			coreWarning = err.Error()
+		}
+	case "sleeping":
+		if err := s.core.Sleep(r.Context(), externalPCID); err != nil {
+			coreWarning = err.Error()
+		}
+	case "maintenance":
+		if err := s.core.SetRepair(r.Context(), externalPCID, true); err != nil {
+			coreWarning = err.Error()
+		}
+	case "blocked":
+		if err := s.core.Lock(r.Context(), externalPCID, defaultString(req.Reason, "admin_block")); err != nil {
+			coreWarning = err.Error()
+		}
+	}
+	response := map[string]any{"success": true, "pc_id": pcID, "status": req.Status}
+	if coreWarning != "" {
+		response["core_warning"] = coreWarning
+	}
+	writeJSON(w, http.StatusOK, response)
 }
 
 func (s *Server) handleAdminOrders(w http.ResponseWriter, r *http.Request) {
@@ -3445,22 +4021,25 @@ func (s *Server) handleAdminEndGrant(w http.ResponseWriter, r *http.Request) {
 	reason := defaultString(req.Reason, "admin_request")
 	var coreSessionID *string
 	var clubID string
+	var externalPCID string
 	var remainingSeconds int
 	err := s.db.QueryRow(r.Context(), `
-		SELECT core_session_id,
-		       club_id,
+		SELECT g.core_session_id,
+		       g.club_id,
+		       p.external_pc_id,
 		       CASE
-		         WHEN status = 'accepted' THEN GREATEST(
+		         WHEN g.status = 'accepted' THEN GREATEST(
 		           CEIL(EXTRACT(EPOCH FROM (
-		             COALESCE(planned_ends_at, accepted_at + make_interval(secs => duration_seconds), accepted_at + make_interval(mins => duration_minutes), now()) - now()
+		             COALESCE(g.planned_ends_at, g.accepted_at + make_interval(secs => g.duration_seconds), g.accepted_at + make_interval(mins => g.duration_minutes), now()) - now()
 		           )))::int,
 		           0
 		         )
 		         ELSE 0
 		       END
-		FROM game_access_grants
-		WHERE id = $1
-	`, grantID).Scan(&coreSessionID, &clubID, &remainingSeconds)
+		FROM game_access_grants g
+		JOIN pc_refs p ON p.id = g.pc_ref_id
+		WHERE g.id = $1
+	`, grantID).Scan(&coreSessionID, &clubID, &externalPCID, &remainingSeconds)
 	if errors.Is(err, pgx.ErrNoRows) {
 		writeError(w, http.StatusNotFound, "grant not found")
 		return
@@ -3474,10 +4053,11 @@ func (s *Server) handleAdminEndGrant(w http.ResponseWriter, r *http.Request) {
 	}
 	if coreSessionID != nil && *coreSessionID != "" {
 		_, _ = s.core.EndSession(r.Context(), *coreSessionID, core.EndSessionCommand{
-			RequestID: "end_" + grantID + "_" + randomHex(4),
-			Reason:    reason,
-			EndedBy:   map[string]string{"type": "admin", "id": "mvp-admin"},
-			CreatedAt: time.Now().UTC().Format(time.RFC3339),
+			RequestID:    "end_" + grantID + "_" + randomHex(4),
+			ExternalPCID: externalPCID,
+			Reason:       reason,
+			EndedBy:      map[string]string{"type": "admin", "id": "mvp-admin"},
+			CreatedAt:    time.Now().UTC().Format(time.RFC3339),
 		})
 	}
 
@@ -3847,16 +4427,16 @@ func (s *Server) handleCheckVoucher(w http.ResponseWriter, r *http.Request) {
 	seconds = voucherSeconds(seconds, minutes)
 	result := map[string]any{"voucher_id": voucherID, "minutes_left": secondsToMinutesCeil(seconds), "seconds_left": seconds, "expires_at": expiresAt, "status": "active"}
 	if req.QRToken != "" {
-		var pcID, pcClubID, pcStatus, zoneID, zoneName string
+		var pcID, pcClubID, pcStatus, qrType, zoneID, zoneName string
 		err = s.db.QueryRow(r.Context(), `
-			SELECT p.id, p.club_id,
-			       CASE WHEN z.status = 'maintenance' THEN 'maintenance' ELSE p.status_cache END,
-			       z.id, z.name
-			FROM qr_codes q
+				SELECT p.id, p.club_id, q.type,
+				       CASE WHEN z.status = 'maintenance' THEN 'maintenance' ELSE p.status_cache END,
+				       z.id, z.name
+				FROM qr_codes q
 			JOIN pc_refs p ON p.id = q.pc_ref_id
 			JOIN zones z ON z.id = p.zone_id
 			WHERE q.public_token = $1 AND q.status = 'active' AND p.status_cache <> 'deleted' AND z.status <> 'deleted'
-		`, req.QRToken).Scan(&pcID, &pcClubID, &pcStatus, &zoneID, &zoneName)
+			`, req.QRToken).Scan(&pcID, &pcClubID, &qrType, &pcStatus, &zoneID, &zoneName)
 		if errors.Is(err, pgx.ErrNoRows) {
 			writeError(w, http.StatusNotFound, "QR token not found")
 			return
@@ -3865,16 +4445,17 @@ func (s *Server) handleCheckVoucher(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusInternalServerError, err.Error())
 			return
 		}
-		canRedeem := voucherClubID == pcClubID && (isPayablePCStatus(pcStatus) || pcStatus == "occupied")
+		canRedeem := voucherClubID == pcClubID && canUseQRForSession(pcStatus, qrType)
 		result["can_redeem"] = canRedeem
 		result["pc_id"] = pcID
 		result["pc_status"] = pcStatus
+		result["qr_type"] = qrType
 		result["zone"] = map[string]any{"id": zoneID, "name": zoneName}
 	}
 	writeJSON(w, http.StatusOK, result)
 }
 
-func (s *Server) validVoucherForPC(ctx context.Context, code, clubID, pcID, pcStatus string) (string, int, error) {
+func (s *Server) validVoucherForPC(ctx context.Context, code, clubID, pcID, pcStatus, qrType string) (string, int, error) {
 	code = strings.TrimSpace(code)
 	if code == "" {
 		return "", 0, fmt.Errorf("code is required")
@@ -3895,7 +4476,10 @@ func (s *Server) validVoucherForPC(ctx context.Context, code, clubID, pcID, pcSt
 	if voucherClubID != clubID {
 		return "", 0, fmt.Errorf("voucher belongs to another club")
 	}
-	if !isPayablePCStatus(pcStatus) && pcStatus != "occupied" {
+	if !canUseQRForSession(pcStatus, qrType) {
+		if pcStatus == "occupied" && qrType != "session_extend" {
+			return "", 0, fmt.Errorf("PC is occupied. Use session QR to extend")
+		}
 		return "", 0, fmt.Errorf("PC is not available")
 	}
 	if pcID == "" {
@@ -3928,15 +4512,15 @@ func (s *Server) redeemVoucherToPC(ctx context.Context, req redeemVoucherRequest
 	seconds = voucherSeconds(seconds, minutes)
 	minutes = secondsToMinutesCeil(seconds)
 
-	var pcID, pcClubID, externalPCID, pcStatus string
+	var pcID, pcClubID, externalPCID, pcStatus, qrType string
 	err = tx.QueryRow(ctx, `
-		SELECT p.id, p.club_id, p.external_pc_id,
-		       CASE WHEN z.status = 'maintenance' THEN 'maintenance' ELSE p.status_cache END
-		FROM qr_codes q
-		JOIN pc_refs p ON p.id = q.pc_ref_id
+			SELECT p.id, p.club_id, p.external_pc_id, q.type,
+			       CASE WHEN z.status = 'maintenance' THEN 'maintenance' ELSE p.status_cache END
+			FROM qr_codes q
+			JOIN pc_refs p ON p.id = q.pc_ref_id
 		JOIN zones z ON z.id = p.zone_id
 		WHERE q.public_token = $1 AND q.status = 'active' AND z.status <> 'deleted' AND p.status_cache <> 'deleted'
-	`, req.QRToken).Scan(&pcID, &pcClubID, &externalPCID, &pcStatus)
+		`, req.QRToken).Scan(&pcID, &pcClubID, &externalPCID, &qrType, &pcStatus)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, fmt.Errorf("QR token not found")
 	}
@@ -3948,10 +4532,13 @@ func (s *Server) redeemVoucherToPC(ctx context.Context, req redeemVoucherRequest
 	}
 	var extensionGrant activeGrantRow
 	extendExisting := false
-	if !isPayablePCStatus(pcStatus) {
-		if pcStatus != "occupied" {
-			return nil, fmt.Errorf("PC is not available")
+	if !canUseQRForSession(pcStatus, qrType) {
+		if pcStatus == "occupied" && qrType != "session_extend" {
+			return nil, fmt.Errorf("PC is occupied. Use session QR to extend")
 		}
+		return nil, fmt.Errorf("PC is not available")
+	}
+	if pcStatus == "occupied" {
 		var ok bool
 		extensionGrant, ok, err = activeGrantForPC(ctx, tx, pcID)
 		if err != nil {
@@ -4578,22 +5165,29 @@ type loginRequest struct {
 }
 
 type clubSettingsRequest struct {
-	Name                string `json:"name"`
-	Slug                string `json:"slug"`
-	LegalName           string `json:"legal_name"`
-	TIN                 string `json:"tin"`
-	Address             string `json:"address"`
-	Timezone            string `json:"timezone"`
-	Status              string `json:"status"`
-	ClickMerchantID     string `json:"click_merchant_id"`
-	ClickServiceID      string `json:"click_service_id"`
-	ClickMerchantUserID string `json:"click_merchant_user_id"`
-	ClickSecretKey      string `json:"click_secret_key"`
-	PaymeMerchantID     string `json:"payme_merchant_id"`
-	PaymeSecretKey      string `json:"payme_secret_key"`
-	PlatformFeeBPS      int    `json:"platform_fee_bps"`
-	OFDMXIK             string `json:"ofd_mxik"`
-	OFDPackageCode      string `json:"ofd_package_code"`
+	Name                    string `json:"name"`
+	Slug                    string `json:"slug"`
+	LegalName               string `json:"legal_name"`
+	TIN                     string `json:"tin"`
+	Address                 string `json:"address"`
+	Timezone                string `json:"timezone"`
+	Status                  string `json:"status"`
+	ClickMerchantID         string `json:"click_merchant_id"`
+	ClickServiceID          string `json:"click_service_id"`
+	ClickMerchantUserID     string `json:"click_merchant_user_id"`
+	ClickSecretKey          string `json:"click_secret_key"`
+	ClickClubCntrgID        string `json:"click_club_cntrg_id"`
+	ClickPlatformCntrgID    string `json:"click_platform_cntrg_id"`
+	PaymeMerchantID         string `json:"payme_merchant_id"`
+	PaymeSecretKey          string `json:"payme_secret_key"`
+	PaymeClubReceiverID     string `json:"payme_club_receiver_id"`
+	PaymePlatformReceiverID string `json:"payme_platform_receiver_id"`
+	PlatformFeeBPS          int    `json:"platform_fee_bps"`
+	OFDMXIK                 string `json:"ofd_mxik"`
+	OFDPackageCode          string `json:"ofd_package_code"`
+	OFDServiceName          string `json:"ofd_service_name"`
+	OFDUnitCode             string `json:"ofd_unit_code"`
+	OFDVATPercent           int    `json:"ofd_vat_percent"`
 }
 
 type zoneRequest struct {
@@ -4641,7 +5235,7 @@ type createCheckoutRequest struct {
 }
 
 type checkoutSeed struct {
-	ClubID, ClubName, PCID, ExternalPCID, PCStatus                       string
+	ClubID, ClubName, PCID, ExternalPCID, PCStatus, QRType               string
 	ExtensionGrantID                                                     string
 	ZoneID                                                               string
 	TariffID, TariffName                                                 string
@@ -4652,9 +5246,13 @@ type checkoutSeed struct {
 	AmountTiyin                                                          int64
 	HourlyPriceTiyin                                                     int64
 	ClickMerchantID, ClickServiceID, ClickMerchantUserID, ClickSecretKey string
+	ClickClubCntrgID, ClickPlatformCntrgID                               string
 	PaymeMerchantID, PaymeSecretKey                                      string
+	PaymeClubReceiverID, PaymePlatformReceiverID                         string
 	PlatformFeeBPS                                                       int
-	OFDMXIK, OFDPackageCode                                              string
+	LegalName, TIN                                                       string
+	OFDMXIK, OFDPackageCode, OFDServiceName, OFDUnitCode                 string
+	OFDVATPercent                                                        int
 }
 
 type paymentOrderForCallback struct {
@@ -4678,19 +5276,42 @@ type paymentSuccess struct {
 }
 
 type providerOrder struct {
-	ID                string
-	InvoiceID         string
-	Provider          string
-	ProviderPaymentID string
-	ProviderPrepareID string
-	ProviderTimeMS    int64
-	ProviderPayload   []byte
-	AmountTiyin       int64
-	Status            string
-	PaidAt            *time.Time
-	UpdatedAt         time.Time
-	ClickSecretKey    string
-	ClickServiceID    string
+	ID                       string
+	InvoiceID                string
+	Provider                 string
+	ProviderPaymentID        string
+	ProviderPrepareID        string
+	ProviderTimeMS           int64
+	ProviderPayload          []byte
+	FiscalPayload            []byte
+	AmountTiyin              int64
+	Status                   string
+	PaidAt                   *time.Time
+	UpdatedAt                time.Time
+	ClickSecretKey           string
+	ClickServiceID           string
+	ClickClubCntrgID         string
+	ClickPlatformCntrgID     string
+	PaymeMerchantID          string
+	PaymeClubReceiverID      string
+	PaymePlatformReceiverID  string
+	SplitPlatformAmountTiyin int64
+	SplitClubAmountTiyin     int64
+}
+
+type clickShopSplitRequest struct {
+	Action            json.RawMessage `json:"action"`
+	ClickPaydocID     json.RawMessage `json:"click_paydoc_id"`
+	AttemptTransID    json.RawMessage `json:"attempt_trans_id"`
+	ServiceID         json.RawMessage `json:"service_id"`
+	MerchantPrepareID json.RawMessage `json:"merchant_prepare_id"`
+	Params            json.RawMessage `json:"params"`
+	SignTime          string          `json:"sign_time"`
+	SignString        string          `json:"sign_string"`
+}
+
+func (r clickShopSplitRequest) actionString() string {
+	return jsonScalarString(r.Action)
 }
 
 type paymeRPCRequest struct {
@@ -5052,8 +5673,11 @@ func (s *Server) clubSettings(ctx context.Context, clubID string, includeTechnic
 		SELECT id, name, COALESCE(slug, ''), COALESCE(legal_name, ''), COALESCE(tin, ''), COALESCE(address, ''),
 		       timezone, status,
 		       COALESCE(click_merchant_id, ''), COALESCE(click_service_id, ''), COALESCE(click_merchant_user_id, ''), COALESCE(click_secret_key, ''),
+		       COALESCE(click_club_cntrg_id, ''), COALESCE(click_platform_cntrg_id, ''),
 		       COALESCE(payme_merchant_id, ''), COALESCE(payme_secret_key, ''),
-		       platform_fee_bps, COALESCE(ofd_mxik, ''), COALESCE(ofd_package_code, ''), created_at
+		       COALESCE(payme_club_receiver_id, ''), COALESCE(payme_platform_receiver_id, ''),
+		       platform_fee_bps, COALESCE(ofd_mxik, ''), COALESCE(ofd_package_code, ''),
+		       COALESCE(ofd_service_name, ''), COALESCE(ofd_unit_code, ''), COALESCE(ofd_vat_percent, 0), created_at
 		FROM clubs
 		WHERE id = $1
 	`, clubID)
@@ -5063,38 +5687,53 @@ func (s *Server) clubSettings(ctx context.Context, clubID string, includeTechnic
 	defer clubRows.Close()
 	if clubRows.Next() {
 		var id, name, slug, legalName, tin, address, timezone, status string
-		var clickMerchantID, clickServiceID, clickMerchantUserID, clickSecretKey, paymeMerchantID, paymeSecretKey, mxik, packageCode string
-		var feeBPS int
+		var clickMerchantID, clickServiceID, clickMerchantUserID, clickSecretKey, clickClubCntrgID, clickPlatformCntrgID string
+		var paymeMerchantID, paymeSecretKey, paymeClubReceiverID, paymePlatformReceiverID, mxik, packageCode, serviceName, unitCode string
+		var feeBPS, vatPercent int
 		var createdAt time.Time
 		if err := clubRows.Scan(
 			&id, &name, &slug, &legalName, &tin, &address, &timezone, &status,
-			&clickMerchantID, &clickServiceID, &clickMerchantUserID, &clickSecretKey, &paymeMerchantID, &paymeSecretKey,
-			&feeBPS, &mxik, &packageCode, &createdAt,
+			&clickMerchantID, &clickServiceID, &clickMerchantUserID, &clickSecretKey, &clickClubCntrgID, &clickPlatformCntrgID,
+			&paymeMerchantID, &paymeSecretKey, &paymeClubReceiverID, &paymePlatformReceiverID,
+			&feeBPS, &mxik, &packageCode, &serviceName, &unitCode, &vatPercent, &createdAt,
 		); err != nil {
 			return nil, err
 		}
 		clickConnected, _ := s.clickReady(clickMerchantID, clickServiceID, clickMerchantUserID, clickSecretKey)
 		paymeConnected, _ := s.paymeReady(paymeMerchantID, paymeSecretKey)
 		paymentConnected := clickConnected || paymeConnected
-		payoutsConnected := feeBPS > 0
-		fiscalConnected := mxik != "" && packageCode != ""
+		effectiveFeeBPS := s.effectivePlatformFeeBPS(feeBPS)
+		clickSplitConnected := clickClubCntrgID != "" && (effectiveFeeBPS <= 0 || clickPlatformCntrgID != "")
+		paymeSplitConnected := paymeClubReceiverID != "" && (effectiveFeeBPS <= 0 || paymePlatformReceiverID != "")
+		payoutsConnected := paymentConnected && (!s.cfg.SplitPaymentsEnabled || effectiveFeeBPS <= 0 || clickSplitConnected || paymeSplitConnected)
+		fiscalConnected := mxik != "" && packageCode != "" && serviceName != ""
 		if !includeTechnicalFields {
 			clickMerchantID = ""
 			clickServiceID = ""
 			clickMerchantUserID = ""
 			clickSecretKey = ""
+			clickClubCntrgID = ""
+			clickPlatformCntrgID = ""
 			paymeMerchantID = ""
 			paymeSecretKey = ""
+			paymeClubReceiverID = ""
+			paymePlatformReceiverID = ""
 			mxik = ""
 			packageCode = ""
+			serviceName = ""
+			unitCode = ""
+			vatPercent = 0
 		}
 		club = map[string]any{
 			"id": id, "name": name, "slug": slug, "legal_name": legalName, "tin": tin, "address": address,
 			"timezone": timezone, "status": status,
 			"click_merchant_id": clickMerchantID, "click_service_id": clickServiceID,
 			"click_merchant_user_id": clickMerchantUserID, "click_secret_key": clickSecretKey,
+			"click_club_cntrg_id": clickClubCntrgID, "click_platform_cntrg_id": clickPlatformCntrgID,
 			"payme_merchant_id": paymeMerchantID, "payme_secret_key": paymeSecretKey,
-			"platform_fee_bps": feeBPS, "ofd_mxik": mxik, "ofd_package_code": packageCode, "created_at": createdAt,
+			"payme_club_receiver_id": paymeClubReceiverID, "payme_platform_receiver_id": paymePlatformReceiverID,
+			"platform_fee_bps": feeBPS, "effective_platform_fee_bps": effectiveFeeBPS, "ofd_mxik": mxik, "ofd_package_code": packageCode,
+			"ofd_service_name": serviceName, "ofd_unit_code": unitCode, "ofd_vat_percent": vatPercent, "created_at": createdAt,
 			"payment_connected": paymentConnected, "click_connected": clickConnected, "payme_connected": paymeConnected,
 			"payouts_connected": payoutsConnected, "fiscal_connected": fiscalConnected,
 		}
@@ -5283,6 +5922,36 @@ func writeClickResponse(w http.ResponseWriter, clickTransID, merchantTransID, me
 	writeJSON(w, http.StatusOK, payload)
 }
 
+func writeClickShopSplitResponse(w http.ResponseWriter, clickPaydocID, attemptTransID, merchantPrepareID string, code int, note string, extra ...any) {
+	payload := map[string]any{
+		"error":      code,
+		"error_note": note,
+	}
+	if clickPaydocID != "" {
+		payload["click_paydoc_id"] = numericResponseValue(clickPaydocID)
+	}
+	if attemptTransID != "" {
+		payload["attempt_trans_id"] = numericResponseValue(attemptTransID)
+	}
+	if merchantPrepareID != "" {
+		payload["merchant_prepare_id"] = numericResponseValue(merchantPrepareID)
+	}
+	for i := 0; i+1 < len(extra); i += 2 {
+		key, ok := extra[i].(string)
+		if ok {
+			payload[key] = extra[i+1]
+		}
+	}
+	writeJSON(w, http.StatusOK, payload)
+}
+
+func numericResponseValue(value string) any {
+	if parsed, err := strconv.ParseInt(strings.TrimSpace(value), 10, 64); err == nil {
+		return parsed
+	}
+	return value
+}
+
 func writePaymeResult(w http.ResponseWriter, id any, result any) {
 	writeJSON(w, http.StatusOK, map[string]any{"jsonrpc": "2.0", "id": id, "result": result})
 }
@@ -5426,6 +6095,12 @@ func defaultString(value, fallback string) string {
 func (s *Server) paymentProviderOptions(clickMerchantID, clickServiceID, clickMerchantUserID, clickSecretKey, paymeMerchantID, paymeSecretKey string) []map[string]any {
 	paymeReady, paymeMessage := s.paymeReady(paymeMerchantID, paymeSecretKey)
 	clickReady, clickMessage := s.clickReady(clickMerchantID, clickServiceID, clickMerchantUserID, clickSecretKey)
+	if s.onlinePaymentsDisabledForNode() {
+		paymeReady = false
+		clickReady = false
+		paymeMessage = "Онлайн-оплата отключена на аварийном ПК менеджера"
+		clickMessage = "Онлайн-оплата отключена на аварийном ПК менеджера"
+	}
 	providers := []map[string]any{
 		{
 			"provider":   payments.ProviderPayme,
@@ -5457,11 +6132,17 @@ func (s *Server) paymentProviderOptions(clickMerchantID, clickServiceID, clickMe
 func (s *Server) ensureCheckoutProviderReady(provider string, seed checkoutSeed) error {
 	switch provider {
 	case payments.ProviderPayme:
+		if s.onlinePaymentsDisabledForNode() {
+			return errors.New("Онлайн-оплата отключена на аварийном ПК менеджера")
+		}
 		ready, message := s.paymeReady(seed.PaymeMerchantID, seed.PaymeSecretKey)
 		if !ready {
 			return errors.New(message)
 		}
 	case payments.ProviderClick:
+		if s.onlinePaymentsDisabledForNode() {
+			return errors.New("Онлайн-оплата отключена на аварийном ПК менеджера")
+		}
 		ready, message := s.clickReady(seed.ClickMerchantID, seed.ClickServiceID, seed.ClickMerchantUserID, seed.ClickSecretKey)
 		if !ready {
 			return errors.New(message)
@@ -5560,7 +6241,17 @@ func (s *Server) requireCore(w http.ResponseWriter, r *http.Request) bool {
 	if s.cfg.CoreToken == "" {
 		return true
 	}
-	if bearerToken(r.Header.Get("Authorization")) == s.cfg.CoreToken {
+	token := bearerToken(r.Header.Get("Authorization"))
+	if token == "" {
+		token = strings.TrimSpace(r.Header.Get("X-Agent-Token"))
+	}
+	if token == "" {
+		token = strings.TrimSpace(r.URL.Query().Get("agent_token"))
+	}
+	if token == "" {
+		token = strings.TrimSpace(r.URL.Query().Get("token"))
+	}
+	if token == s.cfg.CoreToken {
 		return true
 	}
 	writeError(w, http.StatusUnauthorized, "core token required")
@@ -5617,12 +6308,46 @@ func isPayablePCStatus(status string) bool {
 	return status == "available" || status == "sleeping"
 }
 
+func canUseQRForSession(status, qrType string) bool {
+	return isPayablePCStatus(status) || (status == "occupied" && qrType == "session_extend")
+}
+
 func isKnownPCStatus(status string) bool {
 	switch status {
 	case "available", "occupied", "sleeping", "offline", "maintenance", "blocked", "unknown":
 		return true
 	default:
 		return false
+	}
+}
+
+func normalizeCoreEventType(eventType string) string {
+	switch strings.TrimSpace(eventType) {
+	case "pc_state_changed":
+		return "pc_status_changed"
+	default:
+		return strings.TrimSpace(eventType)
+	}
+}
+
+func normalizeCoreStatus(status string) string {
+	switch strings.ToUpper(strings.TrimSpace(status)) {
+	case "FREE", "AVAILABLE":
+		return "available"
+	case "OCCUPIED", "BUSY":
+		return "occupied"
+	case "FROZEN", "BLOCKED", "LOCKED":
+		return "blocked"
+	case "SLEEPING", "SLEEP":
+		return "sleeping"
+	case "REPAIR", "MAINTENANCE":
+		return "maintenance"
+	case "OFFLINE":
+		return "offline"
+	case "ATTENTION", "UNKNOWN":
+		return "unknown"
+	default:
+		return strings.ToLower(strings.TrimSpace(status))
 	}
 }
 
@@ -5649,6 +6374,128 @@ func formPayload(r *http.Request) map[string]any {
 		}
 	}
 	return result
+}
+
+func isJSONRequest(r *http.Request) bool {
+	return strings.Contains(strings.ToLower(r.Header.Get("Content-Type")), "json")
+}
+
+func firstFormValue(r *http.Request, keys ...string) string {
+	for _, key := range keys {
+		if value := strings.TrimSpace(r.FormValue(key)); value != "" {
+			return value
+		}
+	}
+	return ""
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if trimmed := strings.TrimSpace(value); trimmed != "" {
+			return trimmed
+		}
+	}
+	return ""
+}
+
+func expectedClickShopSplitAction(formAction string) string {
+	switch formAction {
+	case "0":
+		return "1"
+	case "1":
+		return "2"
+	default:
+		return ""
+	}
+}
+
+func jsonScalarString(raw json.RawMessage) string {
+	trimmed := strings.TrimSpace(string(raw))
+	if trimmed == "" || trimmed == "null" {
+		return ""
+	}
+	var text string
+	if err := json.Unmarshal(raw, &text); err == nil {
+		return strings.TrimSpace(text)
+	}
+	return trimmed
+}
+
+func decodeJSONParamStrings(raw json.RawMessage) map[string]string {
+	result := map[string]string{}
+	if len(raw) == 0 {
+		return result
+	}
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	decoder.UseNumber()
+	var parsed map[string]any
+	if err := decoder.Decode(&parsed); err != nil {
+		return result
+	}
+	for key, value := range parsed {
+		result[key] = jsonValueString(value)
+	}
+	return result
+}
+
+func orderedJSONParamValues(raw json.RawMessage) string {
+	if len(raw) == 0 {
+		return ""
+	}
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	decoder.UseNumber()
+	token, err := decoder.Token()
+	if err != nil {
+		return ""
+	}
+	if delimiter, ok := token.(json.Delim); !ok || delimiter != '{' {
+		return ""
+	}
+	var builder strings.Builder
+	for decoder.More() {
+		if _, err := decoder.Token(); err != nil {
+			return ""
+		}
+		var value any
+		if err := decoder.Decode(&value); err != nil {
+			return ""
+		}
+		builder.WriteString(jsonValueString(value))
+	}
+	return builder.String()
+}
+
+func jsonValueString(value any) string {
+	switch typed := value.(type) {
+	case nil:
+		return ""
+	case string:
+		return typed
+	case json.Number:
+		return typed.String()
+	case float64:
+		return strconv.FormatFloat(typed, 'f', -1, 64)
+	case bool:
+		if typed {
+			return "true"
+		}
+		return "false"
+	default:
+		raw, err := json.Marshal(typed)
+		if err != nil {
+			return fmt.Sprint(typed)
+		}
+		return string(raw)
+	}
+}
+
+func verifyClickShopSplitSign(secretKey, clickPaydocID, attemptTransID, serviceID, paramValues, action, signTime, signString string) bool {
+	if strings.TrimSpace(secretKey) == "" {
+		return true
+	}
+	payload := clickPaydocID + attemptTransID + serviceID + secretKey + paramValues + action + signTime
+	sum := md5.Sum([]byte(payload))
+	return strings.EqualFold(hex.EncodeToString(sum[:]), strings.TrimSpace(signString))
 }
 
 func clickAmountToTiyin(value string) int64 {
@@ -5895,7 +6742,7 @@ func (s *Server) expireElapsedGrants(ctx context.Context) error {
 }
 
 func (s *Server) syncCorePCStatus(ctx context.Context, pcID, externalPCID, fallback string) string {
-	if !strings.EqualFold(s.cfg.CoreMode, "http") || externalPCID == "" {
+	if strings.EqualFold(s.cfg.CoreMode, "mock") || externalPCID == "" {
 		return fallback
 	}
 	status, err := s.core.GetPCStatus(ctx, externalPCID)
@@ -5907,6 +6754,12 @@ func (s *Server) syncCorePCStatus(ctx context.Context, pcID, externalPCID, fallb
 }
 
 func (s *Server) splitAmounts(amountTiyin int64) (platformAmount int64, clubAmount int64) {
+	if amountTiyin <= 0 {
+		return 0, 0
+	}
+	if !s.cfg.SplitPaymentsEnabled {
+		return 0, amountTiyin
+	}
 	if s.cfg.PlatformFeeBPS <= 0 {
 		return 0, amountTiyin
 	}
@@ -5920,10 +6773,21 @@ func (s *Server) splitAmounts(amountTiyin int64) (platformAmount int64, clubAmou
 	return platformAmount, amountTiyin - platformAmount
 }
 
-func (s *Server) splitAmountsForClub(amountTiyin int64, feeBPS int) (platformAmount int64, clubAmount int64) {
+func (s *Server) effectivePlatformFeeBPS(feeBPS int) int {
 	if feeBPS <= 0 {
-		feeBPS = s.cfg.PlatformFeeBPS
+		return s.cfg.PlatformFeeBPS
 	}
+	return feeBPS
+}
+
+func (s *Server) splitAmountsForClub(amountTiyin int64, feeBPS int) (platformAmount int64, clubAmount int64) {
+	if amountTiyin <= 0 {
+		return 0, 0
+	}
+	if !s.cfg.SplitPaymentsEnabled {
+		return 0, amountTiyin
+	}
+	feeBPS = s.effectivePlatformFeeBPS(feeBPS)
 	if feeBPS <= 0 {
 		return 0, amountTiyin
 	}
@@ -5935,4 +6799,238 @@ func (s *Server) splitAmountsForClub(amountTiyin int64, feeBPS int) (platformAmo
 		platformAmount = amountTiyin
 	}
 	return platformAmount, amountTiyin - platformAmount
+}
+
+type splitSeed struct {
+	ClickClubCntrgID        string
+	ClickPlatformCntrgID    string
+	PaymeClubReceiverID     string
+	PaymePlatformReceiverID string
+	PlatformAmountTiyin     int64
+	ClubAmountTiyin         int64
+}
+
+func (s *Server) providerSplitPayload(provider string, seed splitSeed) []map[string]any {
+	if !s.cfg.SplitPaymentsEnabled {
+		return []map[string]any{}
+	}
+	switch provider {
+	case payments.ProviderClick:
+		return clickSplitItems(seed.ClickClubCntrgID, seed.ClickPlatformCntrgID, seed.ClubAmountTiyin, seed.PlatformAmountTiyin)
+	case payments.ProviderPayme:
+		return paymeReceivers(seed.PaymeClubReceiverID, seed.PaymePlatformReceiverID, seed.ClubAmountTiyin, seed.PlatformAmountTiyin)
+	default:
+		return []map[string]any{}
+	}
+}
+
+func (s *Server) clickSplitForOrder(order providerOrder) []map[string]any {
+	if !s.cfg.SplitPaymentsEnabled {
+		return []map[string]any{}
+	}
+	return clickSplitItems(order.ClickClubCntrgID, order.ClickPlatformCntrgID, order.SplitClubAmountTiyin, order.SplitPlatformAmountTiyin)
+}
+
+func clickSplitItems(clubCntrgID, platformCntrgID string, clubAmountTiyin, platformAmountTiyin int64) []map[string]any {
+	if (clubAmountTiyin > 0 && strings.TrimSpace(clubCntrgID) == "") ||
+		(platformAmountTiyin > 0 && strings.TrimSpace(platformCntrgID) == "") {
+		return []map[string]any{}
+	}
+	items := make([]map[string]any, 0, 2)
+	if strings.TrimSpace(clubCntrgID) != "" && clubAmountTiyin > 0 {
+		items = append(items, map[string]any{
+			"cntrg_id": numericResponseValue(clubCntrgID),
+			"amount":   payments.ClickAmountValue(clubAmountTiyin),
+		})
+	}
+	if strings.TrimSpace(platformCntrgID) != "" && platformAmountTiyin > 0 {
+		items = append(items, map[string]any{
+			"cntrg_id": numericResponseValue(platformCntrgID),
+			"amount":   payments.ClickAmountValue(platformAmountTiyin),
+		})
+	}
+	return items
+}
+
+func (s *Server) paymeReceiversForOrder(order providerOrder) []map[string]any {
+	if !s.cfg.SplitPaymentsEnabled {
+		return []map[string]any{}
+	}
+	return paymeReceivers(order.PaymeClubReceiverID, order.PaymePlatformReceiverID, order.SplitClubAmountTiyin, order.SplitPlatformAmountTiyin)
+}
+
+func paymeReceivers(clubReceiverID, platformReceiverID string, clubAmountTiyin, platformAmountTiyin int64) []map[string]any {
+	if (clubAmountTiyin > 0 && strings.TrimSpace(clubReceiverID) == "") ||
+		(platformAmountTiyin > 0 && strings.TrimSpace(platformReceiverID) == "") {
+		return []map[string]any{}
+	}
+	receivers := make([]map[string]any, 0, 2)
+	if strings.TrimSpace(clubReceiverID) != "" && clubAmountTiyin > 0 {
+		receivers = append(receivers, map[string]any{
+			"id":     strings.TrimSpace(clubReceiverID),
+			"amount": clubAmountTiyin,
+		})
+	}
+	if strings.TrimSpace(platformReceiverID) != "" && platformAmountTiyin > 0 {
+		receivers = append(receivers, map[string]any{
+			"id":     strings.TrimSpace(platformReceiverID),
+			"amount": platformAmountTiyin,
+		})
+	}
+	return receivers
+}
+
+func (s *Server) orderFiscalPayload(seed checkoutSeed) map[string]any {
+	if strings.TrimSpace(seed.OFDMXIK) == "" || strings.TrimSpace(seed.OFDPackageCode) == "" {
+		return map[string]any{}
+	}
+	serviceName := defaultString(seed.OFDServiceName, "Компьютерное время")
+	itemName := serviceName
+	if seed.TariffName != "" && seed.TariffName != "Своя сумма" {
+		itemName = itemName + " - " + seed.TariffName
+	}
+	payload := map[string]any{
+		"seller": map[string]any{
+			"tin":        seed.TIN,
+			"legal_name": seed.LegalName,
+		},
+		"items": []map[string]any{
+			{
+				"name":         itemName,
+				"mxik":         seed.OFDMXIK,
+				"spic":         seed.OFDMXIK,
+				"package_code": seed.OFDPackageCode,
+				"unit_code":    seed.OFDUnitCode,
+				"price_tiyin":  seed.AmountTiyin,
+				"amount_tiyin": seed.AmountTiyin,
+				"vat_percent":  seed.OFDVATPercent,
+				"qty":          1,
+			},
+		},
+	}
+	return payload
+}
+
+func paymeDetailBase64(fiscalPayload []byte) string {
+	payload := bytes.TrimSpace(fiscalPayload)
+	if len(payload) == 0 || bytes.Equal(payload, []byte("{}")) {
+		return ""
+	}
+	decoder := json.NewDecoder(bytes.NewReader(payload))
+	decoder.UseNumber()
+	var raw map[string]any
+	if err := decoder.Decode(&raw); err != nil {
+		return ""
+	}
+	rawItems, ok := raw["items"].([]any)
+	if !ok || len(rawItems) == 0 {
+		return ""
+	}
+	items := make([]map[string]any, 0, len(rawItems))
+	for _, rawItem := range rawItems {
+		item, ok := rawItem.(map[string]any)
+		if !ok {
+			continue
+		}
+		title := fiscalString(item, "title", "name")
+		code := fiscalString(item, "code", "mxik", "spic")
+		packageCode := fiscalString(item, "package_code")
+		price := fiscalInt64(item, "price", "price_tiyin", "amount_tiyin")
+		if title == "" || code == "" || packageCode == "" || price <= 0 {
+			continue
+		}
+		paymeItem := map[string]any{
+			"title":        title,
+			"price":        price,
+			"count":        fiscalInt64Default(item, 1, "count", "qty"),
+			"code":         code,
+			"package_code": packageCode,
+		}
+		if units := fiscalInt64(item, "units", "unit_code"); units > 0 {
+			paymeItem["units"] = units
+		}
+		if vatPercent, ok := fiscalOptionalInt64(item, "vat_percent"); ok {
+			paymeItem["vat_percent"] = vatPercent
+		}
+		items = append(items, paymeItem)
+	}
+	if len(items) == 0 {
+		return ""
+	}
+	detail := map[string]any{
+		"receipt_type": 0,
+		"items":        items,
+	}
+	encoded, err := json.Marshal(detail)
+	if err != nil {
+		return ""
+	}
+	return base64.StdEncoding.EncodeToString(encoded)
+}
+
+func fiscalString(item map[string]any, keys ...string) string {
+	for _, key := range keys {
+		value, ok := item[key]
+		if !ok || value == nil {
+			continue
+		}
+		switch typed := value.(type) {
+		case string:
+			if trimmed := strings.TrimSpace(typed); trimmed != "" {
+				return trimmed
+			}
+		case json.Number:
+			return typed.String()
+		default:
+			text := strings.TrimSpace(fmt.Sprint(typed))
+			if text != "" && text != "<nil>" {
+				return text
+			}
+		}
+	}
+	return ""
+}
+
+func fiscalInt64Default(item map[string]any, fallback int64, keys ...string) int64 {
+	if value := fiscalInt64(item, keys...); value > 0 {
+		return value
+	}
+	return fallback
+}
+
+func fiscalInt64(item map[string]any, keys ...string) int64 {
+	value, _ := fiscalOptionalInt64(item, keys...)
+	return value
+}
+
+func fiscalOptionalInt64(item map[string]any, keys ...string) (int64, bool) {
+	for _, key := range keys {
+		value, ok := item[key]
+		if !ok || value == nil {
+			continue
+		}
+		switch typed := value.(type) {
+		case int:
+			return int64(typed), true
+		case int64:
+			return typed, true
+		case float64:
+			return int64(typed), true
+		case json.Number:
+			parsed, err := typed.Int64()
+			if err == nil {
+				return parsed, true
+			}
+			floatValue, err := strconv.ParseFloat(typed.String(), 64)
+			if err == nil {
+				return int64(floatValue), true
+			}
+		case string:
+			parsed, err := strconv.ParseInt(strings.TrimSpace(typed), 10, 64)
+			if err == nil {
+				return parsed, true
+			}
+		}
+	}
+	return 0, false
 }

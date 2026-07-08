@@ -36,6 +36,8 @@ func main() {
 	var coreAdapter core.Adapter = core.MockAdapter{}
 	if strings.EqualFold(cfg.CoreMode, "http") {
 		coreAdapter = core.NewHTTPAdapter(cfg.CoreBaseURL, cfg.CoreToken, time.Duration(cfg.CoreTimeoutMS)*time.Millisecond)
+	} else if strings.EqualFold(cfg.CoreMode, "ws") || strings.EqualFold(cfg.CoreMode, "websocket") {
+		coreAdapter = core.NewWSController(cfg.CoreToken, time.Duration(cfg.CoreTimeoutMS)*time.Millisecond)
 	}
 	server := httpapi.NewServer(cfg, pool, coreAdapter)
 	syncCtx, syncCancel := context.WithCancel(context.Background())

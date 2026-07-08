@@ -61,11 +61,13 @@ type QRPaymentProvider = {
 };
 
 type QRData = {
+  qr_type?: 'static_pc' | 'session_extend' | string;
   club: { id: string; name: string };
   pc: { id: string; external_pc_id: string; number: number; label: string; status: string };
   zone: { id: string; name: string; hourly_price_tiyin: number; hourly_price_uzs: number };
   tariffs: Tariff[];
   payment_providers: QRPaymentProvider[];
+  active_session?: { planned_ends_at?: string; remaining_seconds?: number; can_extend?: boolean } | null;
   telegram?: { bot_link?: string; bot_username?: string };
 };
 
@@ -127,11 +129,19 @@ type ClubSettings = {
   click_service_id: string;
   click_merchant_user_id: string;
   click_secret_key: string;
+  click_club_cntrg_id: string;
+  click_platform_cntrg_id: string;
   payme_merchant_id: string;
   payme_secret_key: string;
+  payme_club_receiver_id: string;
+  payme_platform_receiver_id: string;
   platform_fee_bps: number;
+  effective_platform_fee_bps?: number;
   ofd_mxik: string;
   ofd_package_code: string;
+  ofd_service_name: string;
+  ofd_unit_code: string;
+  ofd_vat_percent: number;
   payment_connected?: boolean;
   click_connected?: boolean;
   payme_connected?: boolean;
@@ -269,11 +279,18 @@ const EMPTY_CLUB_FORM: ClubSettings = {
   click_service_id: '',
   click_merchant_user_id: '',
   click_secret_key: '',
+  click_club_cntrg_id: '',
+  click_platform_cntrg_id: '',
   payme_merchant_id: '',
   payme_secret_key: '',
+  payme_club_receiver_id: '',
+  payme_platform_receiver_id: '',
   platform_fee_bps: 0,
   ofd_mxik: '',
   ofd_package_code: '',
+  ofd_service_name: 'Компьютерное время',
+  ofd_unit_code: '',
+  ofd_vat_percent: 0,
 };
 
 function App() {
@@ -579,8 +596,11 @@ function QRPage({ token }: { token: string }) {
   const paymentMethodReady = Boolean(selectedProviderOption?.configured);
   const customAmountUZS = parseUZSInput(customAmount);
   const checkoutAmountUZS = customAmountUZS || selectedTariff?.price_uzs || 0;
-  const canStartOrExtend = data ? isPayableStatus(data.pc.status) || data.pc.status === 'occupied' : false;
-  const isExtension = data?.pc.status === 'occupied';
+  const isSessionExtendQR = data?.qr_type === 'session_extend';
+  const canStartOrExtend = data ? isPayableStatus(data.pc.status) || (data.pc.status === 'occupied' && isSessionExtendQR) : false;
+  const isExtension = data?.pc.status === 'occupied' && isSessionExtendQR;
+  const isStaticBusyQR = data?.pc.status === 'occupied' && !isSessionExtendQR;
+  const busyUntilLabel = data?.active_session?.planned_ends_at ? formatTime(data.active_session.planned_ends_at) : '';
   const voucherReadyForAutoApply = Boolean(voucherCode.trim() && voucherCheck?.can_redeem);
   const voucherDurationSeconds = voucherCheck?.seconds_left || (voucherCheck?.minutes_left ? voucherCheck.minutes_left * 60 : 0);
 
@@ -655,8 +675,15 @@ function QRPage({ token }: { token: string }) {
   if (!data) return <Centered text="Компьютер не найден" />;
 
   const isBusy = !canStartOrExtend;
+  const deviceHint = isExtension
+    ? 'QR с экрана активной сессии. Оплата или ваучер продлят текущее время.'
+    : isStaticBusyQR
+      ? `ПК занят${busyUntilLabel ? ` до ${busyUntilLabel}` : ''}. Оплата по наклейке недоступна. Для продления используйте QR на экране сессии.`
+      : isBusy
+        ? 'Этот компьютер сейчас нельзя оплатить по QR.'
+        : `Пакет или своя сумма. 1 час: ${formatUZS(data.zone.hourly_price_uzs)}.`;
   const payLabel = isBusy
-    ? 'Компьютер недоступен'
+    ? (isStaticBusyQR ? 'ПК занят' : 'Компьютер недоступен')
     : isExtension && checkoutAmountUZS
       ? `Продлить на ${formatUZS(checkoutAmountUZS)}${voucherReadyForAutoApply ? ' + ваучер' : ''}`
     : checkoutAmountUZS
@@ -678,7 +705,7 @@ function QRPage({ token }: { token: string }) {
           <div>
             <span>Зона</span>
             <strong>{data.zone.name}</strong>
-            <p>{isExtension ? 'Этот ПК занят. Оплата или ваучер продлят текущую сессию.' : isBusy ? 'Этот компьютер сейчас нельзя оплатить по QR.' : `Пакет или своя сумма. 1 час: ${formatUZS(data.zone.hourly_price_uzs)}.`}</p>
+            <p>{deviceHint}</p>
           </div>
         </section>
 
@@ -1139,12 +1166,11 @@ function ReportsPage({ auth, selectedClubID, currentPath, onClubChange, onLogout
         <Panel><EmptyState text="Считаем сводку" /></Panel>
       ) : (
         <section className="metrics">
-          <Metric icon={<CreditCard />} label="Онлайн-выручка" value={formatUZS(summary.online_revenue_uzs)} />
-          <Metric icon={<Banknote />} label="Клубу онлайн" value={formatUZS(summary.club_online_revenue_uzs)} />
-          <Metric icon={<ReceiptText />} label="Комиссия платформы" value={formatUZS(summary.platform_fee_uzs)} />
+          <Metric icon={<CreditCard />} label="Онлайн на кассу" value={formatUZS(summary.club_online_revenue_uzs || summary.online_revenue_uzs)} />
           <Metric icon={<Banknote />} label="Наличные" value={formatUZS(summary.cash_revenue_uzs)} />
           <Metric icon={<Activity />} label="Итого клубу" value={formatUZS(summary.club_total_revenue_uzs)} />
           <Metric icon={<ReceiptText />} label="Онлайн-оплаты" value={String(summary.paid_orders)} />
+          <Metric icon={<Banknote />} label="Наличные сессии" value={String(summary.cash_sessions)} />
           <Metric icon={<Monitor />} label="Активные сессии" value={String(summary.active_grants)} />
         </section>
       )}
@@ -1466,7 +1492,7 @@ function SettingsPage({ auth, selectedClubID, currentPath, onClubChange, onLogou
             <SectionTitle
               icon={<Building2 size={18} />}
               title={creatingClub ? 'Новый клуб' : 'Клуб'}
-              caption={canManageNetwork ? 'Основные данные клуба, прямые подключения Click/Payme и параметры Soliq/OFD.' : 'Основные данные клуба и состояние платежного подключения.'}
+              caption={canManageNetwork ? 'Основные данные клуба, прямые подключения Click/Payme и опциональные данные для чеков.' : 'Основные данные клуба и состояние платежного подключения.'}
             />
             <div className="form-mode">
               <strong>{creatingClub ? 'Создание клуба' : 'Редактирование клуба'}</strong>
@@ -1485,18 +1511,12 @@ function SettingsPage({ auth, selectedClubID, currentPath, onClubChange, onLogou
                   <Field label="Click secret key" type="password" value={clubForm.click_secret_key} onChange={(value) => setClubForm({ ...clubForm, click_secret_key: value })} help="Секрет для проверки Prepare/Complete callback." />
                   <Field label="Payme merchant ID" value={clubForm.payme_merchant_id} onChange={(value) => setClubForm({ ...clubForm, payme_merchant_id: value })} help="ID кассы/мерчанта Payme для checkout-ссылки." />
                   <Field label="Payme secret key" type="password" value={clubForm.payme_secret_key} onChange={(value) => setClubForm({ ...clubForm, payme_secret_key: value })} help="Для sandbox укажите TEST_KEY из Payme Business; для production — боевой secret." />
-                  <Field
-                    label="Комиссия платформы, %"
-                    type="number"
-                    step="0.01"
-                    min="0"
-                    value={bpsToPercentInput(clubForm.platform_fee_bps)}
-                    onChange={(value) => setClubForm({ ...clubForm, platform_fee_bps: percentInputToBPS(value) })}
-                    help="Введите процент: 2 = 2%. В системе это сохранится как 200 bps."
-                  />
                   <SelectField label="Статус клуба" value={clubForm.status} options={statusOptions()} onChange={(value) => setClubForm({ ...clubForm, status: value })} help="Отключенный клуб не должен принимать новые оплаты." />
-                  <Field label="OFD MXIK" value={clubForm.ofd_mxik} onChange={(value) => setClubForm({ ...clubForm, ofd_mxik: value })} help="Код услуги для фискального чека." />
-                  <Field label="OFD package_code" value={clubForm.ofd_package_code} onChange={(value) => setClubForm({ ...clubForm, ofd_package_code: value })} help="Код единицы/пакета для OFD." />
+                  <Field label="Название услуги для чека" value={clubForm.ofd_service_name} onChange={(value) => setClubForm({ ...clubForm, ofd_service_name: value })} help="Например: Компьютерное время. Можно оставить по умолчанию." />
+                  <Field label="ИКПУ / MXIK" value={clubForm.ofd_mxik} onChange={(value) => setClubForm({ ...clubForm, ofd_mxik: value })} help="Заполняем после бухгалтера. Если пусто, Payme уйдет без detail.items и сможет работать со статичной кассой." />
+                  <Field label="package_code" value={clubForm.ofd_package_code} onChange={(value) => setClubForm({ ...clubForm, ofd_package_code: value })} help="Заполняем после бухгалтера вместе с IKPU/MXIK." />
+                  <Field label="unit_code" value={clubForm.ofd_unit_code} onChange={(value) => setClubForm({ ...clubForm, ofd_unit_code: value })} help="Опционально: код единицы измерения, если его требует платежка или OFD." />
+                  <Field label="НДС, %" type="number" min="0" value={String(clubForm.ofd_vat_percent ?? 0)} onChange={(value) => setClubForm({ ...clubForm, ofd_vat_percent: Number(value || 0) })} help="Заполняем вместе с кодами. 0 — без НДС или ставка не применяется." />
                 </>
               )}
             </div>
@@ -1927,8 +1947,7 @@ function ClubConnectionSummary({ club }: { club: ClubSettings }) {
   const clickReady = club.click_connected ?? Boolean(club.click_merchant_id && club.click_service_id && club.click_merchant_user_id);
   const paymeReady = club.payme_connected ?? Boolean(club.payme_merchant_id);
   const paymentReady = club.payment_connected ?? (clickReady || paymeReady);
-  const payoutReady = club.payouts_connected ?? club.platform_fee_bps > 0;
-  const fiscalReady = club.fiscal_connected ?? Boolean(club.ofd_mxik && club.ofd_package_code);
+  const fiscalCodesReady = club.fiscal_connected ?? Boolean(club.ofd_mxik && club.ofd_package_code && club.ofd_service_name);
   const clubActive = club.status === 'active';
   const connectedProviders = [clickReady && 'Click', paymeReady && 'Payme'].filter(Boolean).join(', ');
 
@@ -1937,7 +1956,7 @@ function ClubConnectionSummary({ club }: { club: ClubSettings }) {
       <div className="connection-summary-head">
         <div>
           <strong>Подключение клуба</strong>
-          <span>Технические ключи Click/Payme и Soliq заполняет команда Clubpay после подключения клуба.</span>
+          <span>Технические ключи Click/Payme заполняет команда Clubpay после подключения клуба. Коды чеков добавим после бухгалтера.</span>
         </div>
         <span className={`connection-pill ${clubActive ? 'ready' : 'waiting'}`}>{clubActive ? 'Клуб активен' : 'Клуб отключен'}</span>
       </div>
@@ -1951,17 +1970,17 @@ function ClubConnectionSummary({ club }: { club: ClubSettings }) {
         />
         <ConnectionItem
           icon={<Banknote size={18} />}
-          ready={payoutReady}
-          title="Комиссия платформы"
-          value={payoutReady ? formatPercentFromBPS(club.platform_fee_bps) : 'Не задана'}
-          caption="Коммерческую ставку меняет только команда Clubpay."
+          ready={paymentReady}
+          title="Деньги клуба"
+          value={paymentReady ? 'На кассу клуба' : 'После подключения'}
+          caption="В MVP онлайн-оплата идет на мерчант клуба. Clubpay оплачивается отдельно по подписке."
         />
         <ConnectionItem
           icon={<ReceiptText size={18} />}
-          ready={fiscalReady}
-          title="Фискализация"
-          value={fiscalReady ? 'Настроена' : 'Ждёт настройки'}
-          caption={fiscalReady ? 'Коды OFD сохранены.' : 'Нужны корректные MXIK и package_code.'}
+          ready
+          title="Фискальные чеки"
+          value={fiscalCodesReady ? 'Коды сохранены' : 'Через кассу клуба'}
+          caption={fiscalCodesReady ? 'Передадим данные услуги платежке.' : 'До кодов бухгалтера можно использовать статичную настройку кассы провайдера.'}
         />
         <ConnectionItem
           icon={<Settings size={18} />}
@@ -2059,28 +2078,13 @@ function localizeError(message: string) {
     'not enough permissions': 'Недостаточно прав',
     'club access required': 'Нет доступа к клубу',
     'PC is not available': 'Компьютер сейчас недоступен',
+    'PC is occupied. Use session QR to extend': 'ПК занят. Для продления используйте QR на экране сессии.',
     'active session for extension not found': 'Активная сессия для продления не найдена',
     'voucher not found or expired': 'Ваучер не найден или истёк',
     'QR token not found': 'QR-код не найден',
     'voucher belongs to another club': 'Ваучер относится к другому клубу',
   };
   return dictionary[message] || message;
-}
-
-function bpsToPercentInput(bps?: number) {
-  const percent = Number(bps || 0) / 100;
-  return Number.isInteger(percent) ? String(percent) : String(Number(percent.toFixed(4)));
-}
-
-function percentInputToBPS(value: string) {
-  const percent = Number(value.replace(',', '.') || 0);
-  if (!Number.isFinite(percent) || percent < 0) return 0;
-  return Math.round(percent * 100);
-}
-
-function formatPercentFromBPS(bps?: number) {
-  const percent = Number(bps || 0) / 100;
-  return `${percent.toLocaleString('ru-RU', { maximumFractionDigits: 2 })}%`;
 }
 
 function clubPath(path: string, clubID: string) {
@@ -2121,6 +2125,12 @@ function formatPackageCount(count: number) {
 
 function formatDateTime(value: string) {
   return new Intl.DateTimeFormat('ru-UZ', { hour: '2-digit', minute: '2-digit', day: '2-digit', month: '2-digit' }).format(new Date(value));
+}
+
+function formatTime(value: string) {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return '';
+  return new Intl.DateTimeFormat('ru-UZ', { hour: '2-digit', minute: '2-digit' }).format(date);
 }
 
 function slugifyClient(value: string) {
@@ -2218,13 +2228,13 @@ function sourceLabel(source: string) {
 
 function fiscalStatusLabel(status?: string) {
   const labels: Record<string, string> = {
-    not_requested: 'Soliq не запрошен',
-    pending: 'Soliq в обработке',
-    not_confirmed: 'Soliq не подтверждён',
-    confirmed: 'Soliq подтверждён',
-    failed: 'Ошибка Soliq',
+    not_requested: 'Чек не запрошен',
+    pending: 'Чек в обработке',
+    not_confirmed: 'Чек не подтверждён',
+    confirmed: 'Чек подтверждён',
+    failed: 'Ошибка чека',
   };
-  return labels[status || ''] || 'Soliq не подтверждён';
+  return labels[status || ''] || 'Чек не подтверждён';
 }
 
 function telegramDeliveryLabel(status: string) {

@@ -13,11 +13,18 @@ CREATE TABLE IF NOT EXISTS clubs (
   click_service_id TEXT,
   click_merchant_user_id TEXT,
   click_secret_key TEXT,
+  click_club_cntrg_id TEXT,
+  click_platform_cntrg_id TEXT,
   payme_merchant_id TEXT,
   payme_secret_key TEXT,
+  payme_club_receiver_id TEXT,
+  payme_platform_receiver_id TEXT,
   platform_fee_bps INT NOT NULL DEFAULT 0,
   ofd_mxik TEXT,
   ofd_package_code TEXT,
+  ofd_service_name TEXT,
+  ofd_unit_code TEXT,
+  ofd_vat_percent INT NOT NULL DEFAULT 0,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
@@ -28,11 +35,19 @@ ALTER TABLE clubs ADD COLUMN IF NOT EXISTS click_merchant_id TEXT;
 ALTER TABLE clubs ADD COLUMN IF NOT EXISTS click_service_id TEXT;
 ALTER TABLE clubs ADD COLUMN IF NOT EXISTS click_merchant_user_id TEXT;
 ALTER TABLE clubs ADD COLUMN IF NOT EXISTS click_secret_key TEXT;
+ALTER TABLE clubs ADD COLUMN IF NOT EXISTS click_club_cntrg_id TEXT;
+ALTER TABLE clubs ADD COLUMN IF NOT EXISTS click_platform_cntrg_id TEXT;
 ALTER TABLE clubs ADD COLUMN IF NOT EXISTS payme_merchant_id TEXT;
 ALTER TABLE clubs ADD COLUMN IF NOT EXISTS payme_secret_key TEXT;
+ALTER TABLE clubs ADD COLUMN IF NOT EXISTS payme_club_receiver_id TEXT;
+ALTER TABLE clubs ADD COLUMN IF NOT EXISTS payme_platform_receiver_id TEXT;
 ALTER TABLE clubs ADD COLUMN IF NOT EXISTS platform_fee_bps INT NOT NULL DEFAULT 0;
 ALTER TABLE clubs ADD COLUMN IF NOT EXISTS ofd_mxik TEXT;
 ALTER TABLE clubs ADD COLUMN IF NOT EXISTS ofd_package_code TEXT;
+ALTER TABLE clubs ADD COLUMN IF NOT EXISTS ofd_service_name TEXT;
+ALTER TABLE clubs ADD COLUMN IF NOT EXISTS ofd_unit_code TEXT;
+ALTER TABLE clubs ADD COLUMN IF NOT EXISTS ofd_vat_percent INT NOT NULL DEFAULT 0;
+UPDATE clubs SET ofd_service_name = 'Компьютерное время' WHERE COALESCE(ofd_service_name, '') = '' AND COALESCE(ofd_mxik, '') <> '';
 UPDATE clubs SET click_merchant_id = NULL WHERE lower(COALESCE(click_merchant_id, '')) IN ('click_test_merchant', 'test_merchant');
 UPDATE clubs SET click_service_id = NULL WHERE lower(COALESCE(click_service_id, '')) IN ('click_test_service', 'test_service');
 UPDATE clubs SET click_merchant_user_id = NULL WHERE lower(COALESCE(click_merchant_user_id, '')) IN ('click_test_user', 'test_user');
@@ -170,6 +185,9 @@ CREATE TABLE IF NOT EXISTS payment_orders (
   fiscal_status TEXT NOT NULL DEFAULT 'not_requested',
   split_platform_amount_tiyin BIGINT NOT NULL DEFAULT 0,
   split_club_amount_tiyin BIGINT NOT NULL DEFAULT 0,
+  split_payload JSONB NOT NULL DEFAULT '[]'::jsonb,
+  fiscal_payload JSONB NOT NULL DEFAULT '{}'::jsonb,
+  fiscal_error TEXT,
   expires_at TIMESTAMPTZ,
   paid_at TIMESTAMPTZ,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
@@ -187,6 +205,9 @@ ALTER TABLE payment_orders ADD COLUMN IF NOT EXISTS receipt_kind TEXT NOT NULL D
 ALTER TABLE payment_orders ADD COLUMN IF NOT EXISTS fiscal_status TEXT NOT NULL DEFAULT 'not_requested';
 ALTER TABLE payment_orders ADD COLUMN IF NOT EXISTS split_platform_amount_tiyin BIGINT NOT NULL DEFAULT 0;
 ALTER TABLE payment_orders ADD COLUMN IF NOT EXISTS split_club_amount_tiyin BIGINT NOT NULL DEFAULT 0;
+ALTER TABLE payment_orders ADD COLUMN IF NOT EXISTS split_payload JSONB NOT NULL DEFAULT '[]'::jsonb;
+ALTER TABLE payment_orders ADD COLUMN IF NOT EXISTS fiscal_payload JSONB NOT NULL DEFAULT '{}'::jsonb;
+ALTER TABLE payment_orders ADD COLUMN IF NOT EXISTS fiscal_error TEXT;
 ALTER TABLE payment_orders ADD COLUMN IF NOT EXISTS extension_grant_id UUID;
 ALTER TABLE payment_orders ADD COLUMN IF NOT EXISTS duration_seconds INT NOT NULL DEFAULT 0;
 ALTER TABLE payment_orders ADD COLUMN IF NOT EXISTS voucher_id UUID;
@@ -462,8 +483,8 @@ SET role = 'admin',
 WHERE email = 'admin@clubpay.local';
 
 WITH club AS (
-  INSERT INTO clubs (name, slug, legal_name, timezone, status, ofd_mxik, ofd_package_code)
-  VALUES ('Test Cyber Club', 'test-cyber-club', 'Test Cyber Club LLC', 'Asia/Tashkent', 'active', '06401004002000000', '1506113')
+  INSERT INTO clubs (name, slug, legal_name, timezone, status, ofd_mxik, ofd_package_code, ofd_service_name)
+  VALUES ('Test Cyber Club', 'test-cyber-club', 'Test Cyber Club LLC', 'Asia/Tashkent', 'active', '06401004002000000', '1506113', 'Компьютерное время')
   ON CONFLICT DO NOTHING
   RETURNING id
 ), selected_club AS (

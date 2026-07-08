@@ -73,10 +73,11 @@ type ExtendSessionResult struct {
 }
 
 type EndSessionCommand struct {
-	RequestID string            `json:"request_id"`
-	Reason    string            `json:"reason"`
-	EndedBy   map[string]string `json:"ended_by,omitempty"`
-	CreatedAt string            `json:"created_at"`
+	RequestID    string            `json:"request_id"`
+	ExternalPCID string            `json:"external_pc_id,omitempty"`
+	Reason       string            `json:"reason"`
+	EndedBy      map[string]string `json:"ended_by,omitempty"`
+	CreatedAt    string            `json:"created_at"`
 }
 
 type EndSessionResult struct {
@@ -96,6 +97,11 @@ type Adapter interface {
 	StartSession(ctx context.Context, cmd StartSessionCommand) (StartSessionResult, error)
 	ExtendSession(ctx context.Context, coreSessionID string, cmd ExtendSessionCommand) (ExtendSessionResult, error)
 	EndSession(ctx context.Context, coreSessionID string, cmd EndSessionCommand) (EndSessionResult, error)
+	Lock(ctx context.Context, externalPCID, reason string) error
+	Unlock(ctx context.Context, externalPCID, reason string) error
+	Wake(ctx context.Context, externalPCID string) error
+	Sleep(ctx context.Context, externalPCID string) error
+	SetRepair(ctx context.Context, externalPCID string, on bool) error
 }
 
 type MockAdapter struct{}
@@ -146,6 +152,26 @@ func (MockAdapter) EndSession(ctx context.Context, coreSessionID string, cmd End
 		CoreSessionID: coreSessionID,
 		EndedAt:       &now,
 	}, nil
+}
+
+func (MockAdapter) Lock(ctx context.Context, externalPCID, reason string) error {
+	return nil
+}
+
+func (MockAdapter) Unlock(ctx context.Context, externalPCID, reason string) error {
+	return nil
+}
+
+func (MockAdapter) Wake(ctx context.Context, externalPCID string) error {
+	return nil
+}
+
+func (MockAdapter) Sleep(ctx context.Context, externalPCID string) error {
+	return nil
+}
+
+func (MockAdapter) SetRepair(ctx context.Context, externalPCID string, on bool) error {
+	return nil
 }
 
 type HTTPAdapter struct {
@@ -202,6 +228,26 @@ func (a *HTTPAdapter) EndSession(ctx context.Context, coreSessionID string, cmd 
 		return result, fmt.Errorf("core end rejected: %s %s", result.Reason, result.Message)
 	}
 	return result, nil
+}
+
+func (a *HTTPAdapter) Lock(ctx context.Context, externalPCID, reason string) error {
+	return a.doJSON(ctx, http.MethodPost, "/core/v1/pcs/"+externalPCID+"/lock", map[string]string{"reason": reason}, &struct{}{})
+}
+
+func (a *HTTPAdapter) Unlock(ctx context.Context, externalPCID, reason string) error {
+	return a.doJSON(ctx, http.MethodPost, "/core/v1/pcs/"+externalPCID+"/unlock", map[string]string{"reason": reason}, &struct{}{})
+}
+
+func (a *HTTPAdapter) Wake(ctx context.Context, externalPCID string) error {
+	return a.doJSON(ctx, http.MethodPost, "/core/v1/pcs/"+externalPCID+"/wake", nil, &struct{}{})
+}
+
+func (a *HTTPAdapter) Sleep(ctx context.Context, externalPCID string) error {
+	return a.doJSON(ctx, http.MethodPost, "/core/v1/pcs/"+externalPCID+"/sleep", nil, &struct{}{})
+}
+
+func (a *HTTPAdapter) SetRepair(ctx context.Context, externalPCID string, on bool) error {
+	return a.doJSON(ctx, http.MethodPost, "/core/v1/pcs/"+externalPCID+"/repair", map[string]bool{"on": on}, &struct{}{})
 }
 
 func (a *HTTPAdapter) doJSON(ctx context.Context, method, path string, body any, target any) error {

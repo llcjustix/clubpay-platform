@@ -28,6 +28,7 @@ type Config struct {
 	PaymeMerchantID        string
 	PaymeSecretKey         string
 	PlatformFeeBPS         int
+	SplitPaymentsEnabled   bool
 
 	CoreMode      string
 	CoreBaseURL   string
@@ -38,6 +39,9 @@ type Config struct {
 	EdgeClubID              string
 	EdgeSyncToken           string
 	EdgeSyncIntervalSeconds int
+	ManagerNodeID           string
+	ManagerClubID           string
+	ManagerOnlinePayments   bool
 	TelegramBotToken        string
 	TelegramBotUsername     string
 	TelegramWebhookSecret   string
@@ -73,6 +77,7 @@ func Load() (Config, error) {
 		PaymeMerchantID:         env("PAYME_MERCHANT_ID", ""),
 		PaymeSecretKey:          env("PAYME_SECRET_KEY", ""),
 		PlatformFeeBPS:          envInt("PLATFORM_FEE_BPS", 0),
+		SplitPaymentsEnabled:    envBool("SPLIT_PAYMENTS_ENABLED", false),
 		CoreMode:                env("CORE_MODE", "mock"),
 		CoreBaseURL:             strings.TrimRight(env("CORE_BASE_URL", "http://controller.local:8081"), "/"),
 		CoreToken:               env("CORE_TOKEN", ""),
@@ -81,6 +86,9 @@ func Load() (Config, error) {
 		EdgeClubID:              env("EDGE_CLUB_ID", ""),
 		EdgeSyncToken:           env("EDGE_SYNC_TOKEN", ""),
 		EdgeSyncIntervalSeconds: envInt("EDGE_SYNC_INTERVAL_SECONDS", 15),
+		ManagerNodeID:           env("MANAGER_NODE_ID", ""),
+		ManagerClubID:           env("MANAGER_CLUB_ID", ""),
+		ManagerOnlinePayments:   envBool("MANAGER_ONLINE_PAYMENTS_ENABLED", false),
 		TelegramBotToken:        env("TELEGRAM_BOT_TOKEN", ""),
 		TelegramBotUsername:     strings.TrimPrefix(strings.TrimSpace(env("TELEGRAM_BOT_USERNAME", "")), "@"),
 		TelegramWebhookSecret:   env("TELEGRAM_WEBHOOK_SECRET", ""),
@@ -90,6 +98,14 @@ func Load() (Config, error) {
 	}
 	if cfg.DatabaseURL == "" {
 		return Config{}, fmt.Errorf("DATABASE_URL is required")
+	}
+	if cfg.NodeMode == "manager" {
+		if strings.TrimSpace(cfg.EdgeNodeID) == "" {
+			cfg.EdgeNodeID = strings.TrimSpace(cfg.ManagerNodeID)
+		}
+		if strings.TrimSpace(cfg.EdgeClubID) == "" {
+			cfg.EdgeClubID = strings.TrimSpace(cfg.ManagerClubID)
+		}
 	}
 	return cfg, nil
 }
