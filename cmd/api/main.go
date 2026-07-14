@@ -29,7 +29,7 @@ func main() {
 	}
 	defer pool.Close()
 
-	if err := db.RunMigrations(ctx, pool, "migrations/001_init.sql"); err != nil {
+	if err := db.RunMigrations(ctx, pool, "migrations"); err != nil {
 		log.Fatalf("run migrations: %v", err)
 	}
 

@@ -10,16 +10,17 @@ import {
   Clock3,
   CreditCard,
   Gamepad2,
+  Network,
   KeyRound,
   LogOut,
   Monitor,
-  Moon,
   Play,
   Plus,
   Power,
   QrCode,
   ReceiptText,
   RefreshCw,
+  Search,
   Save,
   Send,
   Settings,
@@ -29,6 +30,8 @@ import {
   Wrench,
   X,
 } from 'lucide-react';
+import '@fontsource-variable/geist';
+import '@fontsource-variable/geist-mono';
 import './styles.css';
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8080';
@@ -114,10 +117,13 @@ type ClubUser = {
   phone: string;
   role: string;
   status: string;
+  scope?: 'club' | 'network';
 };
 
 type ClubSettings = {
   id: string;
+  network_id: string;
+  network_name: string;
   name: string;
   slug: string;
   legal_name: string;
@@ -201,6 +207,7 @@ type TelegramPrompt = {
   code?: string;
   minutes?: number;
   seconds?: number;
+  status?: string;
 };
 
 type Grant = {
@@ -246,6 +253,16 @@ type AuthUser = {
 
 type ClubAccess = {
   id: string;
+  network_id: string;
+  network_name: string;
+  name: string;
+  slug: string;
+  status: string;
+  role: string;
+};
+
+type ClubNetwork = {
+  id: string;
   name: string;
   slug: string;
   status: string;
@@ -268,6 +285,8 @@ type ButtonProps = React.ButtonHTMLAttributes<HTMLButtonElement> & {
 
 const EMPTY_CLUB_FORM: ClubSettings = {
   id: '',
+  network_id: '',
+  network_name: '',
   name: '',
   slug: '',
   legal_name: '',
@@ -478,24 +497,47 @@ function LoginPage({ onLogin, error }: { onLogin: (payload: AuthPayload) => void
   }
 
   return (
-    <main className="shell narrow auth-shell">
-      <PageHeader eyebrow="Clubpay" title="Вход в панель" />
-      <Panel>
+    <main className="auth-shell">
+      <header className="auth-brand">
+        <div className="brand-mark" aria-hidden="true">CP</div>
+        <div>
+          <strong>ClubPay</strong>
+          <span>Operations</span>
+        </div>
+      </header>
+      <section className="auth-card" aria-labelledby="login-title">
+        <div className="auth-card-head">
+          <div>
+            <p>Доступ к системе</p>
+            <h1 id="login-title">Вход в панель</h1>
+            <span>Рабочее пространство откроется согласно вашей роли.</span>
+          </div>
+        </div>
         <form className="stack" onSubmit={submit}>
           <label className="form-block">
             Логин
-            <input value={login} onChange={(event) => setLogin(event.target.value)} placeholder="email или телефон" />
+            <input
+              autoComplete="username"
+              value={login}
+              onChange={(event) => setLogin(event.target.value)}
+              placeholder="email или телефон"
+            />
           </label>
           <label className="form-block">
             Пароль
-            <input value={password} onChange={(event) => setPassword(event.target.value)} type="password" />
+            <input
+              autoComplete="current-password"
+              value={password}
+              onChange={(event) => setPassword(event.target.value)}
+              type="password"
+            />
           </label>
           <Button full icon={loading ? <RefreshCw className="spin" size={18} /> : <KeyRound size={18} />} disabled={loading}>
             Войти
           </Button>
           {message && <Notice tone="danger">{message}</Notice>}
         </form>
-      </Panel>
+      </section>
     </main>
   );
 }
@@ -513,7 +555,7 @@ function HomePage(props: WorkspaceProps) {
   const canOpenSettings = canViewSettings(props.auth, props.selectedClubID);
 
   return (
-    <main className="shell">
+    <main className="shell workspace-shell">
       <WorkspaceHeader {...props} eyebrow="Clubpay" title="Рабочая панель" />
       <Panel>
         <div className="link-grid">
@@ -712,7 +754,7 @@ function QRPage({ token }: { token: string }) {
         <section className="qr-voucher-card">
           <div>
             <p>Есть остаток времени?</p>
-            <h2>Проверьте ваучер</h2>
+            <h2>Применить ваучер</h2>
           </div>
           <div className="qr-voucher-form">
             <input
@@ -730,14 +772,12 @@ function QRPage({ token }: { token: string }) {
           {voucherCheck?.can_redeem && (
             <div className="qr-voucher-status success">
               <strong>Ваучер валиден: {formatDurationClock(voucherDurationSeconds)}</strong>
-              <span>
-                Можно нажать “Применить” сразу. Если выбрать пакет или ввести сумму и оплатить, ваучер применится автоматически и добавится к оплаченному времени.
-              </span>
+              <span>Можно применить сразу или добавить время к выбранной оплате.</span>
             </div>
           )}
           {voucherCheck && !voucherCheck.can_redeem && (
             <div className="qr-voucher-status danger">
-              <strong>Ваучер найден, но применить здесь нельзя</strong>
+              <strong>Ваучер нельзя применить</strong>
               <span>Проверьте клуб, зону или статус компьютера.</span>
             </div>
           )}
@@ -788,7 +828,7 @@ function QRPage({ token }: { token: string }) {
           <input
             value={customAmount}
             onChange={(event) => {
-              setCustomAmount(event.target.value.replace(/[^\d ]/g, ''));
+              setCustomAmount(formatUZSInput(event.target.value));
               setSelected('');
             }}
             placeholder={`1 час: ${formatUZS(data.zone.hourly_price_uzs)}`}
@@ -837,15 +877,15 @@ function QRPage({ token }: { token: string }) {
         )}
         {voucherError && <Notice tone="danger">{voucherError}</Notice>}
         {error && <Notice tone="danger">{error}</Notice>}
-      </section>
 
-      <div className="qr-checkout-bar">
-        <div className="qr-checkout-inner">
-          <Button full className="qr-pay-button" disabled={isBusy || checkingVoucher || (!selected && !customAmountUZS) || !checkoutAmountUZS || creating || !paymentMethodReady} icon={creating ? <RefreshCw className="spin" size={18} /> : <CreditCard size={18} />} onClick={createCheckout}>
-            {creating ? 'Открываем оплату' : payLabel}
-          </Button>
+        <div className="qr-checkout-bar">
+          <div className="qr-checkout-inner">
+            <Button full className="qr-pay-button" disabled={isBusy || checkingVoucher || (!selected && !customAmountUZS) || !checkoutAmountUZS || creating || !paymentMethodReady} icon={creating ? <RefreshCw className="spin" size={18} /> : <CreditCard size={18} />} onClick={createCheckout}>
+              {creating ? 'Открываем оплату' : payLabel}
+            </Button>
+          </div>
         </div>
-      </div>
+      </section>
     </main>
   );
 }
@@ -860,8 +900,13 @@ function AdminPage({ auth, selectedClubID, currentPath, onClubChange, onLogout }
   const [cashTariffID, setCashTariffID] = useState('');
   const [cashAmount, setCashAmount] = useState('');
   const [endPhoneByGrant, setEndPhoneByGrant] = useState<Record<string, string>>({});
+  const [endSessionDraft, setEndSessionDraft] = useState<{ grant: Grant; phone: string; confirmWithoutPhone: boolean } | null>(null);
   const [telegramPrompt, setTelegramPrompt] = useState<TelegramPrompt | null>(null);
   const [message, setMessage] = useState('');
+  const [pcQuery, setPCQuery] = useState('');
+  const [pcStatusFilter, setPCStatusFilter] = useState('');
+  const [pcZoneFilter, setPCZoneFilter] = useState('');
+  const [selectedPCID, setSelectedPCID] = useState('');
   const refreshingRef = useRef(false);
 
   async function refresh() {
@@ -950,11 +995,11 @@ function AdminPage({ auth, selectedClubID, currentPath, onClubChange, onLogout }
     refresh();
   }
 
-  async function endGrant(grant: Grant) {
+  async function endGrant(grant: Grant, phone = '') {
     setTelegramPrompt(null);
     const result = await api<{ voucher?: { code: string; minutes_left: number; seconds_left?: number }; voucher_delivery?: VoucherDelivery }>(`/api/admin/grants/${grant.id}/end`, {
       method: 'POST',
-      body: JSON.stringify({ reason: 'admin_request', recipient_phone: endPhoneByGrant[grant.id] || '' }),
+      body: JSON.stringify({ reason: 'admin_request', recipient_phone: phone }),
     });
     if (result.voucher_delivery?.telegram_link) {
       setTelegramPrompt({
@@ -963,16 +1008,33 @@ function AdminPage({ auth, selectedClubID, currentPath, onClubChange, onLogout }
         code: result.voucher?.code,
         minutes: result.voucher?.minutes_left,
         seconds: result.voucher?.seconds_left,
+        status: result.voucher_delivery.status,
       });
     }
-    const deliverySuffix = result.voucher_delivery?.status ? ` · Telegram: ${telegramDeliveryLabel(result.voucher_delivery.status)}` : '';
+    const deliverySuffix = telegramDeliverySuffix(result.voucher_delivery?.status);
     setMessage(result.voucher ? `Сессия завершена. Ваучер: ${result.voucher.code}${deliverySuffix}` : 'Сессия завершена без ваучера');
+    setEndSessionDraft(null);
     setEndPhoneByGrant((current) => {
       const next = { ...current };
       delete next[grant.id];
       return next;
     });
+    window.scrollTo({ top: 0, behavior: 'smooth' });
     refresh();
+  }
+
+  function openEndSession(grant: Grant) {
+    setEndSessionDraft({ grant, phone: endPhoneByGrant[grant.id] || '', confirmWithoutPhone: false });
+  }
+
+  async function submitEndSessionDraft() {
+    if (!endSessionDraft) return;
+    const phone = endSessionDraft.phone.trim();
+    if (!phone && !endSessionDraft.confirmWithoutPhone) {
+      setEndSessionDraft({ ...endSessionDraft, confirmWithoutPhone: true });
+      return;
+    }
+    await endGrant(endSessionDraft.grant, phone);
   }
 
   async function syncOrder(order: Order) {
@@ -985,162 +1047,290 @@ function AdminPage({ auth, selectedClubID, currentPath, onClubChange, onLogout }
     refresh();
   }
 
+  const pcStats = useMemo(() => {
+    const total = catalog.pcs.length;
+    const available = catalog.pcs.filter((pc) => pc.status === 'available').length;
+    const occupied = catalog.pcs.filter((pc) => pc.status === 'occupied').length;
+    const maintenance = catalog.pcs.filter((pc) => pc.status === 'maintenance').length;
+    return { total, available, occupied, maintenance };
+  }, [catalog.pcs]);
+
+  const filteredPCs = useMemo(() => {
+    const query = pcQuery.trim().toLowerCase();
+    return catalog.pcs.filter((pc) => {
+      const matchesQuery = !query || `${pc.label} ${pc.external_pc_id} ${pc.zone}`.toLowerCase().includes(query);
+      const matchesStatus = !pcStatusFilter || pc.status === pcStatusFilter;
+      const matchesZone = !pcZoneFilter || pc.zone_id === pcZoneFilter;
+      return matchesQuery && matchesStatus && matchesZone;
+    });
+  }, [catalog.pcs, pcQuery, pcStatusFilter, pcZoneFilter]);
+
+  const adminSection = currentPath.startsWith('/admin/sessions')
+    ? 'sessions'
+    : currentPath.startsWith('/admin/payments')
+      ? 'payments'
+      : 'hall';
+  const pageTitle = adminSection === 'sessions' ? 'Игровые сессии' : adminSection === 'payments' ? 'Оплаты клуба' : 'Состояние зала';
+
+  const cashWorkspace = (
+    <section className="work-surface cash-workspace">
+      <div className="surface-heading">
+        <div>
+          <h2>Наличная сессия</h2>
+          <p>Ручной запуск времени на выбранном компьютере.</p>
+        </div>
+        <Banknote size={18} />
+      </div>
+      <div className="form-grid one-col compact-form">
+        <label>
+          Компьютер
+          <select value={cashPCID} onChange={(event) => setCashPCID(event.target.value)}>
+            {catalog.pcs.map((pc) => <option key={pc.id} value={pc.id}>{pc.label} · {pc.zone}</option>)}
+          </select>
+        </label>
+        <label>
+          Пакет
+          <select
+            value={cashTariffID}
+            onChange={(event) => {
+              setCashTariffID(event.target.value);
+              setCashAmount('');
+            }}
+          >
+            <option value="">Без пакета</option>
+            {cashTariffs.map((tariff) => <option key={tariff.id} value={tariff.id}>{tariff.name} · {formatUZS(tariff.price_uzs)}</option>)}
+          </select>
+        </label>
+        <label>
+          Своя сумма, сум
+          <input
+            value={cashAmount}
+            onChange={(event) => {
+              setCashAmount(formatUZSInput(event.target.value));
+              setCashTariffID('');
+            }}
+            placeholder={selectedCashZone ? `1 час: ${formatUZS(selectedCashZone.hourly_price_uzs)}` : 'Например: 20 000'}
+            inputMode="numeric"
+          />
+        </label>
+      </div>
+      <Button full icon={<Play size={16} />} onClick={startCashSession} disabled={!cashPCID || (!cashTariffID && !cashAmountUZS)}>
+        {cashButtonAmount ? `Запустить на ${formatUZS(cashButtonAmount)}` : 'Запустить сессию'}
+      </Button>
+    </section>
+  );
+
+  const sessionsWorkspace = (
+    <section className="work-surface sessions-workspace">
+      <div className="surface-heading">
+        <div>
+          <h2>Сессии</h2>
+          <p>{grants.length ? `${grants.length} записей в текущем клубе` : 'Нет активных или завершённых сессий'}</p>
+        </div>
+        <Gamepad2 size={18} />
+      </div>
+      <div className="operation-list">
+        {grants.length === 0 && <EmptyState text="Сессий пока нет" />}
+        {grants.map((grant) => (
+          <div className="operation-row" key={grant.id}>
+            <div className="operation-main">
+              <strong>{grant.pc_label}</strong>
+              <span>{sourceLabel(grant.source)} · {grantStatusLabel(grant.status)}</span>
+              {grant.planned_ends_at && <small>До {formatDateTime(grant.planned_ends_at)}</small>}
+              {grant.last_error && <small className="danger-text">{grant.last_error}</small>}
+            </div>
+            <code>{formatDurationClock(grant.duration_seconds || grant.duration_minutes * 60)}</code>
+            {grant.status === 'accepted' && (
+              <div className="end-session">
+                <input
+                  aria-label="Телефон для Telegram"
+                  inputMode="tel"
+                  value={endPhoneByGrant[grant.id] || ''}
+                  onFocus={() => setEndPhoneByGrant((current) => ({ ...current, [grant.id]: current[grant.id] || '+998 ' }))}
+                  onChange={(event) => setEndPhoneByGrant((current) => ({ ...current, [grant.id]: formatUzPhoneInput(event.target.value) }))}
+                  placeholder="+998 00 000 00 00"
+                />
+                <Button size="sm" variant="secondary" icon={<Power size={14} />} onClick={() => openEndSession(grant)}>Завершить</Button>
+              </div>
+            )}
+          </div>
+        ))}
+      </div>
+    </section>
+  );
+
+  const paymentsWorkspace = (
+    <section className="work-surface payments-workspace">
+      <div className="surface-heading">
+        <div>
+          <h2>Последние оплаты</h2>
+          <p>Click, Payme, тестовые операции и статус фискализации.</p>
+        </div>
+        <ReceiptText size={18} />
+      </div>
+      <div className="operation-list payment-list">
+        {orders.length === 0 && <EmptyState text="Оплат пока нет" />}
+        {orders.map((order) => (
+          <div className="operation-row payment-row" key={order.id}>
+            <div className="operation-main">
+              <strong>{order.pc_label} · {order.tariff}</strong>
+              <span>{providerLabel(order.provider)} · {orderStatusLabel(order.status)} · {fiscalStatusLabel(order.fiscal_status)}</span>
+              <small>{order.invoice_id}</small>
+            </div>
+            <code>{formatUZS(order.amount_uzs)}</code>
+            {order.status !== 'paid' && (
+              <div className="row-actions">
+                <Button className="icon-only" size="sm" variant="ghost" icon={<RefreshCw size={14} />} onClick={() => syncOrder(order)} aria-label="Обновить оплату" title="Обновить оплату" />
+                <Button className="icon-only" size="sm" variant="success" icon={<Play size={14} />} onClick={() => testPayOrder(order)} aria-label="Тестовая оплата" title="Тестовая оплата" />
+              </div>
+            )}
+          </div>
+        ))}
+      </div>
+    </section>
+  );
+
+  const pcWorkspace = (
+    <section className="work-surface pc-workspace">
+      <div className="surface-heading pc-heading">
+        <div>
+          <h2>Компьютеры</h2>
+          <p>Статус зала обновляется автоматически.</p>
+        </div>
+        <span className="surface-count">{filteredPCs.length} из {catalog.pcs.length}</span>
+      </div>
+      <div className="pc-filterbar">
+        <select value={pcZoneFilter} onChange={(event) => setPCZoneFilter(event.target.value)} aria-label="Фильтр по зоне">
+          <option value="">Все зоны</option>
+          {catalog.zones.map((zone) => <option value={zone.id} key={zone.id}>{zone.name}</option>)}
+        </select>
+        <label className="search-control">
+          <Search size={15} />
+          <input value={pcQuery} onChange={(event) => setPCQuery(event.target.value)} placeholder="Найти компьютер" aria-label="Найти компьютер" />
+        </label>
+        <select value={pcStatusFilter} onChange={(event) => setPCStatusFilter(event.target.value)} aria-label="Фильтр по статусу">
+          <option value="">Все статусы</option>
+          <option value="available">Свободные</option>
+          <option value="occupied">Занятые</option>
+          <option value="sleeping">Сон</option>
+          <option value="maintenance">Ремонт</option>
+        </select>
+      </div>
+      <div className="table-wrap desktop-pc-table">
+        <table className="pc-table">
+          <thead>
+            <tr>
+              <th>Компьютер</th>
+              <th>Зона</th>
+              <th>Статус</th>
+              <th>Осталось</th>
+              <th className="actions-col">Действия</th>
+            </tr>
+          </thead>
+          <tbody>
+            {filteredPCs.map((pc) => {
+              const remainingSeconds = remainingSecondsForPC(pc, nowMs, catalogFetchedAtMs);
+              const activeGrant = grants.find((grant) => grant.id === pc.active_grant_id);
+              return (
+                <tr className={selectedPCID === pc.id ? 'selected' : ''} key={pc.id} onClick={() => setSelectedPCID(pc.id)}>
+                  <td>
+                    <div className="pc-cell">
+                      <Monitor size={17} />
+                      <div><strong>{pc.label}</strong><span>{pc.external_pc_id}</span></div>
+                    </div>
+                  </td>
+                  <td>{pc.zone}</td>
+                  <td><StatusBadge status={pc.status} /></td>
+                  <td><span className={`remaining ${pc.status === 'occupied' ? 'active' : ''}`}>{pc.status === 'occupied' ? formatRemainingTime(remainingSeconds) : '-'}</span></td>
+                  <td>
+                    <div className="table-actions">
+                      {pc.status === 'occupied' && activeGrant ? (
+                        <Button size="sm" variant="secondary" icon={<Power size={14} />} onClick={() => openEndSession(activeGrant)}>Завершить</Button>
+                      ) : (
+                        <Button size="sm" variant={pc.status === 'maintenance' ? 'secondary' : 'danger'} icon={<Wrench size={14} />} onClick={() => setPCStatus(pc.id, pc.status === 'maintenance' ? 'available' : 'maintenance')}>
+                          {pc.status === 'maintenance' ? 'Вернуть' : 'Ремонт'}
+                        </Button>
+                      )}
+                    </div>
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+      <div className="mobile-pc-list">
+        {filteredPCs.map((pc) => {
+          const remainingSeconds = remainingSecondsForPC(pc, nowMs, catalogFetchedAtMs);
+          const activeGrant = grants.find((grant) => grant.id === pc.active_grant_id);
+          return (
+            <article className={`mobile-pc-row ${selectedPCID === pc.id ? 'selected' : ''}`} key={pc.id}>
+              <button type="button" className="mobile-pc-main" onClick={() => setSelectedPCID(selectedPCID === pc.id ? '' : pc.id)}>
+                <span><strong>{pc.label}</strong><small>{pc.zone} · {pc.external_pc_id}</small></span>
+                <span className="mobile-pc-state"><StatusBadge status={pc.status} /><code>{pc.status === 'occupied' ? formatRemainingTime(remainingSeconds) : '-'}</code></span>
+              </button>
+              {selectedPCID === pc.id && (
+                <div className="mobile-pc-actions">
+                  {pc.status === 'occupied' && activeGrant ? (
+                    <Button size="sm" variant="secondary" icon={<Power size={14} />} onClick={() => openEndSession(activeGrant)}>Завершить сессию</Button>
+                  ) : (
+                    <Button size="sm" variant={pc.status === 'maintenance' ? 'secondary' : 'danger'} icon={<Wrench size={14} />} onClick={() => setPCStatus(pc.id, pc.status === 'maintenance' ? 'available' : 'maintenance')}>
+                      {pc.status === 'maintenance' ? 'Вернуть в зал' : 'Ремонт'}
+                    </Button>
+                  )}
+                </div>
+              )}
+            </article>
+          );
+        })}
+      </div>
+      {filteredPCs.length === 0 && <EmptyState text="По фильтрам компьютеры не найдены" />}
+    </section>
+  );
+
   return (
-    <main className="shell">
-      <WorkspaceHeader auth={auth} selectedClubID={selectedClubID} currentPath={currentPath} onClubChange={onClubChange} onLogout={onLogout} eyebrow="Панель менеджера" title="Зал, оплаты и сессии" />
+    <main className="shell workspace-shell">
+      <WorkspaceHeader auth={auth} selectedClubID={selectedClubID} currentPath={currentPath} onClubChange={onClubChange} onLogout={onLogout} eyebrow="Операции клуба" title={pageTitle} />
 
       {message && <Notice tone="success">{message}</Notice>}
       {telegramPrompt && <TelegramVoucherModal prompt={telegramPrompt} onClose={() => setTelegramPrompt(null)} onCopied={() => setMessage('Ссылка Telegram скопирована')} />}
-
-      <Panel className="pc-table-panel">
-        <div className="table-wrap">
-          <table className="pc-table">
-            <thead>
-              <tr>
-                <th>ПК</th>
-                <th>Зона</th>
-                <th>Статус</th>
-                <th>Осталось</th>
-                <th className="actions-col">Действия</th>
-              </tr>
-            </thead>
-            <tbody>
-              {catalog.pcs.map((pc) => {
-                const remainingSeconds = remainingSecondsForPC(pc, nowMs, catalogFetchedAtMs);
-                return (
-                  <tr key={pc.id}>
-                    <td>
-                      <div className="pc-cell">
-                        <Monitor size={18} />
-                        <div>
-                          <strong>{pc.label}</strong>
-                          <span>{pc.external_pc_id}</span>
-                        </div>
-                      </div>
-                    </td>
-                    <td>{pc.zone}</td>
-                    <td><StatusBadge status={pc.status} /></td>
-                    <td>
-                      <span className={`remaining ${pc.status === 'occupied' ? 'active' : ''}`}>
-                        {pc.status === 'occupied' ? formatRemainingTime(remainingSeconds) : '—'}
-                      </span>
-                    </td>
-                    <td>
-                      <div className="table-actions">
-                        <Button size="sm" variant="ghost" icon={<Power size={13} />} onClick={() => setPCStatus(pc.id, 'available')}>Свободен</Button>
-                        <Button size="sm" variant="ghost" icon={<Moon size={13} />} onClick={() => setPCStatus(pc.id, 'sleeping')}>Сон</Button>
-                        <Button size="sm" variant="danger" icon={<Wrench size={13} />} onClick={() => setPCStatus(pc.id, 'maintenance')}>Ремонт</Button>
-                      </div>
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </div>
-      </Panel>
-
-      <section className="split">
-        <Panel className="stack">
-          <SectionTitle icon={<Banknote size={18} />} title="Наличная оплата" caption="Ручной запуск, когда онлайн невозможен" />
-          <div className="form-grid">
-            <label>
-              Компьютер
-              <select value={cashPCID} onChange={(event) => setCashPCID(event.target.value)}>
-                {catalog.pcs.map((pc) => <option key={pc.id} value={pc.id}>{pc.label} · {pc.zone}</option>)}
-              </select>
-            </label>
-            <label>
-              Пакет
-              <select
-                value={cashTariffID}
-                onChange={(event) => {
-                  setCashTariffID(event.target.value);
-                  setCashAmount('');
-                }}
-              >
-                <option value="">Без пакета</option>
-                {cashTariffs.map((tariff) => <option key={tariff.id} value={tariff.id}>{tariff.name} · {formatUZS(tariff.price_uzs)}</option>)}
-              </select>
-            </label>
-            <label>
-              Своя сумма, сум
-              <input
-                value={cashAmount}
-                onChange={(event) => {
-                  setCashAmount(event.target.value.replace(/[^\d ]/g, ''));
-                  setCashTariffID('');
-                }}
-                placeholder={selectedCashZone ? `1 час: ${formatUZS(selectedCashZone.hourly_price_uzs)}` : 'Например: 20 000'}
-                inputMode="numeric"
-              />
-            </label>
+      {endSessionDraft && (
+        <EndSessionModal
+          draft={endSessionDraft}
+          onPhoneChange={(phone) => {
+            setEndSessionDraft({ ...endSessionDraft, phone, confirmWithoutPhone: false });
+            setEndPhoneByGrant((current) => ({ ...current, [endSessionDraft.grant.id]: phone }));
+          }}
+          onClose={() => setEndSessionDraft(null)}
+          onSubmit={submitEndSessionDraft}
+        />
+      )}
+      {adminSection === 'hall' && (
+        <>
+          <section className="summary-strip" aria-label="Сводка по залу">
+            <div className="summary-item primary"><span>Всего ПК</span><strong>{pcStats.total}</strong><small>в текущем клубе</small></div>
+            <div className="summary-item"><span>Свободны</span><strong>{pcStats.available}</strong><small>готовы к запуску</small></div>
+            <div className="summary-item"><span>Заняты</span><strong>{pcStats.occupied}</strong><small>активные места</small></div>
+            <div className={`summary-item ${pcStats.maintenance ? 'warning' : ''}`}><span>Ремонт</span><strong>{pcStats.maintenance}</strong><small>недоступны клиенту</small></div>
+          </section>
+          <div className="operations-layout">
+            {pcWorkspace}
+            <aside className="operator-column">{cashWorkspace}{sessionsWorkspace}</aside>
           </div>
-          <Button full icon={<Banknote size={18} />} onClick={startCashSession} disabled={!cashPCID || (!cashTariffID && !cashAmountUZS)}>
-            {cashButtonAmount ? `Запустить на ${formatUZS(cashButtonAmount)}` : 'Запустить наличную сессию'}
-          </Button>
-        </Panel>
-
-        <Panel className="scroll-panel">
-          <SectionTitle icon={<Gamepad2 size={18} />} title="Игровые сессии" caption="То, что уже отправлено в систему управления ПК" />
-          <div className="data-list scroll-list">
-            {grants.length === 0 && <EmptyState text="Активных и завершённых сессий пока нет" />}
-            {grants.map((grant) => (
-              <div className="list-row" key={grant.id}>
-                <div>
-                  <strong>{grant.pc_label} · {formatDurationClock(grant.duration_seconds || grant.duration_minutes * 60)}</strong>
-                  <span>Источник: {sourceLabel(grant.source)} · {grantStatusLabel(grant.status)}</span>
-                  {grant.planned_ends_at && <small>Плановое окончание: {formatDateTime(grant.planned_ends_at)}</small>}
-                  {grant.last_error && <small className="danger-text">{grant.last_error}</small>}
-                </div>
-                {grant.status === 'accepted' && (
-                  <div className="end-session">
-                    <input
-                      aria-label="Телефон для Telegram"
-                      inputMode="tel"
-                      value={endPhoneByGrant[grant.id] || ''}
-                      onFocus={() => setEndPhoneByGrant((current) => ({ ...current, [grant.id]: current[grant.id] || '+998 ' }))}
-                      onChange={(event) => setEndPhoneByGrant((current) => ({ ...current, [grant.id]: formatUzPhoneInput(event.target.value) }))}
-                      placeholder="+998 00 000 00 00"
-                    />
-                    <Button size="sm" variant="secondary" icon={<Power size={13} />} onClick={() => endGrant(grant)}>Завершить</Button>
-                  </div>
-                )}
-              </div>
-            ))}
-          </div>
-        </Panel>
-      </section>
-
-      <Panel className="orders-panel scroll-panel">
-        <SectionTitle icon={<ReceiptText size={18} />} title="Оплаты" caption="Онлайн-платежи Click/Payme, тестовые оплаты и статус фискализации" />
-        <div className="data-list scroll-list">
-          {orders.length === 0 && <EmptyState text="Оплат пока нет" />}
-          {orders.map((order) => (
-            <div className="list-row" key={order.id}>
-              <div>
-                <strong>{order.pc_label} · {order.tariff}</strong>
-                <span>{providerLabel(order.provider)} · {formatUZS(order.amount_uzs)} · {orderStatusLabel(order.status)} · {fiscalStatusLabel(order.fiscal_status)}</span>
-                <small>{order.invoice_id}</small>
-              </div>
-              <div className="button-row">
-                {order.status !== 'paid' && (
-                  <Button size="sm" variant="ghost" icon={<RefreshCw size={13} />} onClick={() => syncOrder(order)}>Обновить</Button>
-                )}
-                {order.status !== 'paid' && (
-                  <Button size="sm" variant="success" icon={<Play size={13} />} onClick={() => testPayOrder(order)}>Тестовая оплата</Button>
-                )}
-              </div>
-            </div>
-          ))}
-        </div>
-      </Panel>
+          <div className="hall-payments-preview">{paymentsWorkspace}</div>
+        </>
+      )}
+      {adminSection === 'sessions' && <div className="focus-layout">{sessionsWorkspace}{cashWorkspace}</div>}
+      {adminSection === 'payments' && paymentsWorkspace}
     </main>
   );
 }
 
 function ReportsPage({ auth, selectedClubID, currentPath, onClubChange, onLogout }: WorkspaceProps) {
   const [summary, setSummary] = useState<Summary | null>(null);
+  const [catalog, setCatalog] = useState<Catalog | null>(null);
+  const [orders, setOrders] = useState<Order[]>([]);
+  const [clubSettings, setClubSettings] = useState<ClubSettings | null>(null);
   const refreshingRef = useRef(false);
 
   useEffect(() => {
@@ -1148,7 +1338,16 @@ function ReportsPage({ auth, selectedClubID, currentPath, onClubChange, onLogout
       if (!selectedClubID || refreshingRef.current) return;
       refreshingRef.current = true;
       try {
-        setSummary(await api<Summary>(clubPath('/api/owner/summary', selectedClubID)));
+        const [summaryPayload, catalogPayload, orderPayload, settingsPayload] = await Promise.all([
+          api<Summary>(clubPath('/api/owner/summary', selectedClubID)),
+          api<Catalog>(clubPath('/api/admin/catalog', selectedClubID)),
+          api<{ orders: Order[] }>(clubPath('/api/admin/orders', selectedClubID)),
+          api<ClubSettingsPayload>(`/api/backoffice/clubs/${selectedClubID}/settings`),
+        ]);
+        setSummary(summaryPayload);
+        setCatalog({ ...catalogPayload, pcs: catalogPayload.pcs || [], zones: catalogPayload.zones || [], tariffs: catalogPayload.tariffs || [] });
+        setOrders(orderPayload.orders || []);
+        setClubSettings(settingsPayload.club);
       } finally {
         refreshingRef.current = false;
       }
@@ -1159,20 +1358,117 @@ function ReportsPage({ auth, selectedClubID, currentPath, onClubChange, onLogout
     return () => window.clearInterval(timer);
   }, [selectedClubID]);
 
+  const isSuperAdmin = auth.user.global_role === 'super_admin';
+  const occupiedPCs = catalog?.pcs.filter((pc) => pc.status === 'occupied').length || 0;
+  const maintenancePCs = catalog?.pcs.filter((pc) => pc.status === 'maintenance').length || 0;
+  const pendingOrders = orders.filter((order) => order.status !== 'paid');
+  const paymentReady = clubSettings?.payment_connected ?? Boolean(clubSettings?.click_connected || clubSettings?.payme_connected);
+  const activeClubs = auth.clubs.filter((club) => club.status === 'active').length;
+
   return (
-    <main className="shell">
-      <WorkspaceHeader auth={auth} selectedClubID={selectedClubID} currentPath={currentPath} onClubChange={onClubChange} onLogout={onLogout} eyebrow="Дашборд" title="Финансы и загрузка клуба" />
+    <main className="shell workspace-shell">
+      <WorkspaceHeader
+        auth={auth}
+        selectedClubID={selectedClubID}
+        currentPath={currentPath}
+        onClubChange={onClubChange}
+        onLogout={onLogout}
+        eyebrow={isSuperAdmin ? 'Контур сети' : 'Контроль клуба'}
+        title={isSuperAdmin ? 'Контроль сети' : 'Обзор бизнеса'}
+      />
       {!summary ? (
-        <Panel><EmptyState text="Считаем сводку" /></Panel>
+        <section className="work-surface"><EmptyState text="Считаем сводку" /></section>
+      ) : isSuperAdmin ? (
+        <>
+          <section className="summary-strip owner-summary" aria-label="Сводка по сети">
+            <div className="summary-item primary"><span>Клубы в сети</span><strong>{auth.clubs.length}</strong><small>доступны суперадмину</small></div>
+            <div className="summary-item"><span>Активные клубы</span><strong>{activeClubs}</strong><small>{auth.clubs.length - activeClubs} отключены</small></div>
+            <div className="summary-item"><span>Выбранный клуб</span><strong>{formatUZS(summary.club_total_revenue_uzs)}</strong><small>выручка клуба</small></div>
+            <div className={`summary-item ${paymentReady ? '' : 'warning'}`}><span>Подключение</span><strong>{paymentReady ? 'Готово' : 'Проверить'}</strong><small>Click / Payme</small></div>
+          </section>
+          <div className="owner-overview-grid network-overview-grid">
+            <section className="work-surface network-workspace">
+              <div className="surface-heading">
+                <div><h2>Клубы сети</h2><p>Реестр доступных клубов и их текущий статус.</p></div>
+                <Building2 size={18} />
+              </div>
+              <div className="network-list">
+                {auth.clubs.map((club) => (
+                  <button className={`network-row ${club.id === selectedClubID ? 'selected' : ''}`} key={club.id} onClick={() => onClubChange(club.id)}>
+                    <span><strong>{club.name}</strong><small>{club.slug || club.id}</small></span>
+                    <span className={club.status === 'active' ? 'signal-ready' : 'signal-warning'}>{club.status === 'active' ? 'Активен' : 'Отключен'}</span>
+                  </button>
+                ))}
+              </div>
+            </section>
+            <section className="work-surface pulse-workspace">
+              <div className="surface-heading">
+                <div><h2>Контур клуба</h2><p>Сигналы выбранного операционного контура.</p></div>
+                <Activity size={18} />
+              </div>
+              <div className="signal-list">
+                <AppLink className="signal-row" href="/admin">
+                  <span><Monitor size={17} /><strong>Зал</strong></span>
+                  <span>{occupiedPCs} заняты · {maintenancePCs} ремонт</span>
+                </AppLink>
+                <AppLink className="signal-row" href="/admin/payments">
+                  <span><ReceiptText size={17} /><strong>Оплаты</strong></span>
+                  <span>{pendingOrders.length} требуют проверки</span>
+                </AppLink>
+                <AppLink className="signal-row" href="/settings/connections">
+                  <span><CreditCard size={17} /><strong>Подключение</strong></span>
+                  <span className={paymentReady ? 'signal-ready' : 'signal-warning'}>{paymentReady ? 'Работает' : 'Требует настройки'}</span>
+                </AppLink>
+              </div>
+            </section>
+          </div>
+        </>
       ) : (
-        <section className="metrics">
-          <Metric icon={<CreditCard />} label="Онлайн на кассу" value={formatUZS(summary.club_online_revenue_uzs || summary.online_revenue_uzs)} />
-          <Metric icon={<Banknote />} label="Наличные" value={formatUZS(summary.cash_revenue_uzs)} />
-          <Metric icon={<Activity />} label="Итого клубу" value={formatUZS(summary.club_total_revenue_uzs)} />
-          <Metric icon={<ReceiptText />} label="Онлайн-оплаты" value={String(summary.paid_orders)} />
-          <Metric icon={<Banknote />} label="Наличные сессии" value={String(summary.cash_sessions)} />
-          <Metric icon={<Monitor />} label="Активные сессии" value={String(summary.active_grants)} />
-        </section>
+        <>
+          <section className="summary-strip owner-summary" aria-label="Финансовая сводка">
+            <div className="summary-item primary"><span>Выручка клуба</span><strong>{formatUZS(summary.club_total_revenue_uzs)}</strong><small>онлайн и наличные</small></div>
+            <div className="summary-item"><span>Онлайн на кассу</span><strong>{formatUZS(summary.club_online_revenue_uzs || summary.online_revenue_uzs)}</strong><small>{summary.paid_orders} оплат</small></div>
+            <div className="summary-item"><span>Наличные</span><strong>{formatUZS(summary.cash_revenue_uzs)}</strong><small>{summary.cash_sessions} сессий</small></div>
+            <div className="summary-item"><span>Активные сессии</span><strong>{summary.active_grants}</strong><small>сейчас в зале</small></div>
+          </section>
+          <div className="owner-overview-grid">
+            <section className="work-surface pulse-workspace">
+              <div className="surface-heading">
+                <div><h2>Состояние клуба</h2><p>Операционные сигналы по выбранному клубу.</p></div>
+                <Activity size={18} />
+              </div>
+              <div className="signal-list">
+                <AppLink className="signal-row" href="/admin">
+                  <span><Monitor size={17} /><strong>Зал</strong></span>
+                  <span>{occupiedPCs} заняты · {maintenancePCs} ремонт</span>
+                </AppLink>
+                <AppLink className="signal-row" href="/admin/payments">
+                  <span><ReceiptText size={17} /><strong>Оплаты</strong></span>
+                  <span>{pendingOrders.length} требуют проверки</span>
+                </AppLink>
+                <AppLink className="signal-row" href={isSuperAdmin ? '/settings/connections' : '/settings'}>
+                  <span><CreditCard size={17} /><strong>Подключение</strong></span>
+                  <span className={paymentReady ? 'signal-ready' : 'signal-warning'}>{paymentReady ? 'Работает' : 'Требует настройки'}</span>
+                </AppLink>
+              </div>
+            </section>
+            <section className="work-surface attention-workspace">
+              <div className="surface-heading">
+                <div><h2>Требует внимания</h2><p>Незавершённые операции без искусственного скоринга.</p></div>
+                <AlertCircle size={18} />
+              </div>
+              <div className="operation-list compact-operations">
+                {pendingOrders.length === 0 && <EmptyState text="Проблемных оплат нет" />}
+                {pendingOrders.slice(0, 5).map((order) => (
+                  <AppLink className="operation-row" href="/admin/payments" key={order.id}>
+                    <div className="operation-main"><strong>{order.pc_label} · {order.tariff}</strong><span>{providerLabel(order.provider)} · {orderStatusLabel(order.status)}</span></div>
+                    <code>{formatUZS(order.amount_uzs)}</code>
+                  </AppLink>
+                ))}
+              </div>
+            </section>
+          </div>
+        </>
       )}
     </main>
   );
@@ -1215,6 +1511,8 @@ function defaultUserForm(): Partial<ClubUser> & { password?: string } {
 function SettingsPage({ auth, selectedClubID, currentPath, onClubChange, onLogout, onReloadAuth }: WorkspaceProps & { onReloadAuth: () => void | Promise<void> }) {
   const canManageNetwork = auth.user.global_role === 'super_admin';
   const [settings, setSettings] = useState<ClubSettingsPayload | null>(null);
+  const [networks, setNetworks] = useState<ClubNetwork[]>([]);
+  const [networkForm, setNetworkForm] = useState<ClubNetwork>({ id: '', name: '', slug: '', status: 'active', role: 'super_admin' });
   const [message, setMessage] = useState('');
   const [error, setError] = useState('');
   const [clubForm, setClubForm] = useState<ClubSettings | null>(null);
@@ -1226,6 +1524,8 @@ function SettingsPage({ auth, selectedClubID, currentPath, onClubChange, onLogou
   const [showZoneForm, setShowZoneForm] = useState(false);
   const [showTariffForm, setShowTariffForm] = useState(false);
   const [showPCForm, setShowPCForm] = useState(false);
+  const [showUserForm, setShowUserForm] = useState(false);
+  const [showNetworkForm, setShowNetworkForm] = useState(false);
   const [tariffZoneFilter, setTariffZoneFilter] = useState('');
   const [pcZoneFilter, setPCZoneFilter] = useState('');
 
@@ -1243,6 +1543,7 @@ function SettingsPage({ auth, selectedClubID, currentPath, onClubChange, onLogou
       setShowZoneForm(false);
       setShowTariffForm(false);
       setShowPCForm(false);
+      setShowUserForm(false);
       setTariffZoneFilter((current) => current && payload.zones.some((zone) => zone.id === current) ? current : payload.zones[0]?.id || '');
       setPCZoneFilter((current) => current && payload.zones.some((zone) => zone.id === current) ? current : '');
       setError('');
@@ -1251,10 +1552,28 @@ function SettingsPage({ auth, selectedClubID, currentPath, onClubChange, onLogou
     }
   }
 
+  async function loadNetworks() {
+    if (!canManageNetwork) return [];
+    try {
+      const payload = await api<{ networks: ClubNetwork[] }>('/api/backoffice/networks');
+      const nextNetworks = payload.networks || [];
+      setNetworks(nextNetworks);
+      return nextNetworks;
+    } catch (err) {
+      setNetworks([]);
+      setError(`Не удалось загрузить сети клубов: ${String((err as Error).message || err)}`);
+      return [];
+    }
+  }
+
   useEffect(() => {
     setSettings(null);
     loadSettings();
   }, [selectedClubID]);
+
+  useEffect(() => {
+    loadNetworks();
+  }, [canManageNetwork]);
 
   async function persistSettings(action: () => Promise<unknown>, successMessage: string, reloadAuth = false) {
     try {
@@ -1287,12 +1606,29 @@ function SettingsPage({ auth, selectedClubID, currentPath, onClubChange, onLogou
 
   function resetUser() {
     setUserForm(defaultUserForm());
+    setShowUserForm(true);
+  }
+
+  function resetNetwork() {
+    setNetworkForm({ id: '', name: '', slug: '', status: 'active', role: 'super_admin' });
+    setShowNetworkForm(true);
+  }
+
+  function editNetwork(network: ClubNetwork) {
+    setNetworkForm(network);
+    setShowNetworkForm(true);
   }
 
   function startNewClub() {
+    const network = networks.find((item) => item.status === 'active');
+    if (!network) {
+      setError('Сначала создайте активную сеть клубов');
+      navigateTo('/settings/networks');
+      return;
+    }
     setCreatingClub(true);
     setSettings({ club: { ...EMPTY_CLUB_FORM }, zones: [], tariffs: [], pcs: [], users: [] });
-    setClubForm({ ...EMPTY_CLUB_FORM });
+    setClubForm({ ...EMPTY_CLUB_FORM, network_id: network.id, network_name: network.name });
     setZoneForm(defaultZoneForm());
     setTariffForm(defaultTariffForm());
     setPCForm(defaultPCForm());
@@ -1316,6 +1652,10 @@ function SettingsPage({ auth, selectedClubID, currentPath, onClubChange, onLogou
 
   async function saveClub() {
     if (!clubForm) return;
+    if (canManageNetwork && !clubForm.network_id) {
+      setError('Выберите сеть клубов');
+      return;
+    }
     const clubPayload = { ...clubForm, slug: slugifyClient(clubForm.name), timezone: 'Asia/Tashkent' };
     if (creatingClub) {
       try {
@@ -1335,6 +1675,29 @@ function SettingsPage({ auth, selectedClubID, currentPath, onClubChange, onLogou
       'Настройки клуба сохранены',
       true,
     );
+  }
+
+  async function saveNetwork() {
+    if (!networkForm.name.trim()) {
+      setError('Укажите название сети');
+      return;
+    }
+    try {
+      setError('');
+      setMessage('');
+      const path = networkForm.id ? `/api/backoffice/networks/${networkForm.id}` : '/api/backoffice/networks';
+      await api(path, { method: 'POST', body: JSON.stringify({ name: networkForm.name, status: networkForm.status }) });
+      const nextNetworks = await loadNetworks();
+      await onReloadAuth();
+      if (creatingClub && !clubForm?.network_id) {
+        const activeNetwork = nextNetworks.find((network) => network.status === 'active');
+        if (activeNetwork) setClubForm((current) => current ? { ...current, network_id: activeNetwork.id, network_name: activeNetwork.name } : current);
+      }
+      setShowNetworkForm(false);
+      setMessage(networkForm.id ? 'Сеть обновлена' : 'Сеть добавлена');
+    } catch (err) {
+      setError(String((err as Error).message || err));
+    }
   }
 
   async function deleteClub() {
@@ -1428,22 +1791,33 @@ function SettingsPage({ auth, selectedClubID, currentPath, onClubChange, onLogou
   }
 
   async function deleteUser() {
-    if (!userForm.id || !window.confirm(`Удалить доступ пользователя "${userForm.name}" к этому клубу?`)) return;
+    const scopeText = userForm.scope === 'network' ? ' ко всей сети клубов' : ' к этому клубу';
+    if (!userForm.id || !window.confirm(`Удалить доступ пользователя "${userForm.name}"${scopeText}?`)) return;
     await persistSettings(
       () => api(`/api/backoffice/users/${userForm.id}/clubs/${selectedClubID}`, { method: 'DELETE' }),
       'Доступ пользователя удалён',
     );
   }
 
-  const settingsSection = currentPath.startsWith('/settings/zones')
+  const requestedSettingsSection = currentPath.startsWith('/settings/networks')
+    ? 'networks'
+    : currentPath.startsWith('/settings/zones')
     ? 'zones'
+    : currentPath.startsWith('/settings/connections')
+      ? 'connections'
+      : currentPath.startsWith('/settings/fiscal')
+        ? 'fiscal'
     : currentPath.startsWith('/settings/pcs')
       ? 'pcs'
       : currentPath.startsWith('/settings/users')
         ? 'users'
         : 'club';
+  const settingsSection = requestedSettingsSection === 'networks' && !canManageNetwork ? 'club' : requestedSettingsSection;
   const settingsTitle = {
+    networks: 'Сети',
     club: 'Клуб',
+    connections: 'Подключения',
+    fiscal: 'Фискализация',
     zones: 'Зоны и пакеты',
     pcs: 'Компьютеры',
     users: 'Доступы',
@@ -1460,9 +1834,13 @@ function SettingsPage({ auth, selectedClubID, currentPath, onClubChange, onLogou
   const filteredPCs = settings
     ? settings.pcs.filter((pc) => !pcZoneFilter || pc.zone_id === pcZoneFilter)
     : [];
+  const activeNetworks = networks.filter((network) => network.status === 'active');
+  const networkOptions = networks
+    .filter((network) => network.status === 'active' || network.id === clubForm?.network_id)
+    .map((network) => ({ value: network.id, label: network.name }));
 
   return (
-    <main className="shell">
+    <main className="shell workspace-shell">
       <WorkspaceHeader
         auth={auth}
         selectedClubID={selectedClubID}
@@ -1471,61 +1849,123 @@ function SettingsPage({ auth, selectedClubID, currentPath, onClubChange, onLogou
         onLogout={onLogout}
         eyebrow="Настройки"
         title={settingsTitle}
-        clubAction={canManageNetwork ? <Button size="sm" variant="secondary" icon={<Plus size={13} />} onClick={startNewClub}>Новый клуб</Button> : undefined}
+        clubAction={canManageNetwork && settingsSection !== 'networks' ? <Button size="sm" variant="secondary" icon={<Plus size={13} />} onClick={startNewClub} disabled={activeNetworks.length === 0}>Новый клуб</Button> : undefined}
       />
       {message && <Notice tone="success">{message}</Notice>}
       {error && <Notice tone="danger">{error}</Notice>}
-      {!creatingClub && clubForm?.id && (
-        <div className="settings-subnav">
-          <LinkButton href="/settings" variant={settingsSection === 'club' ? 'secondary' : 'ghost'} icon={<Building2 size={16} />}>Клуб</LinkButton>
-          <LinkButton href="/settings/zones" variant={settingsSection === 'zones' ? 'secondary' : 'ghost'} icon={<ReceiptText size={16} />}>Зоны и пакеты</LinkButton>
-          <LinkButton href="/settings/pcs" variant={settingsSection === 'pcs' ? 'secondary' : 'ghost'} icon={<Monitor size={16} />}>Компьютеры</LinkButton>
-          <LinkButton href="/settings/users" variant={settingsSection === 'users' ? 'secondary' : 'ghost'} icon={<Users size={16} />}>Доступы</LinkButton>
-        </div>
-      )}
+      <div className="settings-workbench">
+        {!creatingClub && clubForm?.id && (
+          <div className="settings-subnav">
+            {canManageNetwork && <LinkButton href="/settings/networks" variant={settingsSection === 'networks' ? 'secondary' : 'ghost'} icon={<Network size={16} />}>Сети</LinkButton>}
+            <LinkButton href="/settings" variant={settingsSection === 'club' ? 'secondary' : 'ghost'} icon={<Building2 size={16} />}>Клуб</LinkButton>
+            {canManageNetwork && <LinkButton href="/settings/connections" variant={settingsSection === 'connections' ? 'secondary' : 'ghost'} icon={<CreditCard size={16} />}>Подключения</LinkButton>}
+            {canManageNetwork && <LinkButton href="/settings/fiscal" variant={settingsSection === 'fiscal' ? 'secondary' : 'ghost'} icon={<ReceiptText size={16} />}>Фискализация</LinkButton>}
+            <LinkButton href="/settings/zones" variant={settingsSection === 'zones' ? 'secondary' : 'ghost'} icon={<ReceiptText size={16} />}>Зоны и пакеты</LinkButton>
+            <LinkButton href="/settings/pcs" variant={settingsSection === 'pcs' ? 'secondary' : 'ghost'} icon={<Monitor size={16} />}>Компьютеры</LinkButton>
+            <LinkButton href="/settings/users" variant={settingsSection === 'users' ? 'secondary' : 'ghost'} icon={<Users size={16} />}>Доступы</LinkButton>
+          </div>
+        )}
+        <div className="settings-stage">
       {!settings || !clubForm ? (
         <Panel><EmptyState text="Загружаем настройки" /></Panel>
       ) : (
         <section className="settings-grid">
+          {!creatingClub && canManageNetwork && settingsSection === 'networks' && (
+          <Panel className="stack settings-wide">
+            <SectionTitle icon={<Network size={18} />} title="Сети клубов" caption="Сеть объединяет клубы под одним владельцем. Владелец сети получает доступ ко всем ее клубам." />
+            <div className="compact-list">
+              {networks.map((network) => (
+                <button className="editable-row" key={network.id} onClick={() => editNetwork(network)}>
+                  <span>
+                    <strong>{network.name}</strong>
+                    <small>{network.slug} · {statusLabel(network.status)}</small>
+                  </span>
+                  <em>Изменить</em>
+                </button>
+              ))}
+              {networks.length === 0 && <EmptyState text="Сетей пока нет" />}
+            </div>
+            <div className="button-row">
+              <Button size="sm" variant="secondary" icon={<Plus size={13} />} onClick={resetNetwork}>Новая сеть</Button>
+            </div>
+            {showNetworkForm && <div className="inline-editor">
+              <div className="form-mode">
+                <strong>{networkForm.id ? 'Редактирование сети' : 'Новая сеть'}</strong>
+                <span>Название используется в переключателе клубов и в доступах владельцев.</span>
+              </div>
+              <div className="form-grid one-col">
+                <Field label="Название сети" value={networkForm.name} onChange={(value) => setNetworkForm({ ...networkForm, name: value })} />
+                <SelectField label="Статус" value={networkForm.status} options={statusOptions()} onChange={(value) => setNetworkForm({ ...networkForm, status: value })} />
+              </div>
+              <div className="button-row">
+                <Button variant="ghost" onClick={() => setShowNetworkForm(false)}>Отменить</Button>
+                <Button icon={<Save size={16} />} onClick={saveNetwork}>{networkForm.id ? 'Сохранить сеть' : 'Создать сеть'}</Button>
+              </div>
+            </div>}
+          </Panel>
+          )}
+
           {settingsSection === 'club' && (
           <Panel className="stack settings-wide">
             <SectionTitle
               icon={<Building2 size={18} />}
               title={creatingClub ? 'Новый клуб' : 'Клуб'}
-              caption={canManageNetwork ? 'Основные данные клуба, прямые подключения Click/Payme и опциональные данные для чеков.' : 'Основные данные клуба и состояние платежного подключения.'}
+              caption={creatingClub ? 'Создайте рабочий контур клуба. Подключения и каталог настраиваются после сохранения.' : 'Название, юридические данные и адрес выбранного клуба.'}
             />
             <div className="form-mode">
               <strong>{creatingClub ? 'Создание клуба' : 'Редактирование клуба'}</strong>
               <span>{creatingClub ? 'Заполните название и платежные настройки. Зоны, пакеты и ПК добавите после сохранения.' : 'Изменения применятся к выбранному клубу.'}</span>
             </div>
             <div className="form-grid two">
+              {canManageNetwork && <SelectField label="Сеть клубов" value={clubForm.network_id} options={networkOptions} placeholder={networkOptions.length ? 'Выберите сеть' : 'Нет активных сетей'} disabled={networkOptions.length === 0} onChange={(value) => {
+                const network = networks.find((item) => item.id === value);
+                setClubForm({ ...clubForm, network_id: value, network_name: network?.name || '' });
+              }} help="Владелец сети получает доступ ко всем клубам внутри нее." />}
               <Field label="Название клуба" value={clubForm.name} onChange={updateClubName} help="Так клуб будет называться в панели и на QR-странице." />
               <Field label="Юр. название" value={clubForm.legal_name} onChange={(value) => setClubForm({ ...clubForm, legal_name: value })} help="Официальное название юрлица для договора и чеков." />
               <Field label="ИНН" value={clubForm.tin} onChange={(value) => setClubForm({ ...clubForm, tin: value })} help="Налоговый номер клуба." />
               <Field label="Адрес" value={clubForm.address} onChange={(value) => setClubForm({ ...clubForm, address: value })} help="Адрес клуба или юрлица." />
-              {canManageNetwork && (
-                <>
-                  <Field label="Click merchant ID" value={clubForm.click_merchant_id} onChange={(value) => setClubForm({ ...clubForm, click_merchant_id: value })} help="Обязательный ID поставщика Click для платежной ссылки." />
-                  <Field label="Click service ID" value={clubForm.click_service_id} onChange={(value) => setClubForm({ ...clubForm, click_service_id: value })} help="Обязательный ID сервиса Click, по нему создается платежная ссылка." />
-                  <Field label="Click merchant user ID" value={clubForm.click_merchant_user_id} onChange={(value) => setClubForm({ ...clubForm, click_merchant_user_id: value })} help="ID пользователя мерчанта Click, который выдают вместе с service ID." />
-                  <Field label="Click secret key" type="password" value={clubForm.click_secret_key} onChange={(value) => setClubForm({ ...clubForm, click_secret_key: value })} help="Секрет для проверки Prepare/Complete callback." />
-                  <Field label="Payme merchant ID" value={clubForm.payme_merchant_id} onChange={(value) => setClubForm({ ...clubForm, payme_merchant_id: value })} help="ID кассы/мерчанта Payme для checkout-ссылки." />
-                  <Field label="Payme secret key" type="password" value={clubForm.payme_secret_key} onChange={(value) => setClubForm({ ...clubForm, payme_secret_key: value })} help="Для sandbox укажите TEST_KEY из Payme Business; для production — боевой secret." />
-                  <SelectField label="Статус клуба" value={clubForm.status} options={statusOptions()} onChange={(value) => setClubForm({ ...clubForm, status: value })} help="Отключенный клуб не должен принимать новые оплаты." />
-                  <Field label="Название услуги для чека" value={clubForm.ofd_service_name} onChange={(value) => setClubForm({ ...clubForm, ofd_service_name: value })} help="Например: Компьютерное время. Можно оставить по умолчанию." />
-                  <Field label="ИКПУ / MXIK" value={clubForm.ofd_mxik} onChange={(value) => setClubForm({ ...clubForm, ofd_mxik: value })} help="Заполняем после бухгалтера. Если пусто, Payme уйдет без detail.items и сможет работать со статичной кассой." />
-                  <Field label="package_code" value={clubForm.ofd_package_code} onChange={(value) => setClubForm({ ...clubForm, ofd_package_code: value })} help="Заполняем после бухгалтера вместе с IKPU/MXIK." />
-                  <Field label="unit_code" value={clubForm.ofd_unit_code} onChange={(value) => setClubForm({ ...clubForm, ofd_unit_code: value })} help="Опционально: код единицы измерения, если его требует платежка или OFD." />
-                  <Field label="НДС, %" type="number" min="0" value={String(clubForm.ofd_vat_percent ?? 0)} onChange={(value) => setClubForm({ ...clubForm, ofd_vat_percent: Number(value || 0) })} help="Заполняем вместе с кодами. 0 — без НДС или ставка не применяется." />
-                </>
-              )}
             </div>
             {!canManageNetwork && <ClubConnectionSummary club={clubForm} />}
-            <div className="button-row">
+            <div className="button-row settings-savebar">
               {creatingClub && selectedClubID && <Button variant="ghost" onClick={loadSettings}>Отменить</Button>}
               {!creatingClub && canManageNetwork && <Button variant="danger" icon={<Trash2 size={16} />} onClick={deleteClub}>Удалить клуб</Button>}
               <Button icon={<Save size={16} />} onClick={saveClub}>{creatingClub ? 'Создать клуб' : 'Сохранить клуб'}</Button>
             </div>
+          </Panel>
+          )}
+
+          {!creatingClub && canManageNetwork && settingsSection === 'connections' && (
+          <Panel className="stack settings-wide">
+            <SectionTitle icon={<CreditCard size={18} />} title="Платёжные подключения" caption="Технические параметры Click и Payme доступны только суперадмину." />
+            <div className="connection-status-line">
+              <span>Текущий статус клуба</span>
+              <span className={`connection-pill ${clubForm.status === 'active' ? 'ready' : 'waiting'}`}>{clubForm.status === 'active' ? 'Активен' : 'Отключен'}</span>
+            </div>
+            <div className="form-grid two">
+              <Field label="Click merchant ID" value={clubForm.click_merchant_id} onChange={(value) => setClubForm({ ...clubForm, click_merchant_id: value })} help="Обязательный ID поставщика Click для платежной ссылки." />
+              <Field label="Click service ID" value={clubForm.click_service_id} onChange={(value) => setClubForm({ ...clubForm, click_service_id: value })} help="Обязательный ID сервиса Click, по нему создается платежная ссылка." />
+              <Field label="Click merchant user ID" value={clubForm.click_merchant_user_id} onChange={(value) => setClubForm({ ...clubForm, click_merchant_user_id: value })} help="ID пользователя мерчанта Click, который выдают вместе с service ID." />
+              <Field label="Click secret key" type="password" value={clubForm.click_secret_key} onChange={(value) => setClubForm({ ...clubForm, click_secret_key: value })} help="Секрет для проверки Prepare/Complete callback." />
+              <Field label="Payme merchant ID" value={clubForm.payme_merchant_id} onChange={(value) => setClubForm({ ...clubForm, payme_merchant_id: value })} help="ID кассы/мерчанта Payme для checkout-ссылки." />
+              <Field label="Payme secret key" type="password" value={clubForm.payme_secret_key} onChange={(value) => setClubForm({ ...clubForm, payme_secret_key: value })} help="Для sandbox укажите TEST_KEY из Payme Business; для production - боевой secret." />
+              <SelectField label="Статус клуба" value={clubForm.status} options={statusOptions()} onChange={(value) => setClubForm({ ...clubForm, status: value })} help="Отключенный клуб не должен принимать новые оплаты." />
+            </div>
+            <div className="button-row settings-savebar"><Button icon={<Save size={16} />} onClick={saveClub}>Сохранить подключения</Button></div>
+          </Panel>
+          )}
+
+          {!creatingClub && canManageNetwork && settingsSection === 'fiscal' && (
+          <Panel className="stack settings-wide">
+            <SectionTitle icon={<ReceiptText size={18} />} title="Фискализация" caption="Коды услуги и параметры чека для платёжных провайдеров." />
+            <div className="form-grid two">
+              <Field label="Название услуги для чека" value={clubForm.ofd_service_name} onChange={(value) => setClubForm({ ...clubForm, ofd_service_name: value })} help="Например: Компьютерное время. Можно оставить по умолчанию." />
+              <Field label="ИКПУ / MXIK" value={clubForm.ofd_mxik} onChange={(value) => setClubForm({ ...clubForm, ofd_mxik: value })} help="Заполняем после бухгалтера. Если пусто, Payme уйдет без detail.items и сможет работать со статичной кассой." />
+              <Field label="package_code" value={clubForm.ofd_package_code} onChange={(value) => setClubForm({ ...clubForm, ofd_package_code: value })} help="Заполняем после бухгалтера вместе с IKPU/MXIK." />
+              <Field label="unit_code" value={clubForm.ofd_unit_code} onChange={(value) => setClubForm({ ...clubForm, ofd_unit_code: value })} help="Опционально: код единицы измерения, если его требует платежка или OFD." />
+              <Field label="НДС, %" type="number" min="0" value={String(clubForm.ofd_vat_percent ?? 0)} onChange={(value) => setClubForm({ ...clubForm, ofd_vat_percent: Number(value || 0) })} help="Заполняем вместе с кодами. 0 - без НДС или ставка не применяется." />
+            </div>
+            <div className="button-row settings-savebar"><Button icon={<Save size={16} />} onClick={saveClub}>Сохранить фискализацию</Button></div>
           </Panel>
           )}
 
@@ -1548,21 +1988,21 @@ function SettingsPage({ auth, selectedClubID, currentPath, onClubChange, onLogou
               <Button size="sm" variant="secondary" icon={<Plus size={13} />} onClick={resetZone}>Новая зона</Button>
             </div>
             {showZoneForm && (
-              <>
+              <div className="inline-editor">
                 <div className="form-mode">
                   <strong>{zoneForm.id ? 'Редактирование зоны' : 'Новая зона'}</strong>
                   <span>Клик по зоне выше открывает редактирование. Для создания нажмите “Новая зона”.</span>
                 </div>
-                <div className="form-grid">
+                <div className="form-grid one-col">
                   <Field label="Название зоны" value={zoneForm.name || ''} onChange={(value) => setZoneForm({ ...zoneForm, name: value })} />
-                  <Field label="Стоимость 1 часа, сум" type="number" value={String(zoneForm.hourly_price_uzs || 0)} onChange={(value) => setZoneForm({ ...zoneForm, hourly_price_uzs: Number(value || 0) })} help="Используется, когда клиент или менеджер вводит сумму вручную без пакета." />
+                  <CurrencyField label="Стоимость 1 часа, сум" value={zoneForm.hourly_price_uzs || 0} onChange={(value) => setZoneForm({ ...zoneForm, hourly_price_uzs: value })} help="Используется, когда клиент или менеджер вводит сумму вручную без пакета." />
                   <SelectField label="Статус" value={zoneForm.status || 'active'} options={zoneStatusOptions()} onChange={(value) => setZoneForm({ ...zoneForm, status: value })} />
                 </div>
                 <div className="button-row">
                   {zoneForm.id && <Button variant="danger" icon={<Trash2 size={16} />} onClick={deleteZone}>Удалить</Button>}
                   <Button icon={<Save size={16} />} onClick={saveZone}>{zoneForm.id ? 'Сохранить зону' : 'Добавить зону'}</Button>
                 </div>
-              </>
+              </div>
             )}
           </Panel>
 
@@ -1592,7 +2032,7 @@ function SettingsPage({ auth, selectedClubID, currentPath, onClubChange, onLogou
               <Button size="sm" variant="secondary" icon={<Plus size={13} />} onClick={resetTariff}>Новый пакет</Button>
             </div>
             {showTariffForm && (
-              <>
+              <div className="inline-editor">
                 <div className="form-mode">
                   <strong>{tariffForm.id ? 'Редактирование пакета' : 'Новый пакет'}</strong>
                   <span>Если хотите добавить пакет, сначала нажмите “Новый пакет”.</span>
@@ -1601,14 +2041,14 @@ function SettingsPage({ auth, selectedClubID, currentPath, onClubChange, onLogou
                   <SelectField label="Зона" value={tariffForm.zone_id || ''} options={settings.zones.map((zone) => ({ value: zone.id, label: zone.name }))} onChange={(value) => setTariffForm({ ...tariffForm, zone_id: value })} />
                   <Field label="Название" value={tariffForm.name || ''} onChange={(value) => setTariffForm({ ...tariffForm, name: value })} />
                   <Field label="Минуты" type="number" value={String(tariffForm.duration_minutes || 0)} onChange={(value) => setTariffForm({ ...tariffForm, duration_minutes: Number(value || 0) })} />
-                  <Field label="Цена, сум" type="number" value={String(tariffForm.price_uzs || 0)} onChange={(value) => setTariffForm({ ...tariffForm, price_uzs: Number(value || 0) })} />
+                  <CurrencyField label="Цена, сум" value={tariffForm.price_uzs || 0} onChange={(value) => setTariffForm({ ...tariffForm, price_uzs: value })} />
                   <SelectField label="Статус" value={tariffForm.status || 'active'} options={statusOptions()} onChange={(value) => setTariffForm({ ...tariffForm, status: value })} />
                 </div>
                 <div className="button-row">
                   {tariffForm.id && <Button variant="danger" icon={<Trash2 size={16} />} onClick={deleteTariff}>Удалить</Button>}
                   <Button icon={<Save size={16} />} onClick={saveTariff}>{tariffForm.id ? 'Сохранить пакет' : 'Добавить пакет'}</Button>
                 </div>
-              </>
+              </div>
             )}
           </Panel>
             </>
@@ -1641,7 +2081,7 @@ function SettingsPage({ auth, selectedClubID, currentPath, onClubChange, onLogou
                     <tr key={pc.id}>
                       <td>{pc.label} · #{pc.number}</td>
                       <td>{pc.zone}</td>
-                      <td>{pc.qr_url ? <AppLink className="text-link" href={pc.qr_url}>{pc.qr_token}</AppLink> : '—'}</td>
+                      <td>{pc.qr_url ? <AppLink className="text-link" href={pc.qr_url}>{pc.qr_token}</AppLink> : '-'}</td>
                       <td><Button size="sm" variant="ghost" onClick={() => { setPCForm(pc); setShowPCForm(true); }}>Изменить</Button></td>
                     </tr>
                   ))}
@@ -1652,7 +2092,7 @@ function SettingsPage({ auth, selectedClubID, currentPath, onClubChange, onLogou
               <Button size="sm" variant="secondary" icon={<Plus size={13} />} onClick={resetPC}>Новый ПК</Button>
             </div>
             {showPCForm && (
-              <>
+              <div className="inline-editor">
                 <div className="form-mode">
                   <strong>{pcForm.id ? 'Редактирование ПК' : 'Новый ПК'}</strong>
                   <span>QR и системный ID создаются автоматически после сохранения.</span>
@@ -1666,7 +2106,7 @@ function SettingsPage({ auth, selectedClubID, currentPath, onClubChange, onLogou
                   {pcForm.id && <Button variant="danger" icon={<Trash2 size={16} />} onClick={deletePC}>Удалить</Button>}
                   <Button icon={<Save size={16} />} onClick={savePC}>{pcForm.id ? 'Сохранить ПК' : 'Добавить ПК'}</Button>
                 </div>
-              </>
+              </div>
             )}
           </Panel>
           )}
@@ -1676,12 +2116,12 @@ function SettingsPage({ auth, selectedClubID, currentPath, onClubChange, onLogou
             <SectionTitle icon={<Users size={18} />} title="Доступы" caption="Кто может заходить в панель выбранного клуба." />
             <div className="compact-list">
               {visibleUsers.map((user) => (
-                <button className="editable-row" key={user.id} onClick={() => setUserForm({ ...user, role: canManageNetwork && user.role === 'owner' ? 'owner' : 'admin', password: '' })}>
+                <button className="editable-row" key={user.id} onClick={() => { setUserForm({ ...user, role: canManageNetwork && user.role === 'owner' ? 'owner' : 'admin', password: '' }); setShowUserForm(true); }}>
                   <span>
                     <strong>{user.name} · {roleLabel(user.role)}</strong>
-                    <small>{user.email || user.phone} · {statusLabel(user.status)}</small>
+                    <small>{user.email || user.phone} · {user.scope === 'network' ? 'Доступ ко всей сети · ' : ''}{statusLabel(user.status)}</small>
                   </span>
-                  <em>Изменить</em>
+                  <em>{user.scope === 'network' ? 'Сеть' : 'Изменить'}</em>
                 </button>
               ))}
               {visibleUsers.length === 0 && <EmptyState text="Менеджеры клуба пока не добавлены" />}
@@ -1689,33 +2129,37 @@ function SettingsPage({ auth, selectedClubID, currentPath, onClubChange, onLogou
             <div className="button-row">
               <Button size="sm" variant="secondary" icon={<Plus size={13} />} onClick={resetUser}>{canManageNetwork ? 'Новый пользователь' : 'Новый менеджер'}</Button>
             </div>
-            <div className="form-mode">
-              <strong>{userForm.id ? 'Редактирование доступа' : 'Новый пользователь'}</strong>
-              <span>{canManageNetwork ? 'Суперадмин может добавить владельца клуба или менеджера.' : 'Владелец может добавлять только менеджеров. Владельцев добавляет команда Clubpay.'}</span>
-            </div>
-            <div className="form-grid two">
-              <Field label="Имя" value={userForm.name || ''} onChange={(value) => setUserForm({ ...userForm, name: value })} />
-              <Field label="Email" value={userForm.email || ''} onChange={(value) => setUserForm({ ...userForm, email: value })} />
-              <Field label="Телефон" value={userForm.phone || ''} onChange={(value) => setUserForm({ ...userForm, phone: value })} />
-              <Field label="Пароль" type="password" value={userForm.password || ''} onChange={(value) => setUserForm({ ...userForm, password: value })} />
-              {canManageNetwork ? (
-                <SelectField label="Роль" value={userForm.role || 'admin'} options={roleOptions(canManageNetwork)} onChange={(value) => setUserForm({ ...userForm, role: value })} />
-              ) : (
-                <label className="form-block">
-                  Роль
-                  <input value="Менеджер" readOnly />
-                </label>
-              )}
-              <SelectField label="Статус" value={userForm.status || 'active'} options={statusOptions()} onChange={(value) => setUserForm({ ...userForm, status: value })} />
-            </div>
-            <div className="button-row">
-              {userForm.id && <Button variant="danger" icon={<Trash2 size={16} />} onClick={deleteUser}>Удалить</Button>}
-              <Button icon={<Save size={16} />} onClick={saveUser}>{userForm.id ? 'Сохранить доступ' : canManageNetwork ? 'Добавить пользователя' : 'Добавить менеджера'}</Button>
-            </div>
+            {showUserForm && <div className="inline-editor user-editor">
+              <div className="form-mode">
+                <strong>{userForm.id ? 'Редактирование доступа' : 'Новый пользователь'}</strong>
+                <span>{canManageNetwork ? 'Владелец получает доступ ко всем клубам выбранной сети. Менеджер добавляется только в выбранный клуб.' : 'Владелец может добавлять только менеджеров. Владельцев добавляет команда Clubpay.'}</span>
+              </div>
+              <div className="form-grid">
+                <Field label="Имя" value={userForm.name || ''} onChange={(value) => setUserForm({ ...userForm, name: value })} />
+                <Field label="Email" value={userForm.email || ''} onChange={(value) => setUserForm({ ...userForm, email: value })} />
+                <Field label="Телефон" value={userForm.phone || ''} onChange={(value) => setUserForm({ ...userForm, phone: value })} />
+                <Field label="Пароль" type="password" value={userForm.password || ''} onChange={(value) => setUserForm({ ...userForm, password: value })} />
+                {canManageNetwork ? (
+                  <SelectField label="Роль" value={userForm.role || 'admin'} options={roleOptions(canManageNetwork)} onChange={(value) => setUserForm({ ...userForm, role: value })} />
+                ) : (
+                  <label className="form-block">
+                    Роль
+                    <input value="Менеджер" readOnly />
+                  </label>
+                )}
+                <SelectField label="Статус" value={userForm.status || 'active'} options={statusOptions()} onChange={(value) => setUserForm({ ...userForm, status: value })} />
+              </div>
+              <div className="button-row">
+                {userForm.id && <Button variant="danger" icon={<Trash2 size={16} />} onClick={deleteUser}>Удалить</Button>}
+                <Button icon={<Save size={16} />} onClick={saveUser}>{userForm.id ? 'Сохранить доступ' : canManageNetwork ? 'Добавить пользователя' : 'Добавить менеджера'}</Button>
+              </div>
+            </div>}
           </Panel>
           )}
         </section>
       )}
+        </div>
+      </div>
     </main>
   );
 }
@@ -1786,38 +2230,104 @@ function PaymentReturnPage() {
   );
 }
 
+type WorkspaceNavItem = {
+  href: string;
+  label: string;
+  icon: React.ReactNode;
+  prefix?: boolean;
+};
+
+function workspaceNavItems(auth: AuthPayload, clubID: string): WorkspaceNavItem[] {
+  const role = clubRole(auth, clubID);
+  if (role === 'super_admin') {
+    return [
+      { href: '/reports', label: 'Обзор', icon: <Activity size={18} /> },
+      { href: '/admin', label: 'Операции', icon: <Monitor size={18} /> },
+      { href: '/settings/networks', label: 'Сети', icon: <Network size={18} /> },
+      { href: '/settings', label: 'Клубы', icon: <Building2 size={18} /> },
+      { href: '/settings/connections', label: 'Подключения', icon: <CreditCard size={18} /> },
+      { href: '/settings/users', label: 'Доступы', icon: <Users size={18} /> },
+    ];
+  }
+  if (role === 'owner') {
+    return [
+      { href: '/reports', label: 'Обзор', icon: <Activity size={18} /> },
+      { href: '/admin', label: 'Зал', icon: <Monitor size={18} /> },
+      { href: '/admin/payments', label: 'Оплаты', icon: <ReceiptText size={18} /> },
+      { href: '/settings', label: 'Настройки', icon: <Settings size={18} />, prefix: true },
+      { href: '/settings/users', label: 'Команда', icon: <Users size={18} /> },
+    ];
+  }
+  return [
+    { href: '/admin', label: 'Зал', icon: <Monitor size={18} /> },
+    { href: '/admin/sessions', label: 'Сессии', icon: <Gamepad2 size={18} /> },
+    { href: '/admin/payments', label: 'Оплаты', icon: <ReceiptText size={18} /> },
+  ];
+}
+
 function WorkspaceHeader({ auth, selectedClubID, currentPath, onClubChange, onLogout, eyebrow, title, clubAction }: WorkspaceProps & { eyebrow: string; title: string; clubAction?: React.ReactNode }) {
-  const canOpenOwner = canViewOwner(auth, selectedClubID);
-  const canOpenSettings = canViewSettings(auth, selectedClubID);
   const selectedClub = auth.clubs.find((club) => club.id === selectedClubID) || auth.clubs[0];
+  const role = clubRole(auth, selectedClubID);
+  const navItems = workspaceNavItems(auth, selectedClubID);
 
   return (
-    <header className="topbar">
-      <div>
-        <p className="eyebrow">{eyebrow}</p>
-        <h1>{title}</h1>
-      </div>
-      <div className="workspace-actions">
-        {auth.clubs.length > 1 ? (
-          <select value={selectedClubID} onChange={(event) => onClubChange(event.target.value)} aria-label="Клуб">
-            {auth.clubs.map((club) => <option key={club.id} value={club.id}>{club.name} · {roleLabel(club.role)}</option>)}
-          </select>
-        ) : (
-          <span className="club-static">{selectedClub ? `${selectedClub.name} · ${roleLabel(selectedClub.role)}` : 'Клуб не выбран'}</span>
-        )}
-        {clubAction}
-        {canOpenOwner && <AppLink className={`btn ghost sm ${currentPath.startsWith('/reports') || currentPath.startsWith('/owner') ? 'active' : ''}`} href="/reports"><Banknote size={13} /><span>Дашборд</span></AppLink>}
-        {canOpenSettings && <AppLink className={`btn ghost sm ${currentPath.startsWith('/settings') ? 'active' : ''}`} href="/settings"><Settings size={13} /><span>Настройки</span></AppLink>}
-        <Button size="sm" variant="secondary" icon={<LogOut size={13} />} onClick={onLogout}>Выйти</Button>
-      </div>
-    </header>
+    <>
+      <aside className="workspace-rail">
+        <AppLink className="rail-brand" href={canViewOwner(auth, selectedClubID) ? '/reports' : '/admin'}>
+          <span className="rail-mark" aria-hidden="true">CP</span>
+          <span className="rail-brand-copy">
+            <strong>ClubPay</strong>
+            <small>{roleLabel(role)}</small>
+          </span>
+        </AppLink>
+        <nav className="rail-nav" aria-label="Основная навигация">
+          {navItems.map((item) => {
+            const hasExactMatch = navItems.some((candidate) => !candidate.prefix && currentPath === candidate.href);
+            const active = item.prefix ? currentPath.startsWith(item.href) && !hasExactMatch : currentPath === item.href;
+            return (
+              <AppLink className={`rail-link ${active ? 'active' : ''}`} href={item.href} key={`${item.href}-${item.label}`}>
+                {item.icon}
+                <span>{item.label}</span>
+              </AppLink>
+            );
+          })}
+        </nav>
+        <div className="rail-user">
+          <strong>{auth.user.name}</strong>
+          <span>{auth.user.email || auth.user.phone}</span>
+        </div>
+      </aside>
+      <header className="commandbar">
+        <div className="command-title">
+          <span>{eyebrow}</span>
+          <h1>{title}</h1>
+        </div>
+        <div className="command-context">
+          {auth.clubs.length > 1 ? (
+            <label className="club-switcher">
+              <span>Клуб</span>
+              <select value={selectedClubID} onChange={(event) => onClubChange(event.target.value)} aria-label="Клуб">
+                {auth.clubs.map((club) => <option key={club.id} value={club.id}>{club.network_name ? `${club.network_name} / ${club.name}` : club.name} · {roleLabel(club.role)}</option>)}
+              </select>
+            </label>
+          ) : (
+            <div className="club-context">
+              <span>{selectedClub?.network_name ? 'Сеть / клуб' : 'Клуб'}</span>
+              <strong>{selectedClub ? (selectedClub.network_name ? `${selectedClub.network_name} / ${selectedClub.name}` : selectedClub.name) : 'Не выбран'}</strong>
+            </div>
+          )}
+          {clubAction}
+          <Button className="icon-only" size="sm" variant="ghost" icon={<LogOut size={16} />} onClick={onLogout} aria-label="Выйти" title="Выйти" />
+        </div>
+      </header>
+    </>
   );
 }
 
 function PageHeader({ eyebrow, title, aside }: { eyebrow: string; title: string; aside?: React.ReactNode }) {
   return (
-    <header className="topbar">
-      <div>
+    <header className="page-commandbar">
+      <div className="topbar-title">
         <p className="eyebrow">{eyebrow}</p>
         <h1>{title}</h1>
       </div>
@@ -1891,7 +2401,62 @@ function QRCodeImage({ value, size = 160, label }: { value: string; size?: numbe
   );
 }
 
+function EndSessionModal({
+  draft,
+  onPhoneChange,
+  onClose,
+  onSubmit,
+}: {
+  draft: { grant: Grant; phone: string; confirmWithoutPhone: boolean };
+  onPhoneChange: (phone: string) => void;
+  onClose: () => void;
+  onSubmit: () => void | Promise<void>;
+}) {
+  const remainingSeconds = draft.grant.remaining_seconds || draft.grant.duration_seconds || draft.grant.duration_minutes * 60;
+  return (
+    <div className="telegram-modal-backdrop" role="dialog" aria-modal="true" aria-labelledby="end-session-title">
+      <section className="telegram-modal end-session-modal">
+        <button className="modal-close" type="button" onClick={onClose} aria-label="Закрыть">
+          <X size={18} />
+        </button>
+        <div className="telegram-modal-head">
+          <span><Power size={22} /></span>
+          <div>
+            <p>{draft.grant.pc_label}</p>
+            <h2 id="end-session-title">Завершить сессию</h2>
+          </div>
+        </div>
+        <p className="telegram-modal-text">
+          Остаток времени будет сохранен ваучером. Укажите телефон клиента, если нужно привязать ваучер к Telegram.
+        </p>
+        <label className="modal-field">
+          Телефон клиента
+          <input
+            inputMode="tel"
+            value={draft.phone}
+            onFocus={() => !draft.phone && onPhoneChange('+998 ')}
+            onChange={(event) => onPhoneChange(formatUzPhoneInput(event.target.value))}
+            placeholder="+998 00 000 00 00"
+          />
+        </label>
+        <div className={`end-session-warning ${draft.confirmWithoutPhone ? 'active' : ''}`}>
+          {draft.confirmWithoutPhone
+            ? 'Телефон не указан. Ваучер будет создан, но клиенту нужно будет получить код у администратора.'
+            : `Будет завершено примерно ${formatDurationClock(remainingSeconds)}.`}
+        </div>
+        <div className="telegram-modal-actions horizontal">
+          <Button type="button" variant="ghost" onClick={onClose}>Отменить</Button>
+          <Button type="button" variant={draft.confirmWithoutPhone ? 'danger' : 'secondary'} icon={<Power size={16} />} onClick={onSubmit}>
+            {draft.phone.trim() ? 'Завершить и отправить' : draft.confirmWithoutPhone ? 'Да, завершить без телефона' : 'Завершить'}
+          </Button>
+        </div>
+      </section>
+    </div>
+  );
+}
+
 function TelegramVoucherModal({ prompt, onClose, onCopied }: { prompt: TelegramPrompt; onClose: () => void; onCopied: () => void }) {
+  const notConfigured = prompt.status === 'telegram_not_configured';
   return (
     <div className="telegram-modal-backdrop" role="dialog" aria-modal="true" aria-labelledby="telegram-modal-title">
       <section className="telegram-modal">
@@ -1902,13 +2467,14 @@ function TelegramVoucherModal({ prompt, onClose, onCopied }: { prompt: TelegramP
           <span><QrCode size={22} /></span>
           <div>
             <p>Telegram-бот</p>
-            <h2 id="telegram-modal-title">Покажите QR клиенту</h2>
+            <h2 id="telegram-modal-title">{notConfigured ? 'Telegram не подключен' : 'Покажите QR клиенту'}</h2>
           </div>
         </div>
         <QRCodeImage value={prompt.link} size={220} label="QR для получения ваучера в Telegram" />
         <p className="telegram-modal-text">
-          После нажатия Start бот привяжет номер{prompt.phone ? ` ${prompt.phone}` : ''} и отправит ваучер
-          {prompt.code ? ` ${prompt.code}` : ''}{prompt.seconds || prompt.minutes ? ` на ${formatDurationClock(prompt.seconds || (prompt.minutes || 0) * 60)}` : ''}.
+          {notConfigured
+            ? `Серверу нужен TELEGRAM_BOT_TOKEN для автоматической отправки. Сейчас передайте клиенту код${prompt.code ? ` ${prompt.code}` : ''} вручную.`
+            : `После нажатия Start бот привяжет номер${prompt.phone ? ` ${prompt.phone}` : ''} и отправит ваучер${prompt.code ? ` ${prompt.code}` : ''}${prompt.seconds || prompt.minutes ? ` на ${formatDurationClock(prompt.seconds || (prompt.minutes || 0) * 60)}` : ''}.`}
         </p>
         <div className="telegram-modal-actions">
           <LinkButton href={prompt.link} variant="secondary" icon={<Send size={16} />}>Открыть Telegram</LinkButton>
@@ -2041,11 +2607,43 @@ function Field({
   );
 }
 
-function SelectField({ label, value, options, onChange, help }: { label: string; value: string; options: Array<{ value: string; label: string }>; onChange: (value: string) => void; help?: string }) {
+function CurrencyField({ label, value, onChange, help }: { label: string; value: number; onChange: (value: number) => void; help?: string }) {
   return (
     <label>
       {label}
-      <select value={value} onChange={(event) => onChange(event.target.value)}>
+      <input
+        type="text"
+        value={formatUZSInput(value)}
+        inputMode="numeric"
+        onChange={(event) => onChange(parseUZSInput(event.target.value))}
+      />
+      {help && <small className="field-help">{help}</small>}
+    </label>
+  );
+}
+
+function SelectField({
+  label,
+  value,
+  options,
+  onChange,
+  help,
+  placeholder,
+  disabled,
+}: {
+  label: string;
+  value: string;
+  options: Array<{ value: string; label: string }>;
+  onChange: (value: string) => void;
+  help?: string;
+  placeholder?: string;
+  disabled?: boolean;
+}) {
+  return (
+    <label>
+      {label}
+      <select value={value} disabled={disabled} onChange={(event) => onChange(event.target.value)}>
+        {placeholder && <option value="" disabled>{placeholder}</option>}
         {options.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
       </select>
       {help && <small className="field-help">{help}</small>}
@@ -2093,7 +2691,13 @@ function clubPath(path: string, clubID: string) {
 }
 
 function formatUZS(value: number) {
-  return new Intl.NumberFormat('ru-UZ').format(value) + ' сум';
+  return `${formatUZSInput(value)} сум`;
+}
+
+function formatUZSInput(value: number | string) {
+  const raw = String(value).replace(/\D/g, '');
+  if (!raw) return typeof value === 'number' ? '0' : '';
+  return raw.replace(/\B(?=(\d{3})+(?!\d))/g, ' ');
 }
 
 function parseUZSInput(value: string) {
@@ -2237,15 +2841,16 @@ function fiscalStatusLabel(status?: string) {
   return labels[status || ''] || 'Чек не подтверждён';
 }
 
-function telegramDeliveryLabel(status: string) {
+function telegramDeliverySuffix(status?: string) {
+  if (!status) return '';
   const labels: Record<string, string> = {
-    sent: 'отправлено',
-    telegram_waiting_for_user: 'ждём привязку номера',
-    telegram_not_configured: 'бот не настроен',
-    telegram_link_failed: 'ссылка не создана',
-    telegram_failed: 'ошибка отправки',
+    sent: ' · Ваучер отправлен в Telegram',
+    telegram_waiting_for_user: ' · Для отправки ваучера привяжите номер к Telegram',
+    telegram_not_configured: ' · Telegram не подключен к серверу, код покажите клиенту вручную',
+    telegram_link_failed: ' · Ссылка на Telegram не создана',
+    telegram_failed: ' · Ваучер не отправлен в Telegram',
   };
-  return labels[status] || status;
+  return labels[status] || '';
 }
 
 function clubRole(auth: AuthPayload, clubID: string) {

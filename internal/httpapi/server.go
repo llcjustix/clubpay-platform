@@ -170,6 +170,9 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("POST /api/telegram/webhook", s.handleTelegramWebhook)
 	mux.HandleFunc("GET /api/backoffice/clubs", s.handleBackofficeClubs)
 	mux.HandleFunc("POST /api/backoffice/clubs", s.handleBackofficeCreateClub)
+	mux.HandleFunc("GET /api/backoffice/networks", s.handleBackofficeNetworks)
+	mux.HandleFunc("POST /api/backoffice/networks", s.handleBackofficeCreateNetwork)
+	mux.HandleFunc("POST /api/backoffice/networks/{network_id}", s.handleBackofficeUpdateNetwork)
 	mux.HandleFunc("GET /api/backoffice/clubs/{club_id}/settings", s.handleBackofficeClubSettings)
 	mux.HandleFunc("POST /api/backoffice/clubs/{club_id}", s.handleBackofficeUpdateClub)
 	mux.HandleFunc("DELETE /api/backoffice/clubs/{club_id}", s.handleBackofficeDeleteClub)
@@ -342,6 +345,92 @@ func (s *Server) handleBackofficeClubs(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"clubs": clubs})
 }
 
+func (s *Server) handleBackofficeNetworks(w http.ResponseWriter, r *http.Request) {
+	auth, ok := s.requireAuth(w, r)
+	if !ok {
+		return
+	}
+	networks, err := s.networksForAuth(r.Context(), auth)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"networks": networks})
+}
+
+func (s *Server) handleBackofficeCreateNetwork(w http.ResponseWriter, r *http.Request) {
+	auth, ok := s.requireAuth(w, r)
+	if !ok {
+		return
+	}
+	if !auth.IsSuperAdmin() {
+		writeError(w, http.StatusForbidden, "super_admin role required")
+		return
+	}
+	var req networkRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid json")
+		return
+	}
+	req.Name = strings.TrimSpace(req.Name)
+	if req.Name == "" {
+		writeError(w, http.StatusBadRequest, "network name is required")
+		return
+	}
+	var id string
+	err := s.db.QueryRow(r.Context(), `
+		INSERT INTO club_networks (name, slug, status)
+		VALUES ($1, $2, COALESCE(NULLIF($3, ''), 'active'))
+		RETURNING id
+	`, req.Name, slugify(req.Name), req.Status).Scan(&id)
+	if err != nil {
+		if writeConflictIfUnique(w, err, "network name or slug already exists") {
+			return
+		}
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusCreated, map[string]any{"id": id})
+}
+
+func (s *Server) handleBackofficeUpdateNetwork(w http.ResponseWriter, r *http.Request) {
+	auth, ok := s.requireAuth(w, r)
+	if !ok {
+		return
+	}
+	if !auth.IsSuperAdmin() {
+		writeError(w, http.StatusForbidden, "super_admin role required")
+		return
+	}
+	var req networkRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid json")
+		return
+	}
+	req.Name = strings.TrimSpace(req.Name)
+	if req.Name == "" {
+		writeError(w, http.StatusBadRequest, "network name is required")
+		return
+	}
+	result, err := s.db.Exec(r.Context(), `
+		UPDATE club_networks
+		SET name = $2, slug = $3, status = COALESCE(NULLIF($4, ''), 'active'), updated_at = now()
+		WHERE id = $1
+	`, r.PathValue("network_id"), req.Name, slugify(req.Name), req.Status)
+	if err != nil {
+		if writeConflictIfUnique(w, err, "network name or slug already exists") {
+			return
+		}
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if result.RowsAffected() == 0 {
+		writeError(w, http.StatusNotFound, "network not found")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"success": true})
+}
+
 func (s *Server) handleBackofficeCreateClub(w http.ResponseWriter, r *http.Request) {
 	auth, ok := s.requireAuth(w, r)
 	if !ok {
@@ -361,19 +450,23 @@ func (s *Server) handleBackofficeCreateClub(w http.ResponseWriter, r *http.Reque
 		writeError(w, http.StatusBadRequest, "club name is required")
 		return
 	}
+	if err := s.ensureActiveNetwork(r.Context(), req.NetworkID); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
 	slug := slugify(req.Name)
 	var id string
 	err := s.db.QueryRow(r.Context(), `
 		INSERT INTO clubs (
-			name, slug, legal_name, tin, address, timezone, status,
+			network_id, name, slug, legal_name, tin, address, timezone, status,
 			click_merchant_id, click_service_id, click_merchant_user_id, click_secret_key,
 			click_club_cntrg_id, click_platform_cntrg_id,
 			payme_merchant_id, payme_secret_key, payme_club_receiver_id, payme_platform_receiver_id,
 			platform_fee_bps, ofd_mxik, ofd_package_code, ofd_service_name, ofd_unit_code, ofd_vat_percent
 		)
-		VALUES ($1, $2, $3, $4, $5, $6, COALESCE(NULLIF($7, ''), 'active'), $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, COALESCE(NULLIF($8, ''), 'active'), $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24)
 		RETURNING id
-	`, req.Name, slug, req.LegalName, req.TIN, req.Address, defaultString(req.Timezone, "Asia/Tashkent"),
+	`, req.NetworkID, req.Name, slug, req.LegalName, req.TIN, req.Address, defaultString(req.Timezone, "Asia/Tashkent"),
 		req.Status, req.ClickMerchantID, req.ClickServiceID, req.ClickMerchantUserID, req.ClickSecretKey, req.ClickClubCntrgID, req.ClickPlatformCntrgID,
 		req.PaymeMerchantID, req.PaymeSecretKey, req.PaymeClubReceiverID, req.PaymePlatformReceiverID,
 		req.PlatformFeeBPS, req.OFDMXIK, req.OFDPackageCode, req.OFDServiceName, req.OFDUnitCode, req.OFDVATPercent).Scan(&id)
@@ -426,33 +519,46 @@ func (s *Server) handleBackofficeUpdateClub(w http.ResponseWriter, r *http.Reque
 	}
 	var err error
 	if actorRole == "super_admin" {
+		networkID := strings.TrimSpace(req.NetworkID)
+		if networkID == "" {
+			err = s.db.QueryRow(r.Context(), `SELECT COALESCE(network_id::text, '') FROM clubs WHERE id = $1`, clubID).Scan(&networkID)
+			if err != nil {
+				writeError(w, http.StatusBadRequest, err.Error())
+				return
+			}
+		}
+		if err := s.ensureActiveNetwork(r.Context(), networkID); err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
 		_, err = s.db.Exec(r.Context(), `
 			UPDATE clubs
-			SET name = $2,
-			    slug = $3,
-			    legal_name = $4,
-			    tin = $5,
-			    address = $6,
-			    timezone = $7,
-			    status = $8,
-			    click_merchant_id = $9,
-			    click_service_id = $10,
-			    click_merchant_user_id = $11,
-			    click_secret_key = $12,
-			    click_club_cntrg_id = $13,
-			    click_platform_cntrg_id = $14,
-			    payme_merchant_id = $15,
-			    payme_secret_key = $16,
-			    payme_club_receiver_id = $17,
-			    payme_platform_receiver_id = $18,
-			    platform_fee_bps = $19,
-			    ofd_mxik = $20,
-			    ofd_package_code = $21,
-			    ofd_service_name = $22,
-			    ofd_unit_code = $23,
-			    ofd_vat_percent = $24
+			SET network_id = $2,
+			    name = $3,
+			    slug = $4,
+			    legal_name = $5,
+			    tin = $6,
+			    address = $7,
+			    timezone = $8,
+			    status = $9,
+			    click_merchant_id = $10,
+			    click_service_id = $11,
+			    click_merchant_user_id = $12,
+			    click_secret_key = $13,
+			    click_club_cntrg_id = $14,
+			    click_platform_cntrg_id = $15,
+			    payme_merchant_id = $16,
+			    payme_secret_key = $17,
+			    payme_club_receiver_id = $18,
+			    payme_platform_receiver_id = $19,
+			    platform_fee_bps = $20,
+			    ofd_mxik = $21,
+			    ofd_package_code = $22,
+			    ofd_service_name = $23,
+			    ofd_unit_code = $24,
+			    ofd_vat_percent = $25
 			WHERE id = $1
-		`, clubID, strings.TrimSpace(req.Name), slugify(req.Name), req.LegalName, req.TIN,
+		`, clubID, networkID, strings.TrimSpace(req.Name), slugify(req.Name), req.LegalName, req.TIN,
 			req.Address, defaultString(req.Timezone, "Asia/Tashkent"), defaultString(req.Status, "active"),
 			req.ClickMerchantID, req.ClickServiceID, req.ClickMerchantUserID, req.ClickSecretKey, req.ClickClubCntrgID, req.ClickPlatformCntrgID,
 			req.PaymeMerchantID, req.PaymeSecretKey, req.PaymeClubReceiverID, req.PaymePlatformReceiverID,
@@ -1047,11 +1153,11 @@ func (s *Server) handleBackofficeCreateUser(w http.ResponseWriter, r *http.Reque
 	if passwordHash != "" {
 		_, _ = s.db.Exec(r.Context(), `UPDATE users SET name = $2, password_hash = $3, updated_at = now() WHERE id = $1`, userID, req.Name, passwordHash)
 	}
-	_, err = s.db.Exec(r.Context(), `
-		INSERT INTO user_club_roles (user_id, club_id, role, status)
-		VALUES ($1, $2, $3, COALESCE(NULLIF($4, ''), 'active'))
-		ON CONFLICT (user_id, club_id) DO UPDATE SET role = EXCLUDED.role, status = EXCLUDED.status, updated_at = now()
-	`, userID, clubID, req.Role, req.Status)
+	if req.Role == "owner" {
+		err = s.upsertNetworkOwner(r.Context(), userID, clubID, req.Status)
+	} else {
+		err = s.upsertClubRole(r.Context(), userID, clubID, req.Role, req.Status)
+	}
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
@@ -1115,10 +1221,20 @@ func (s *Server) handleBackofficeUpdateUserRole(w http.ResponseWriter, r *http.R
 			WHERE id = $1
 		`, args...)
 	}
-	_, err := s.db.Exec(r.Context(), `
-		UPDATE user_club_roles SET role = $3, status = $4, updated_at = now()
-		WHERE user_id = $1 AND club_id = $2
-	`, userID, clubID, req.Role, defaultString(req.Status, "active"))
+	var err error
+	if req.Role == "owner" {
+		err = s.upsertNetworkOwner(r.Context(), userID, clubID, req.Status)
+		if err == nil {
+			_, err = s.db.Exec(r.Context(), `
+				UPDATE user_club_roles SET status = 'deleted', updated_at = now()
+				WHERE user_id = $1 AND club_id = $2
+			`, userID, clubID)
+		}
+	} else {
+		if err = s.deactivateNetworkOwner(r.Context(), userID, clubID); err == nil {
+			err = s.upsertClubRole(r.Context(), userID, clubID, req.Role, req.Status)
+		}
+	}
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
@@ -1156,10 +1272,25 @@ func (s *Server) handleBackofficeDeleteUserRole(w http.ResponseWriter, r *http.R
 			return
 		}
 	}
-	result, err := s.db.Exec(r.Context(), `
-		UPDATE user_club_roles SET status = 'deleted', updated_at = now()
-		WHERE user_id = $1 AND club_id = $2
-	`, userID, clubID)
+	networkOwner, err := s.hasNetworkOwner(r.Context(), userID, clubID)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	var result pgconn.CommandTag
+	if networkOwner {
+		result, err = s.db.Exec(r.Context(), `
+			UPDATE user_network_roles
+			SET status = 'deleted', updated_at = now()
+			WHERE user_id = $1
+			  AND network_id = (SELECT network_id FROM clubs WHERE id = $2)
+		`, userID, clubID)
+	} else {
+		result, err = s.db.Exec(r.Context(), `
+			UPDATE user_club_roles SET status = 'deleted', updated_at = now()
+			WHERE user_id = $1 AND club_id = $2
+		`, userID, clubID)
+	}
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
@@ -4731,7 +4862,11 @@ func (s *Server) attachVoucherRecipientAndSend(ctx context.Context, voucherID, c
 	}
 	if strings.TrimSpace(s.cfg.TelegramBotToken) == "" {
 		_, _ = s.db.Exec(ctx, `UPDATE vouchers SET delivery_status = 'telegram_not_configured' WHERE id = $1`, voucherID)
-		return map[string]any{"status": "telegram_not_configured", "phone": normalizedPhone}, nil
+		delivery := map[string]any{"status": "telegram_not_configured", "phone": normalizedPhone}
+		if s.cfg.TelegramBotUsername != "" {
+			delivery["telegram_link"] = fmt.Sprintf("https://t.me/%s", s.cfg.TelegramBotUsername)
+		}
+		return delivery, nil
 	}
 
 	var chatID string
@@ -5019,6 +5154,9 @@ func (s *Server) createTelegramLink(ctx context.Context, phone string) (string, 
 }
 
 func (s *Server) telegramBotPublicLink(ctx context.Context) (string, string) {
+	if s.cfg.TelegramBotUsername != "" {
+		return fmt.Sprintf("https://t.me/%s", s.cfg.TelegramBotUsername), s.cfg.TelegramBotUsername
+	}
 	if strings.TrimSpace(s.cfg.TelegramBotToken) == "" {
 		return "", ""
 	}
@@ -5165,6 +5303,7 @@ type loginRequest struct {
 }
 
 type clubSettingsRequest struct {
+	NetworkID               string `json:"network_id"`
 	Name                    string `json:"name"`
 	Slug                    string `json:"slug"`
 	LegalName               string `json:"legal_name"`
@@ -5188,6 +5327,11 @@ type clubSettingsRequest struct {
 	OFDServiceName          string `json:"ofd_service_name"`
 	OFDUnitCode             string `json:"ofd_unit_code"`
 	OFDVATPercent           int    `json:"ofd_vat_percent"`
+}
+
+type networkRequest struct {
+	Name   string `json:"name"`
+	Status string `json:"status"`
 }
 
 type zoneRequest struct {
@@ -5517,18 +5661,36 @@ func (s *Server) clubsForAuth(ctx context.Context, auth authContext) ([]map[stri
 	var err error
 	if auth.IsSuperAdmin() {
 		rows, err = s.db.Query(ctx, `
-			SELECT id, name, COALESCE(slug, ''), status, 'super_admin' AS role
-			FROM clubs
-			WHERE status <> 'deleted'
-			ORDER BY name
+			SELECT c.id, c.name, COALESCE(c.slug, ''), c.status, 'super_admin' AS role,
+			       COALESCE(c.network_id::text, ''), COALESCE(n.name, '')
+			FROM clubs c
+			LEFT JOIN club_networks n ON n.id = c.network_id
+			WHERE c.status <> 'deleted'
+			ORDER BY n.name, c.name
 		`)
 	} else {
 		rows, err = s.db.Query(ctx, `
-			SELECT c.id, c.name, COALESCE(c.slug, ''), c.status, ucr.role
-			FROM user_club_roles ucr
-			JOIN clubs c ON c.id = ucr.club_id
-			WHERE ucr.user_id = $1 AND ucr.status = 'active' AND c.status <> 'deleted'
-			ORDER BY c.name
+			WITH access AS (
+				SELECT ucr.club_id, ucr.role
+				FROM user_club_roles ucr
+				WHERE ucr.user_id = $1 AND ucr.status = 'active'
+				UNION ALL
+				SELECT c.id, 'owner'
+				FROM user_network_roles unr
+				JOIN clubs c ON c.network_id = unr.network_id
+				WHERE unr.user_id = $1 AND unr.status = 'active' AND c.status <> 'deleted'
+			), preferred_access AS (
+				SELECT DISTINCT ON (club_id) club_id, role
+				FROM access
+				ORDER BY club_id, CASE role WHEN 'owner' THEN 0 WHEN 'admin' THEN 1 ELSE 2 END
+			)
+			SELECT c.id, c.name, COALESCE(c.slug, ''), c.status, pa.role,
+			       COALESCE(c.network_id::text, ''), COALESCE(n.name, '')
+			FROM preferred_access pa
+			JOIN clubs c ON c.id = pa.club_id
+			LEFT JOIN club_networks n ON n.id = c.network_id
+			WHERE c.status <> 'deleted'
+			ORDER BY n.name, c.name
 		`, auth.UserID)
 	}
 	if err != nil {
@@ -5537,13 +5699,71 @@ func (s *Server) clubsForAuth(ctx context.Context, auth authContext) ([]map[stri
 	defer rows.Close()
 	clubs := make([]map[string]any, 0)
 	for rows.Next() {
+		var id, name, slug, status, role, networkID, networkName string
+		if err := rows.Scan(&id, &name, &slug, &status, &role, &networkID, &networkName); err != nil {
+			return nil, err
+		}
+		clubs = append(clubs, map[string]any{"id": id, "name": name, "slug": slug, "status": status, "role": role, "network_id": networkID, "network_name": networkName})
+	}
+	return clubs, rows.Err()
+}
+
+func (s *Server) networksForAuth(ctx context.Context, auth authContext) ([]map[string]any, error) {
+	var rows pgx.Rows
+	var err error
+	if auth.IsSuperAdmin() {
+		rows, err = s.db.Query(ctx, `
+			SELECT id, name, slug, status, 'super_admin' AS role
+			FROM club_networks
+			WHERE status <> 'deleted'
+			ORDER BY name
+		`)
+	} else {
+		rows, err = s.db.Query(ctx, `
+			SELECT DISTINCT n.id, n.name, n.slug, n.status,
+			       CASE WHEN unr.user_id IS NOT NULL THEN 'owner' ELSE 'member' END AS role
+			FROM club_networks n
+			LEFT JOIN user_network_roles unr ON unr.network_id = n.id AND unr.user_id = $1 AND unr.status = 'active'
+			WHERE n.status <> 'deleted'
+			  AND (
+				unr.user_id IS NOT NULL
+				OR EXISTS (
+					SELECT 1
+					FROM clubs c
+					JOIN user_club_roles ucr ON ucr.club_id = c.id
+					WHERE c.network_id = n.id AND ucr.user_id = $1 AND ucr.status = 'active'
+				)
+			  )
+			ORDER BY n.name
+		`, auth.UserID)
+	}
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	networks := make([]map[string]any, 0)
+	for rows.Next() {
 		var id, name, slug, status, role string
 		if err := rows.Scan(&id, &name, &slug, &status, &role); err != nil {
 			return nil, err
 		}
-		clubs = append(clubs, map[string]any{"id": id, "name": name, "slug": slug, "status": status, "role": role})
+		networks = append(networks, map[string]any{"id": id, "name": name, "slug": slug, "status": status, "role": role})
 	}
-	return clubs, nil
+	return networks, rows.Err()
+}
+
+func (s *Server) ensureActiveNetwork(ctx context.Context, networkID string) error {
+	if strings.TrimSpace(networkID) == "" {
+		return fmt.Errorf("network_id is required")
+	}
+	var exists bool
+	if err := s.db.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM club_networks WHERE id = $1 AND status = 'active')`, networkID).Scan(&exists); err != nil {
+		return err
+	}
+	if !exists {
+		return fmt.Errorf("network not found or inactive")
+	}
+	return nil
 }
 
 func (s *Server) resolveRequestClub(w http.ResponseWriter, r *http.Request, auth authContext, roles ...string) (string, bool) {
@@ -5563,18 +5783,80 @@ func (s *Server) resolveRequestClub(w http.ResponseWriter, r *http.Request, auth
 }
 
 func (s *Server) defaultClubID(ctx context.Context, auth authContext) (string, error) {
-	var id string
-	if auth.IsSuperAdmin() {
-		err := s.db.QueryRow(ctx, `SELECT id FROM clubs WHERE status = 'active' ORDER BY name LIMIT 1`).Scan(&id)
-		return id, err
+	clubs, err := s.clubsForAuth(ctx, auth)
+	if err != nil {
+		return "", err
 	}
+	if len(clubs) == 0 {
+		return "", pgx.ErrNoRows
+	}
+	id, _ := clubs[0]["id"].(string)
+	if id == "" {
+		return "", pgx.ErrNoRows
+	}
+	return id, nil
+}
+
+func (s *Server) networkIDForClub(ctx context.Context, clubID string) (string, error) {
+	var networkID string
 	err := s.db.QueryRow(ctx, `
-		SELECT club_id FROM user_club_roles
-		WHERE user_id = $1 AND status = 'active'
-		ORDER BY created_at
-		LIMIT 1
-	`, auth.UserID).Scan(&id)
-	return id, err
+		SELECT network_id::text
+		FROM clubs
+		WHERE id = $1 AND network_id IS NOT NULL AND status <> 'deleted'
+	`, clubID).Scan(&networkID)
+	return networkID, err
+}
+
+func (s *Server) upsertNetworkOwner(ctx context.Context, userID, clubID, status string) error {
+	networkID, err := s.networkIDForClub(ctx, clubID)
+	if err != nil {
+		return err
+	}
+	_, err = s.db.Exec(ctx, `
+		INSERT INTO user_network_roles (user_id, network_id, role, status)
+		VALUES ($1, $2, 'owner', COALESCE(NULLIF($3, ''), 'active'))
+		ON CONFLICT (user_id, network_id) DO UPDATE
+		SET role = EXCLUDED.role, status = EXCLUDED.status, updated_at = now()
+	`, userID, networkID, status)
+	return err
+}
+
+func (s *Server) deactivateNetworkOwner(ctx context.Context, userID, clubID string) error {
+	networkID, err := s.networkIDForClub(ctx, clubID)
+	if err != nil {
+		return err
+	}
+	_, err = s.db.Exec(ctx, `
+		UPDATE user_network_roles
+		SET status = 'deleted', updated_at = now()
+		WHERE user_id = $1 AND network_id = $2
+	`, userID, networkID)
+	return err
+}
+
+func (s *Server) hasNetworkOwner(ctx context.Context, userID, clubID string) (bool, error) {
+	networkID, err := s.networkIDForClub(ctx, clubID)
+	if err != nil {
+		return false, err
+	}
+	var exists bool
+	err = s.db.QueryRow(ctx, `
+		SELECT EXISTS(
+			SELECT 1 FROM user_network_roles
+			WHERE user_id = $1 AND network_id = $2 AND role = 'owner' AND status <> 'deleted'
+		)
+	`, userID, networkID).Scan(&exists)
+	return exists, err
+}
+
+func (s *Server) upsertClubRole(ctx context.Context, userID, clubID, role, status string) error {
+	_, err := s.db.Exec(ctx, `
+		INSERT INTO user_club_roles (user_id, club_id, role, status)
+		VALUES ($1, $2, $3, COALESCE(NULLIF($4, ''), 'active'))
+		ON CONFLICT (user_id, club_id) DO UPDATE
+		SET role = EXCLUDED.role, status = EXCLUDED.status, updated_at = now()
+	`, userID, clubID, role, status)
+	return err
 }
 
 func (s *Server) requireClubRole(w http.ResponseWriter, r *http.Request, auth authContext, clubID string, roles ...string) (string, bool) {
@@ -5604,8 +5886,17 @@ func (s *Server) clubRole(ctx context.Context, auth authContext, clubID string) 
 	}
 	var role string
 	err := s.db.QueryRow(ctx, `
-		SELECT role FROM user_club_roles
-		WHERE user_id = $1 AND club_id = $2 AND status = 'active'
+		WITH access AS (
+			SELECT role, CASE role WHEN 'owner' THEN 0 WHEN 'admin' THEN 1 ELSE 2 END AS priority
+			FROM user_club_roles
+			WHERE user_id = $1 AND club_id = $2 AND status = 'active'
+			UNION ALL
+			SELECT 'owner', 0
+			FROM user_network_roles unr
+			JOIN clubs c ON c.network_id = unr.network_id
+			WHERE unr.user_id = $1 AND c.id = $2 AND unr.status = 'active' AND c.status <> 'deleted'
+		)
+		SELECT role FROM access ORDER BY priority LIMIT 1
 	`, auth.UserID, clubID).Scan(&role)
 	return role, err
 }
@@ -5670,29 +5961,30 @@ func isClubRole(role string) bool {
 func (s *Server) clubSettings(ctx context.Context, clubID string, includeTechnicalFields bool) (map[string]any, error) {
 	var club map[string]any
 	clubRows, err := s.db.Query(ctx, `
-		SELECT id, name, COALESCE(slug, ''), COALESCE(legal_name, ''), COALESCE(tin, ''), COALESCE(address, ''),
-		       timezone, status,
+		SELECT c.id, c.name, COALESCE(c.slug, ''), COALESCE(c.legal_name, ''), COALESCE(c.tin, ''), COALESCE(c.address, ''),
+		       c.timezone, c.status, COALESCE(c.network_id::text, ''), COALESCE(n.name, ''),
 		       COALESCE(click_merchant_id, ''), COALESCE(click_service_id, ''), COALESCE(click_merchant_user_id, ''), COALESCE(click_secret_key, ''),
 		       COALESCE(click_club_cntrg_id, ''), COALESCE(click_platform_cntrg_id, ''),
 		       COALESCE(payme_merchant_id, ''), COALESCE(payme_secret_key, ''),
 		       COALESCE(payme_club_receiver_id, ''), COALESCE(payme_platform_receiver_id, ''),
 		       platform_fee_bps, COALESCE(ofd_mxik, ''), COALESCE(ofd_package_code, ''),
-		       COALESCE(ofd_service_name, ''), COALESCE(ofd_unit_code, ''), COALESCE(ofd_vat_percent, 0), created_at
-		FROM clubs
-		WHERE id = $1
+		       COALESCE(ofd_service_name, ''), COALESCE(ofd_unit_code, ''), COALESCE(ofd_vat_percent, 0), c.created_at
+		FROM clubs c
+		LEFT JOIN club_networks n ON n.id = c.network_id
+		WHERE c.id = $1
 	`, clubID)
 	if err != nil {
 		return nil, err
 	}
 	defer clubRows.Close()
 	if clubRows.Next() {
-		var id, name, slug, legalName, tin, address, timezone, status string
+		var id, name, slug, legalName, tin, address, timezone, status, networkID, networkName string
 		var clickMerchantID, clickServiceID, clickMerchantUserID, clickSecretKey, clickClubCntrgID, clickPlatformCntrgID string
 		var paymeMerchantID, paymeSecretKey, paymeClubReceiverID, paymePlatformReceiverID, mxik, packageCode, serviceName, unitCode string
 		var feeBPS, vatPercent int
 		var createdAt time.Time
 		if err := clubRows.Scan(
-			&id, &name, &slug, &legalName, &tin, &address, &timezone, &status,
+			&id, &name, &slug, &legalName, &tin, &address, &timezone, &status, &networkID, &networkName,
 			&clickMerchantID, &clickServiceID, &clickMerchantUserID, &clickSecretKey, &clickClubCntrgID, &clickPlatformCntrgID,
 			&paymeMerchantID, &paymeSecretKey, &paymeClubReceiverID, &paymePlatformReceiverID,
 			&feeBPS, &mxik, &packageCode, &serviceName, &unitCode, &vatPercent, &createdAt,
@@ -5725,7 +6017,7 @@ func (s *Server) clubSettings(ctx context.Context, clubID string, includeTechnic
 			vatPercent = 0
 		}
 		club = map[string]any{
-			"id": id, "name": name, "slug": slug, "legal_name": legalName, "tin": tin, "address": address,
+			"id": id, "network_id": networkID, "network_name": networkName, "name": name, "slug": slug, "legal_name": legalName, "tin": tin, "address": address,
 			"timezone": timezone, "status": status,
 			"click_merchant_id": clickMerchantID, "click_service_id": clickServiceID,
 			"click_merchant_user_id": clickMerchantUserID, "click_secret_key": clickSecretKey,
@@ -5848,11 +6140,25 @@ func (s *Server) listPCsWithQR(ctx context.Context, clubID string) ([]map[string
 
 func (s *Server) listClubUsers(ctx context.Context, clubID string) ([]map[string]any, error) {
 	rows, err := s.db.Query(ctx, `
-		SELECT u.id, u.name, COALESCE(u.email, ''), COALESCE(u.phone, ''), ucr.role, ucr.status, ucr.created_at
-		FROM user_club_roles ucr
-		JOIN users u ON u.id = ucr.user_id
-		WHERE ucr.club_id = $1 AND ucr.status <> 'deleted'
-		ORDER BY ucr.role, u.name
+		WITH access AS (
+			SELECT ucr.user_id, ucr.role, ucr.status, ucr.created_at, 'club' AS scope,
+			       CASE ucr.role WHEN 'owner' THEN 0 WHEN 'admin' THEN 1 ELSE 2 END AS priority
+			FROM user_club_roles ucr
+			WHERE ucr.club_id = $1 AND ucr.status <> 'deleted'
+			UNION ALL
+			SELECT unr.user_id, 'owner', unr.status, unr.created_at, 'network', 0
+			FROM user_network_roles unr
+			JOIN clubs c ON c.network_id = unr.network_id
+			WHERE c.id = $1 AND unr.status <> 'deleted'
+		), preferred_access AS (
+			SELECT DISTINCT ON (user_id) user_id, role, status, created_at, scope
+			FROM access
+			ORDER BY user_id, priority
+		)
+		SELECT u.id, u.name, COALESCE(u.email, ''), COALESCE(u.phone, ''), pa.role, pa.status, pa.created_at, pa.scope
+		FROM preferred_access pa
+		JOIN users u ON u.id = pa.user_id
+		ORDER BY pa.role, u.name
 	`, clubID)
 	if err != nil {
 		return nil, err
@@ -5860,13 +6166,13 @@ func (s *Server) listClubUsers(ctx context.Context, clubID string) ([]map[string
 	defer rows.Close()
 	result := make([]map[string]any, 0)
 	for rows.Next() {
-		var id, name, email, phone, role, status string
+		var id, name, email, phone, role, status, scope string
 		var createdAt time.Time
-		if err := rows.Scan(&id, &name, &email, &phone, &role, &status, &createdAt); err != nil {
+		if err := rows.Scan(&id, &name, &email, &phone, &role, &status, &createdAt, &scope); err != nil {
 			return nil, err
 		}
 		result = append(result, map[string]any{
-			"id": id, "name": name, "email": email, "phone": phone, "role": role, "status": status, "created_at": createdAt,
+			"id": id, "name": name, "email": email, "phone": phone, "role": role, "status": status, "scope": scope, "created_at": createdAt,
 		})
 	}
 	return result, nil
