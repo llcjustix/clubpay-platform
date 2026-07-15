@@ -81,6 +81,9 @@ jobs:
           export DB_PASSWORD="${{ secrets.DB_PASSWORD }}"
           export DOCKER_USERNAME="${{ secrets.DOCKER_USERNAME }}"
 
+          export CORE_MODE="ws"
+          export CORE_TOKEN="${{ secrets.CORE_TOKEN }}"
+
           docker compose pull
           docker compose up -d --remove-orphans
           docker ps
