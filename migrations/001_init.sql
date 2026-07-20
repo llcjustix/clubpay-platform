@@ -318,6 +318,8 @@ ALTER TABLE vouchers ADD COLUMN IF NOT EXISTS delivery_status TEXT NOT NULL DEFA
 ALTER TABLE vouchers ADD COLUMN IF NOT EXISTS delivered_at TIMESTAMPTZ;
 ALTER TABLE vouchers ADD COLUMN IF NOT EXISTS public_code TEXT;
 ALTER TABLE vouchers ADD COLUMN IF NOT EXISTS seconds_left INT NOT NULL DEFAULT 0;
+ALTER TABLE vouchers ADD COLUMN IF NOT EXISTS recipient_consent_at TIMESTAMPTZ;
+ALTER TABLE vouchers ADD COLUMN IF NOT EXISTS recipient_consent_source TEXT;
 UPDATE vouchers SET seconds_left = minutes_left * 60 WHERE seconds_left <= 0;
 UPDATE game_access_grants g
 SET returned_voucher_id = g.voucher_id

@@ -899,8 +899,9 @@ function AdminPage({ auth, selectedClubID, currentPath, onClubChange, onLogout }
   const [cashPCID, setCashPCID] = useState('');
   const [cashTariffID, setCashTariffID] = useState('');
   const [cashAmount, setCashAmount] = useState('');
+  const [cashReason, setCashReason] = useState('cash_payment');
   const [endPhoneByGrant, setEndPhoneByGrant] = useState<Record<string, string>>({});
-  const [endSessionDraft, setEndSessionDraft] = useState<{ grant: Grant; phone: string; confirmWithoutPhone: boolean } | null>(null);
+  const [endSessionDraft, setEndSessionDraft] = useState<{ grant: Grant; phone: string; recipientConsent: boolean; confirmWithoutPhone: boolean } | null>(null);
   const [telegramPrompt, setTelegramPrompt] = useState<TelegramPrompt | null>(null);
   const [message, setMessage] = useState('');
   const [pcQuery, setPCQuery] = useState('');
@@ -978,7 +979,7 @@ function AdminPage({ auth, selectedClubID, currentPath, onClubChange, onLogout }
       body: JSON.stringify({
         pc_id: cashPCID,
         ...(!cashAmountUZS && cashTariffID ? { tariff_block_id: cashTariffID } : {}),
-        reason: 'cash',
+        reason: cashReason,
         ...(cashAmountUZS ? { amount_uzs: cashAmountUZS } : {}),
       }),
     });
@@ -995,11 +996,11 @@ function AdminPage({ auth, selectedClubID, currentPath, onClubChange, onLogout }
     refresh();
   }
 
-  async function endGrant(grant: Grant, phone = '') {
+  async function endGrant(grant: Grant, phone = '', recipientConsent = false) {
     setTelegramPrompt(null);
     const result = await api<{ voucher?: { code: string; minutes_left: number; seconds_left?: number }; voucher_delivery?: VoucherDelivery }>(`/api/admin/grants/${grant.id}/end`, {
       method: 'POST',
-      body: JSON.stringify({ reason: 'admin_request', recipient_phone: phone }),
+      body: JSON.stringify({ reason: 'admin_request', recipient_phone: phone, recipient_consent: recipientConsent }),
     });
     if (result.voucher_delivery?.telegram_link) {
       setTelegramPrompt({
@@ -1024,7 +1025,7 @@ function AdminPage({ auth, selectedClubID, currentPath, onClubChange, onLogout }
   }
 
   function openEndSession(grant: Grant) {
-    setEndSessionDraft({ grant, phone: endPhoneByGrant[grant.id] || '', confirmWithoutPhone: false });
+    setEndSessionDraft({ grant, phone: endPhoneByGrant[grant.id] || '', recipientConsent: false, confirmWithoutPhone: false });
   }
 
   async function submitEndSessionDraft() {
@@ -1034,7 +1035,8 @@ function AdminPage({ auth, selectedClubID, currentPath, onClubChange, onLogout }
       setEndSessionDraft({ ...endSessionDraft, confirmWithoutPhone: true });
       return;
     }
-    await endGrant(endSessionDraft.grant, phone);
+    if (phone && !endSessionDraft.recipientConsent) return;
+    await endGrant(endSessionDraft.grant, phone, endSessionDraft.recipientConsent);
   }
 
   async function syncOrder(order: Order) {
@@ -1112,6 +1114,15 @@ function AdminPage({ auth, selectedClubID, currentPath, onClubChange, onLogout }
             placeholder={selectedCashZone ? `1 час: ${formatUZS(selectedCashZone.hourly_price_uzs)}` : 'Например: 20 000'}
             inputMode="numeric"
           />
+        </label>
+        <label>
+          Причина наличной операции
+          <select value={cashReason} onChange={(event) => setCashReason(event.target.value)}>
+            <option value="cash_payment">Оплата наличными</option>
+            <option value="provider_unavailable">Платёжный провайдер недоступен</option>
+            <option value="internet_unavailable">Нет интернета</option>
+            <option value="terminal_fallback">Запасной сценарий менеджера</option>
+          </select>
         </label>
       </div>
       <Button full icon={<Play size={16} />} onClick={startCashSession} disabled={!cashPCID || (!cashTariffID && !cashAmountUZS)}>
@@ -1298,9 +1309,10 @@ function AdminPage({ auth, selectedClubID, currentPath, onClubChange, onLogout }
         <EndSessionModal
           draft={endSessionDraft}
           onPhoneChange={(phone) => {
-            setEndSessionDraft({ ...endSessionDraft, phone, confirmWithoutPhone: false });
+            setEndSessionDraft({ ...endSessionDraft, phone, recipientConsent: false, confirmWithoutPhone: false });
             setEndPhoneByGrant((current) => ({ ...current, [endSessionDraft.grant.id]: phone }));
           }}
+          onRecipientConsentChange={(recipientConsent) => setEndSessionDraft({ ...endSessionDraft, recipientConsent })}
           onClose={() => setEndSessionDraft(null)}
           onSubmit={submitEndSessionDraft}
         />
@@ -2404,11 +2416,13 @@ function QRCodeImage({ value, size = 160, label }: { value: string; size?: numbe
 function EndSessionModal({
   draft,
   onPhoneChange,
+  onRecipientConsentChange,
   onClose,
   onSubmit,
 }: {
-  draft: { grant: Grant; phone: string; confirmWithoutPhone: boolean };
+  draft: { grant: Grant; phone: string; recipientConsent: boolean; confirmWithoutPhone: boolean };
   onPhoneChange: (phone: string) => void;
+  onRecipientConsentChange: (value: boolean) => void;
   onClose: () => void;
   onSubmit: () => void | Promise<void>;
 }) {
@@ -2439,6 +2453,16 @@ function EndSessionModal({
             placeholder="+998 00 000 00 00"
           />
         </label>
+        {draft.phone.trim() && (
+          <label className="consent-control">
+            <input
+              type="checkbox"
+              checked={draft.recipientConsent}
+              onChange={(event) => onRecipientConsentChange(event.target.checked)}
+            />
+            <span>Клиент дал согласие на хранение номера и получение ваучера в Telegram.</span>
+          </label>
+        )}
         <div className={`end-session-warning ${draft.confirmWithoutPhone ? 'active' : ''}`}>
           {draft.confirmWithoutPhone
             ? 'Телефон не указан. Ваучер будет создан, но клиенту нужно будет получить код у администратора.'
@@ -2446,7 +2470,7 @@ function EndSessionModal({
         </div>
         <div className="telegram-modal-actions horizontal">
           <Button type="button" variant="ghost" onClick={onClose}>Отменить</Button>
-          <Button type="button" variant={draft.confirmWithoutPhone ? 'danger' : 'secondary'} icon={<Power size={16} />} onClick={onSubmit}>
+          <Button type="button" variant={draft.confirmWithoutPhone ? 'danger' : 'secondary'} icon={<Power size={16} />} onClick={onSubmit} disabled={Boolean(draft.phone.trim() && !draft.recipientConsent)}>
             {draft.phone.trim() ? 'Завершить и отправить' : draft.confirmWithoutPhone ? 'Да, завершить без телефона' : 'Завершить'}
           </Button>
         </div>
@@ -2681,6 +2705,8 @@ function localizeError(message: string) {
     'voucher not found or expired': 'Ваучер не найден или истёк',
     'QR token not found': 'QR-код не найден',
     'voucher belongs to another club': 'Ваучер относится к другому клубу',
+    'recipient consent is required': 'Нужно согласие клиента на хранение номера и отправку ваучера в Telegram.',
+    'valid cash reason is required': 'Выберите причину наличной операции.',
   };
   return dictionary[message] || message;
 }

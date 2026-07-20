@@ -1917,6 +1917,19 @@ textarea:focus {
   font-family: var(--font-mono);
 }
 
+.consent-control {
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
+  color: var(--text-secondary);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.consent-control input {
+  margin: 2px 0 0;
+}
+
 .end-session-warning {
   border: 1px solid var(--divider);
   border-radius: var(--radius-control);

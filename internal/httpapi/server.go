@@ -3174,7 +3174,7 @@ func (s *Server) edgeSnapshotData(ctx context.Context, clubID string, includeTec
 	vouchers, err := s.queryMaps(ctx, `
 		SELECT id, club_id, original_payment_order_id, minutes_left, seconds_left, code_hash, status, expires_at,
 		       redeemed_grant_id, redeemed_at, recipient_phone, delivery_channel, delivery_status,
-		       delivered_at, public_code, created_at
+		       delivered_at, public_code, recipient_consent_at, recipient_consent_source, created_at
 		FROM vouchers
 		WHERE club_id = $1
 		ORDER BY created_at
@@ -3410,12 +3410,12 @@ func (s *Server) applyEdgeSnapshotData(ctx context.Context, clubID string, paylo
 	}
 	if err := execJSON(ctx, tx, `
 		WITH input AS (
-			SELECT * FROM jsonb_to_recordset($1::jsonb) AS x(id uuid, club_id uuid, original_payment_order_id uuid, minutes_left int, seconds_left int, code_hash text, status text, expires_at timestamptz, redeemed_grant_id uuid, redeemed_at timestamptz, recipient_phone text, delivery_channel text, delivery_status text, delivered_at timestamptz, public_code text, created_at timestamptz)
+			SELECT * FROM jsonb_to_recordset($1::jsonb) AS x(id uuid, club_id uuid, original_payment_order_id uuid, minutes_left int, seconds_left int, code_hash text, status text, expires_at timestamptz, redeemed_grant_id uuid, redeemed_at timestamptz, recipient_phone text, delivery_channel text, delivery_status text, delivered_at timestamptz, public_code text, recipient_consent_at timestamptz, recipient_consent_source text, created_at timestamptz)
 		)
-		INSERT INTO vouchers (id, club_id, original_payment_order_id, minutes_left, seconds_left, code_hash, status, expires_at, redeemed_grant_id, redeemed_at, recipient_phone, delivery_channel, delivery_status, delivered_at, public_code, created_at)
-		SELECT id, club_id, original_payment_order_id, minutes_left, COALESCE(NULLIF(seconds_left, 0), minutes_left * 60), code_hash, COALESCE(NULLIF(status, ''), 'active'), expires_at, redeemed_grant_id, redeemed_at, NULLIF(recipient_phone, ''), NULLIF(delivery_channel, ''), COALESCE(NULLIF(delivery_status, ''), 'not_requested'), delivered_at, NULLIF(public_code, ''), COALESCE(created_at, now())
+		INSERT INTO vouchers (id, club_id, original_payment_order_id, minutes_left, seconds_left, code_hash, status, expires_at, redeemed_grant_id, redeemed_at, recipient_phone, delivery_channel, delivery_status, delivered_at, public_code, recipient_consent_at, recipient_consent_source, created_at)
+		SELECT id, club_id, original_payment_order_id, minutes_left, COALESCE(NULLIF(seconds_left, 0), minutes_left * 60), code_hash, COALESCE(NULLIF(status, ''), 'active'), expires_at, redeemed_grant_id, redeemed_at, NULLIF(recipient_phone, ''), NULLIF(delivery_channel, ''), COALESCE(NULLIF(delivery_status, ''), 'not_requested'), delivered_at, NULLIF(public_code, ''), recipient_consent_at, NULLIF(recipient_consent_source, ''), COALESCE(created_at, now())
 		FROM input
-		ON CONFLICT (code_hash) DO UPDATE SET minutes_left = EXCLUDED.minutes_left, seconds_left = EXCLUDED.seconds_left, status = EXCLUDED.status, redeemed_grant_id = EXCLUDED.redeemed_grant_id, redeemed_at = EXCLUDED.redeemed_at, recipient_phone = EXCLUDED.recipient_phone, delivery_channel = EXCLUDED.delivery_channel, delivery_status = EXCLUDED.delivery_status, delivered_at = EXCLUDED.delivered_at, public_code = EXCLUDED.public_code
+		ON CONFLICT (code_hash) DO UPDATE SET minutes_left = EXCLUDED.minutes_left, seconds_left = EXCLUDED.seconds_left, status = EXCLUDED.status, redeemed_grant_id = EXCLUDED.redeemed_grant_id, redeemed_at = EXCLUDED.redeemed_at, recipient_phone = EXCLUDED.recipient_phone, delivery_channel = EXCLUDED.delivery_channel, delivery_status = EXCLUDED.delivery_status, delivered_at = EXCLUDED.delivered_at, public_code = EXCLUDED.public_code, recipient_consent_at = EXCLUDED.recipient_consent_at, recipient_consent_source = EXCLUDED.recipient_consent_source
 	`, payload["vouchers"]); err != nil {
 		return err
 	}
@@ -4182,6 +4182,10 @@ func (s *Server) handleAdminEndGrant(w http.ResponseWriter, r *http.Request) {
 	if _, ok := s.requireClubRole(w, r, auth, clubID, "owner", "manager", "admin"); !ok {
 		return
 	}
+	if strings.TrimSpace(req.RecipientPhone) != "" && !req.RecipientConsent {
+		writeError(w, http.StatusBadRequest, "recipient consent is required")
+		return
+	}
 	if coreSessionID != nil && *coreSessionID != "" {
 		_, _ = s.core.EndSession(r.Context(), *coreSessionID, core.EndSessionCommand{
 			RequestID:    "end_" + grantID + "_" + randomHex(4),
@@ -4206,7 +4210,7 @@ func (s *Server) handleAdminEndGrant(w http.ResponseWriter, r *http.Request) {
 		if voucher, ok := result["voucher"].(map[string]any); ok {
 			code, _ := voucher["code"].(string)
 			seconds, _ := voucher["seconds_left"].(int)
-			delivery, _ := s.attachVoucherRecipientAndSend(r.Context(), fmt.Sprint(voucher["id"]), code, seconds, req.RecipientPhone)
+			delivery, _ := s.attachVoucherRecipientAndSend(r.Context(), fmt.Sprint(voucher["id"]), code, seconds, req.RecipientPhone, "manager_panel")
 			result["voucher_delivery"] = delivery
 		}
 	}
@@ -4229,6 +4233,11 @@ func (s *Server) handleCashSession(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.AmountUZS < 0 {
 		writeError(w, http.StatusBadRequest, "amount_uzs must be positive")
+		return
+	}
+	reason := strings.TrimSpace(req.Reason)
+	if !isCashReason(reason) {
+		writeError(w, http.StatusBadRequest, "valid cash reason is required")
 		return
 	}
 
@@ -4299,10 +4308,10 @@ func (s *Server) handleCashSession(w http.ResponseWriter, r *http.Request) {
 
 	var cashID string
 	err = tx.QueryRow(ctx, `
-		INSERT INTO cash_payments (club_id, pc_ref_id, tariff_block_id, amount_tiyin, duration_minutes, duration_seconds, reason, fiscal_reference)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+		INSERT INTO cash_payments (club_id, admin_user_id, pc_ref_id, tariff_block_id, amount_tiyin, duration_minutes, duration_seconds, reason, fiscal_reference)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
 		RETURNING id
-	`, clubID, req.PCID, tariffIDArg, amount, duration, durationSeconds, defaultString(req.Reason, "cash"), req.FiscalReference).Scan(&cashID)
+	`, clubID, auth.UserID, req.PCID, tariffIDArg, amount, duration, durationSeconds, reason, req.FiscalReference).Scan(&cashID)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -4313,6 +4322,7 @@ func (s *Server) handleCashSession(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusInternalServerError, err.Error())
 			return
 		}
+		s.logCashPayment(ctx, clubID, auth.UserID, cashID, req.PCID, amount, durationSeconds, reason)
 		if err := s.extendGrantSession(ctx, extensionGrant.ID, extensionGrant.CoreSessionID, clubID, req.PCID, externalPCID, durationSeconds, "cash", "", ""); err != nil {
 			writeError(w, http.StatusInternalServerError, err.Error())
 			return
@@ -4350,6 +4360,7 @@ func (s *Server) handleCashSession(w http.ResponseWriter, r *http.Request) {
 			WHERE id = $2
 		`, err.Error(), grantID)
 		_ = tx.Commit(ctx)
+		s.logCashPayment(ctx, clubID, auth.UserID, cashID, req.PCID, amount, durationSeconds, reason)
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
@@ -4385,6 +4396,7 @@ func (s *Server) handleCashSession(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	s.logCashPayment(ctx, clubID, auth.UserID, cashID, req.PCID, amount, durationSeconds, reason)
 	writeJSON(w, http.StatusCreated, map[string]any{"cash_payment_id": cashID, "grant_id": grantID, "core_session_id": coreSessionID, "duration_seconds": durationSeconds})
 }
 
@@ -4454,6 +4466,22 @@ func (s *Server) handleOwnerSummary(w http.ResponseWriter, r *http.Request) {
 		"cash_sessions":             summary.CashSessions,
 		"active_grants":             summary.ActiveGrants,
 	})
+}
+
+func (s *Server) logCashPayment(ctx context.Context, clubID, actorID, cashID, pcID string, amountTiyin int64, durationSeconds int, reason string) {
+	metadata, err := json.Marshal(map[string]any{
+		"amount_tiyin":     amountTiyin,
+		"duration_seconds": durationSeconds,
+		"reason":           reason,
+		"pc_id":            pcID,
+	})
+	if err != nil {
+		return
+	}
+	_, _ = s.db.Exec(ctx, `
+		INSERT INTO audit_logs (club_id, actor_user_id, action, entity_type, entity_id, metadata)
+		VALUES ($1, $2, 'cash_session_started', 'cash_payment', $3, $4)
+	`, clubID, actorID, cashID, metadata)
 }
 
 func (s *Server) handleCreateVoucher(w http.ResponseWriter, r *http.Request) {
@@ -4844,19 +4872,22 @@ func (s *Server) finishGrant(ctx context.Context, grantID, reason string, remain
 	return result, nil
 }
 
-func (s *Server) attachVoucherRecipientAndSend(ctx context.Context, voucherID, code string, seconds int, phone string) (map[string]any, error) {
+func (s *Server) attachVoucherRecipientAndSend(ctx context.Context, voucherID, code string, seconds int, phone, consentSource string) (map[string]any, error) {
 	normalizedPhone := normalizePhone(phone)
 	if voucherID == "" || normalizedPhone == "" {
 		return map[string]any{"status": "not_requested"}, nil
 	}
+	consentSource = defaultString(strings.TrimSpace(consentSource), "manager_panel")
 	status := "telegram_waiting_for_user"
 	_, err := s.db.Exec(ctx, `
 		UPDATE vouchers
 		SET recipient_phone = $2,
 		    delivery_channel = 'telegram',
-		    delivery_status = $3
+		    delivery_status = $3,
+		    recipient_consent_at = now(),
+		    recipient_consent_source = $4
 		WHERE id = $1
-	`, voucherID, normalizedPhone, status)
+	`, voucherID, normalizedPhone, status, consentSource)
 	if err != nil {
 		return nil, err
 	}
@@ -5519,6 +5550,7 @@ type endGrantRequest struct {
 	RemainingMinutes int    `json:"remaining_minutes"`
 	RemainingSeconds int    `json:"remaining_seconds"`
 	RecipientPhone   string `json:"recipient_phone"`
+	RecipientConsent bool   `json:"recipient_consent"`
 }
 
 type createVoucherRequest struct {
@@ -6621,6 +6653,15 @@ func canUseQRForSession(status, qrType string) bool {
 func isKnownPCStatus(status string) bool {
 	switch status {
 	case "available", "occupied", "sleeping", "offline", "maintenance", "blocked", "unknown":
+		return true
+	default:
+		return false
+	}
+}
+
+func isCashReason(reason string) bool {
+	switch reason {
+	case "cash_payment", "provider_unavailable", "internet_unavailable", "terminal_fallback":
 		return true
 	default:
 		return false
