@@ -1,6 +1,9 @@
 package httpapi
 
-import "testing"
+import (
+	"testing"
+	"time"
+)
 
 func TestCanUseQRForSession(t *testing.T) {
 	tests := []struct {
@@ -20,6 +23,34 @@ func TestCanUseQRForSession(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			if got := canUseQRForSession(tt.status, tt.qrType); got != tt.want {
 				t.Fatalf("canUseQRForSession(%q, %q) = %v, want %v", tt.status, tt.qrType, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestSessionExtendQRActive(t *testing.T) {
+	now := time.Date(2026, time.July, 27, 12, 0, 0, 0, time.UTC)
+	validUntil := now.Add(time.Minute)
+	expiredAt := now.Add(-time.Second)
+
+	tests := []struct {
+		name          string
+		boundGrantID  string
+		activeGrantID string
+		expiresAt     *time.Time
+		want          bool
+	}{
+		{name: "active session QR", boundGrantID: "grant-1", activeGrantID: "grant-1", expiresAt: &validUntil, want: true},
+		{name: "QR belongs to another session", boundGrantID: "grant-1", activeGrantID: "grant-2", expiresAt: &validUntil, want: false},
+		{name: "QR expired", boundGrantID: "grant-1", activeGrantID: "grant-1", expiresAt: &expiredAt, want: false},
+		{name: "session has ended", boundGrantID: "grant-1", expiresAt: &validUntil, want: false},
+		{name: "QR has no bound session", activeGrantID: "grant-1", expiresAt: &validUntil, want: false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := sessionExtendQRActive(tt.boundGrantID, tt.activeGrantID, tt.expiresAt, now); got != tt.want {
+				t.Fatalf("sessionExtendQRActive() = %v, want %v", got, tt.want)
 			}
 		})
 	}
