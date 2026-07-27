@@ -1317,7 +1317,8 @@ func (s *Server) handleQR(w http.ResponseWriter, r *http.Request) {
 	var pc qrPC
 	var qrType, zoneStatus string
 	err := s.db.QueryRow(ctx, `
-			SELECT q.type, c.id, c.name, p.id, p.external_pc_id, p.number, p.label, p.status_cache, z.id, z.name, z.hourly_price_tiyin, z.status,
+		SELECT q.type, COALESCE(q.session_grant_id::text, ''), q.expires_at,
+		       c.id, c.name, p.id, p.external_pc_id, p.number, p.label, p.status_cache, z.id, z.name, z.hourly_price_tiyin, z.status,
 			       COALESCE(c.click_merchant_id, ''), COALESCE(c.click_service_id, ''), COALESCE(c.click_merchant_user_id, ''), COALESCE(c.click_secret_key, ''),
 			       COALESCE(c.payme_merchant_id, ''), COALESCE(c.payme_secret_key, '')
 			FROM qr_codes q
@@ -1326,8 +1327,15 @@ func (s *Server) handleQR(w http.ResponseWriter, r *http.Request) {
 		JOIN zones z ON z.id = p.zone_id
 			WHERE q.public_token = $1 AND q.status = 'active' AND q.type IN ('static_pc', 'session_extend')
 			  AND c.status = 'active' AND z.status <> 'deleted' AND p.status_cache <> 'deleted'
+			  AND (q.type <> 'session_extend' OR (
+			    q.session_grant_id IS NOT NULL AND q.expires_at > now() AND EXISTS (
+			      SELECT 1 FROM game_access_grants g
+			      WHERE g.id = q.session_grant_id AND g.pc_ref_id = p.id AND g.status = 'accepted'
+			        AND COALESCE(g.planned_ends_at, g.accepted_at + make_interval(secs => g.duration_seconds), g.accepted_at + make_interval(mins => g.duration_minutes)) > now()
+			    )
+			  ))
 		`, token).Scan(
-		&qrType,
+		&qrType, &pc.SessionGrantID, &pc.SessionQRExpiresAt,
 		&pc.ClubID, &pc.ClubName, &pc.PCID, &pc.ExternalPCID, &pc.Number, &pc.Label, &pc.Status, &pc.ZoneID, &pc.ZoneName, &pc.HourlyPriceTiyin,
 		&zoneStatus, &pc.ClickMerchantID, &pc.ClickServiceID, &pc.ClickMerchantUserID, &pc.ClickSecretKey, &pc.PaymeMerchantID, &pc.PaymeSecretKey,
 	)
@@ -1343,6 +1351,17 @@ func (s *Server) handleQR(w http.ResponseWriter, r *http.Request) {
 		pc.Status = "maintenance"
 	} else {
 		pc.Status = s.syncCorePCStatus(ctx, pc.PCID, pc.ExternalPCID, pc.Status)
+	}
+	if qrType == "session_extend" {
+		activeGrant, ok, err := activeGrantForPC(ctx, s.db, pc.PCID)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		if !ok || !sessionExtendQRActive(pc.SessionGrantID, activeGrant.ID, pc.SessionQRExpiresAt, time.Now()) {
+			writeError(w, http.StatusNotFound, "session QR not found or expired")
+			return
+		}
 	}
 	var activeSession map[string]any
 	if pc.Status == "occupied" {
@@ -1474,6 +1493,13 @@ func (s *Server) handleCreateCheckout(w http.ResponseWriter, r *http.Request) {
 		JOIN zones z ON z.id = p.zone_id
 		WHERE q.public_token = $1 AND q.status = 'active'
 			  AND c.status = 'active' AND z.status = 'active' AND p.status_cache <> 'deleted'
+			  AND (q.type <> 'session_extend' OR (
+			    q.session_grant_id IS NOT NULL AND q.expires_at > now() AND EXISTS (
+			      SELECT 1 FROM game_access_grants g
+			      WHERE g.id = q.session_grant_id AND g.pc_ref_id = p.id AND g.status = 'accepted'
+			        AND COALESCE(g.planned_ends_at, g.accepted_at + make_interval(secs => g.duration_seconds), g.accepted_at + make_interval(mins => g.duration_minutes)) > now()
+			    )
+			  ))
 		`, req.QRToken).Scan(
 		&orderSeed.QRType,
 		&orderSeed.ClubID, &orderSeed.ClubName, &orderSeed.PCID, &orderSeed.ExternalPCID, &orderSeed.PCStatus,
@@ -3654,6 +3680,17 @@ func (s *Server) applyPaymentSuccess(ctx context.Context, success paymentSuccess
 		return "", err
 	}
 
+	extendExpiry := time.Now().UTC().Add(time.Duration(order.DurationSeconds) * time.Second)
+	extendURL, err := s.createSessionExtendURL(ctx, order.ClubID, order.PCID, grantID, extendExpiry)
+	if err != nil {
+		_, _ = s.db.Exec(ctx, `
+			UPDATE game_access_grants
+			SET status = 'start_failed', last_error = $1
+			WHERE id = $2
+		`, err.Error(), grantID)
+		return "", err
+	}
+
 	startResult, err := s.core.StartSession(ctx, core.StartSessionCommand{
 		RequestID:       "start_" + grantID,
 		GrantID:         grantID,
@@ -3665,10 +3702,11 @@ func (s *Server) applyPaymentSuccess(ctx context.Context, success paymentSuccess
 		Source:          "online_payment",
 		PaymentOrderID:  order.ID,
 		InvoiceID:       success.InvoiceID,
-		ExtendURL:       s.cfg.FrontendBaseURL + "/qr/" + order.ExternalPCID,
+		ExtendURL:       extendURL,
 		CreatedAt:       time.Now().UTC().Format(time.RFC3339),
 	})
 	if err != nil {
+		s.deactivateSessionExtendQR(ctx, grantID)
 		_, _ = s.db.Exec(ctx, `
 			UPDATE game_access_grants
 			SET status = 'start_failed', last_error = $1
@@ -3688,7 +3726,6 @@ func (s *Server) applyPaymentSuccess(ctx context.Context, success paymentSuccess
 		endsAt := time.Now().UTC().Add(time.Duration(order.DurationSeconds) * time.Second)
 		plannedEndsAt = &endsAt
 	}
-
 	_, err = s.db.Exec(ctx, `
 		UPDATE game_access_grants
 		SET status = 'accepted', core_session_id = $1, accepted_at = now(), planned_ends_at = $2, last_error = NULL
@@ -3697,6 +3734,7 @@ func (s *Server) applyPaymentSuccess(ctx context.Context, success paymentSuccess
 	if err != nil {
 		return "", err
 	}
+	s.updateSessionExtendQRExpiry(ctx, grantID, *plannedEndsAt)
 	_, err = s.db.Exec(ctx, `
 		UPDATE pc_refs
 		SET status_cache = 'occupied'
@@ -3757,6 +3795,37 @@ func grantByID(ctx context.Context, q queryRower, grantID string) (activeGrantRo
 	return grant, true, nil
 }
 
+// createSessionExtendURL creates a short-lived QR token that can only extend
+// the grant that started the current PC session. The Agent displays this URL as
+// a QR code; it must never derive an extension link from the static PC QR.
+func (s *Server) createSessionExtendURL(ctx context.Context, clubID, pcID, grantID string, expiresAt time.Time) (string, error) {
+	token := "se_" + randomHex(16)
+	_, err := s.db.Exec(ctx, `
+		INSERT INTO qr_codes (club_id, pc_ref_id, public_token, type, status, session_grant_id, expires_at)
+		VALUES ($1, $2, $3, 'session_extend', 'active', $4, $5)
+	`, clubID, pcID, token, grantID, expiresAt.UTC())
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimRight(s.cfg.FrontendBaseURL, "/") + "/qr/" + token, nil
+}
+
+func (s *Server) updateSessionExtendQRExpiry(ctx context.Context, grantID string, expiresAt time.Time) {
+	_, _ = s.db.Exec(ctx, `
+		UPDATE qr_codes
+		SET expires_at = $2
+		WHERE session_grant_id = $1 AND type = 'session_extend' AND status = 'active'
+	`, grantID, expiresAt.UTC())
+}
+
+func (s *Server) deactivateSessionExtendQR(ctx context.Context, grantID string) {
+	_, _ = s.db.Exec(ctx, `
+		UPDATE qr_codes
+		SET status = 'inactive'
+		WHERE session_grant_id = $1 AND type = 'session_extend' AND status = 'active'
+	`, grantID)
+}
+
 func (s *Server) extendGrantSession(ctx context.Context, grantID, coreSessionID, clubID, pcID, externalPCID string, addSeconds int, source, paymentOrderID, invoiceID string) error {
 	if addSeconds <= 0 {
 		return fmt.Errorf("extension duration is required")
@@ -3798,6 +3867,18 @@ func (s *Server) extendGrantSession(ctx context.Context, grantID, coreSessionID,
 		return err
 	}
 	_, err = s.db.Exec(ctx, `UPDATE pc_refs SET status_cache = 'occupied' WHERE id = $1`, pcID)
+	if err != nil {
+		return err
+	}
+	_, err = s.db.Exec(ctx, `
+		UPDATE qr_codes q
+		SET expires_at = COALESCE(g.planned_ends_at, q.expires_at)
+		FROM game_access_grants g
+		WHERE q.session_grant_id = g.id
+		  AND g.id = $1
+		  AND q.type = 'session_extend'
+		  AND q.status = 'active'
+	`, grantID)
 	return err
 }
 
@@ -4342,6 +4423,18 @@ func (s *Server) handleCashSession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	extendToken := "se_" + randomHex(16)
+	extendExpiry := time.Now().UTC().Add(time.Duration(durationSeconds) * time.Second)
+	_, err = tx.Exec(ctx, `
+		INSERT INTO qr_codes (club_id, pc_ref_id, public_token, type, status, session_grant_id, expires_at)
+		VALUES ($1, $2, $3, 'session_extend', 'active', $4, $5)
+	`, clubID, req.PCID, extendToken, grantID, extendExpiry)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	extendURL := strings.TrimRight(s.cfg.FrontendBaseURL, "/") + "/qr/" + extendToken
+
 	startResult, err := s.core.StartSession(ctx, core.StartSessionCommand{
 		RequestID:       "start_" + grantID,
 		GrantID:         grantID,
@@ -4351,9 +4444,11 @@ func (s *Server) handleCashSession(w http.ResponseWriter, r *http.Request) {
 		DurationSeconds: durationSeconds,
 		DurationMinutes: duration,
 		Source:          "cash",
+		ExtendURL:       extendURL,
 		CreatedAt:       time.Now().UTC().Format(time.RFC3339),
 	})
 	if err != nil {
+		_, _ = tx.Exec(ctx, `UPDATE qr_codes SET status = 'inactive' WHERE session_grant_id = $1 AND type = 'session_extend'`, grantID)
 		_, _ = tx.Exec(ctx, `
 			UPDATE game_access_grants
 			SET status = 'start_failed', last_error = $1
@@ -4373,6 +4468,7 @@ func (s *Server) handleCashSession(w http.ResponseWriter, r *http.Request) {
 		endsAt := time.Now().UTC().Add(time.Duration(durationSeconds) * time.Second)
 		plannedEndsAt = &endsAt
 	}
+	_, _ = tx.Exec(ctx, `UPDATE qr_codes SET expires_at = $2 WHERE session_grant_id = $1 AND type = 'session_extend' AND status = 'active'`, grantID, plannedEndsAt.UTC())
 
 	_, err = tx.Exec(ctx, `
 		UPDATE game_access_grants
@@ -4595,6 +4691,13 @@ func (s *Server) handleCheckVoucher(w http.ResponseWriter, r *http.Request) {
 			JOIN pc_refs p ON p.id = q.pc_ref_id
 			JOIN zones z ON z.id = p.zone_id
 			WHERE q.public_token = $1 AND q.status = 'active' AND p.status_cache <> 'deleted' AND z.status <> 'deleted'
+			  AND (q.type <> 'session_extend' OR (
+			    q.session_grant_id IS NOT NULL AND q.expires_at > now() AND EXISTS (
+			      SELECT 1 FROM game_access_grants g
+			      WHERE g.id = q.session_grant_id AND g.pc_ref_id = p.id AND g.status = 'accepted'
+			        AND COALESCE(g.planned_ends_at, g.accepted_at + make_interval(secs => g.duration_seconds), g.accepted_at + make_interval(mins => g.duration_minutes)) > now()
+			    )
+			  ))
 			`, req.QRToken).Scan(&pcID, &pcClubID, &qrType, &pcStatus, &zoneID, &zoneName)
 		if errors.Is(err, pgx.ErrNoRows) {
 			writeError(w, http.StatusNotFound, "QR token not found")
@@ -4679,6 +4782,13 @@ func (s *Server) redeemVoucherToPC(ctx context.Context, req redeemVoucherRequest
 			JOIN pc_refs p ON p.id = q.pc_ref_id
 		JOIN zones z ON z.id = p.zone_id
 		WHERE q.public_token = $1 AND q.status = 'active' AND z.status <> 'deleted' AND p.status_cache <> 'deleted'
+		  AND (q.type <> 'session_extend' OR (
+			q.session_grant_id IS NOT NULL AND q.expires_at > now() AND EXISTS (
+			  SELECT 1 FROM game_access_grants g
+			  WHERE g.id = q.session_grant_id AND g.pc_ref_id = p.id AND g.status = 'accepted'
+			    AND COALESCE(g.planned_ends_at, g.accepted_at + make_interval(secs => g.duration_seconds), g.accepted_at + make_interval(mins => g.duration_minutes)) > now()
+			)
+		  ))
 		`, req.QRToken).Scan(&pcID, &pcClubID, &externalPCID, &qrType, &pcStatus)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, fmt.Errorf("QR token not found")
@@ -4751,6 +4861,13 @@ func (s *Server) redeemVoucherToPC(ctx context.Context, req redeemVoucherRequest
 		return nil, err
 	}
 
+	extendExpiry := time.Now().UTC().Add(time.Duration(seconds) * time.Second)
+	extendURL, err := s.createSessionExtendURL(ctx, voucherClubID, pcID, grantID, extendExpiry)
+	if err != nil {
+		_, _ = s.db.Exec(ctx, `UPDATE game_access_grants SET status = 'start_failed', last_error = $1 WHERE id = $2`, err.Error(), grantID)
+		return nil, err
+	}
+
 	startResult, err := s.core.StartSession(ctx, core.StartSessionCommand{
 		RequestID:       "start_" + grantID,
 		GrantID:         grantID,
@@ -4760,9 +4877,11 @@ func (s *Server) redeemVoucherToPC(ctx context.Context, req redeemVoucherRequest
 		DurationSeconds: seconds,
 		DurationMinutes: minutes,
 		Source:          "voucher",
+		ExtendURL:       extendURL,
 		CreatedAt:       time.Now().UTC().Format(time.RFC3339),
 	})
 	if err != nil {
+		s.deactivateSessionExtendQR(ctx, grantID)
 		_, _ = s.db.Exec(ctx, `
 			UPDATE game_access_grants
 			SET status = 'start_failed', last_error = $1
@@ -4787,6 +4906,7 @@ func (s *Server) redeemVoucherToPC(ctx context.Context, req redeemVoucherRequest
 	if err != nil {
 		return nil, err
 	}
+	s.updateSessionExtendQRExpiry(ctx, grantID, *plannedEndsAt)
 	_, err = s.db.Exec(ctx, `UPDATE pc_refs SET status_cache = 'occupied' WHERE id = $1`, pcID)
 	if err != nil {
 		return nil, err
@@ -4839,6 +4959,14 @@ func (s *Server) finishGrant(ctx context.Context, grantID, reason string, remain
 		SET status_cache = 'available'
 		WHERE id = $1
 	`, pcID)
+	if err != nil {
+		return nil, err
+	}
+	_, err = tx.Exec(ctx, `
+		UPDATE qr_codes
+		SET status = 'inactive'
+		WHERE session_grant_id = $1 AND type = 'session_extend' AND status = 'active'
+	`, grantID)
 	if err != nil {
 		return nil, err
 	}
@@ -5304,6 +5432,8 @@ type qrPC struct {
 	ClubID, ClubName, PCID, ExternalPCID, Label, Status, ZoneID, ZoneName string
 	ClickMerchantID, ClickServiceID, ClickMerchantUserID, ClickSecretKey  string
 	PaymeMerchantID, PaymeSecretKey                                       string
+	SessionGrantID                                                        string
+	SessionQRExpiresAt                                                    *time.Time
 	Number                                                                int
 	HourlyPriceTiyin                                                      int64
 }
@@ -6650,6 +6780,10 @@ func canUseQRForSession(status, qrType string) bool {
 	return isPayablePCStatus(status) || (status == "occupied" && qrType == "session_extend")
 }
 
+func sessionExtendQRActive(boundGrantID, activeGrantID string, expiresAt *time.Time, now time.Time) bool {
+	return boundGrantID != "" && boundGrantID == activeGrantID && expiresAt != nil && expiresAt.After(now)
+}
+
 func isKnownPCStatus(status string) bool {
 	switch status {
 	case "available", "occupied", "sleeping", "offline", "maintenance", "blocked", "unknown":
@@ -7066,7 +7200,13 @@ func (s *Server) expireElapsedGrants(ctx context.Context) error {
 				OR (planned_ends_at IS NULL AND accepted_at IS NOT NULL AND accepted_at + make_interval(secs => duration_seconds) <= now())
 				OR (planned_ends_at IS NULL AND accepted_at IS NOT NULL AND duration_seconds <= 0 AND accepted_at + make_interval(mins => duration_minutes) <= now())
 			  )
-			RETURNING pc_ref_id
+			RETURNING id, pc_ref_id
+		), expired_qrs AS (
+			UPDATE qr_codes
+			SET status = 'inactive'
+			WHERE type = 'session_extend'
+			  AND status = 'active'
+			  AND session_grant_id IN (SELECT id FROM expired)
 		)
 		UPDATE pc_refs p
 		SET status_cache = 'available'
