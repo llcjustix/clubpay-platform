@@ -2692,9 +2692,22 @@ func (s *Server) processCoreEvent(ctx context.Context, req coreEventRequest) (ma
 			_, err = s.db.Exec(ctx, `UPDATE pc_refs SET status_cache = 'occupied' WHERE external_pc_id = $1`, req.ExternalPCID)
 		}
 	case "session_ended":
-		grantID := req.GrantID
-		if grantID == "" && req.CoreSessionID != "" {
-			_ = s.db.QueryRow(ctx, `SELECT id FROM game_access_grants WHERE core_session_id = $1 ORDER BY created_at DESC LIMIT 1`, req.CoreSessionID).Scan(&grantID)
+		grantID := ""
+		if req.CoreSessionID != "" {
+			_ = s.db.QueryRow(ctx, `
+				SELECT id
+				FROM game_access_grants
+				WHERE core_session_id = $1 AND parent_grant_id IS NULL AND status = 'accepted'
+				ORDER BY accepted_at DESC NULLS LAST, created_at DESC
+				LIMIT 1
+			`, req.CoreSessionID).Scan(&grantID)
+		}
+		if grantID == "" && req.GrantID != "" {
+			_ = s.db.QueryRow(ctx, `
+				SELECT COALESCE(parent_grant_id, id)::text
+				FROM game_access_grants
+				WHERE id = $1
+			`, req.GrantID).Scan(&grantID)
 		}
 		remainingSeconds := intFromPayload(req.Payload, "remaining_seconds")
 		if remainingSeconds <= 0 {
@@ -3118,7 +3131,7 @@ func (s *Server) edgeSnapshotData(ctx context.Context, clubID string, includeTec
 		return nil, err
 	}
 	qrs, err := s.queryMaps(ctx, `
-		SELECT id, club_id, pc_ref_id, public_token, type, status, created_at
+		SELECT id, club_id, pc_ref_id, public_token, type, status, session_grant_id, expires_at, created_at
 		FROM qr_codes
 		WHERE club_id = $1 AND status <> 'deleted'
 		ORDER BY created_at
@@ -3186,7 +3199,7 @@ func (s *Server) edgeSnapshotData(ctx context.Context, clubID string, includeTec
 		return nil, err
 	}
 	grants, err := s.queryMaps(ctx, `
-		SELECT id, club_id, pc_ref_id, payment_order_id, cash_payment_id, duration_minutes, duration_seconds, status,
+		SELECT id, club_id, pc_ref_id, payment_order_id, cash_payment_id, parent_grant_id, duration_minutes, duration_seconds, status,
 		       COALESCE(core_session_id, '') AS core_session_id, voucher_id, returned_voucher_id, source, accepted_at,
 		       planned_ends_at, ended_at, COALESCE(end_reason, '') AS end_reason,
 		       remaining_minutes, remaining_seconds, COALESCE(last_error, '') AS last_error, created_at
@@ -3396,12 +3409,12 @@ func (s *Server) applyEdgeSnapshotData(ctx context.Context, clubID string, paylo
 	}
 	if err := execJSON(ctx, tx, `
 		WITH input AS (
-			SELECT * FROM jsonb_to_recordset($1::jsonb) AS x(id uuid, club_id uuid, pc_ref_id uuid, public_token text, type text, status text, created_at timestamptz)
+			SELECT * FROM jsonb_to_recordset($1::jsonb) AS x(id uuid, club_id uuid, pc_ref_id uuid, public_token text, type text, status text, session_grant_id uuid, expires_at timestamptz, created_at timestamptz)
 		)
 		INSERT INTO qr_codes (id, club_id, pc_ref_id, public_token, type, status, created_at)
 		SELECT id, club_id, pc_ref_id, public_token, COALESCE(NULLIF(type, ''), 'static_pc'), COALESCE(NULLIF(status, ''), 'active'), COALESCE(created_at, now())
 		FROM input
-		ON CONFLICT (public_token) DO UPDATE SET club_id = EXCLUDED.club_id, pc_ref_id = EXCLUDED.pc_ref_id, type = EXCLUDED.type, status = EXCLUDED.status
+		ON CONFLICT (public_token) DO UPDATE SET club_id = EXCLUDED.club_id, pc_ref_id = EXCLUDED.pc_ref_id, type = EXCLUDED.type, status = EXCLUDED.status, session_grant_id = NULL, expires_at = NULL
 	`, payload["qr_codes"]); err != nil {
 		return err
 	}
@@ -3447,13 +3460,25 @@ func (s *Server) applyEdgeSnapshotData(ctx context.Context, clubID string, paylo
 	}
 	if err := execJSON(ctx, tx, `
 		WITH input AS (
-			SELECT * FROM jsonb_to_recordset($1::jsonb) AS x(id uuid, club_id uuid, pc_ref_id uuid, payment_order_id uuid, cash_payment_id uuid, duration_minutes int, duration_seconds int, status text, core_session_id text, voucher_id uuid, returned_voucher_id uuid, source text, accepted_at timestamptz, planned_ends_at timestamptz, ended_at timestamptz, end_reason text, remaining_minutes int, remaining_seconds int, last_error text, created_at timestamptz)
+			SELECT * FROM jsonb_to_recordset($1::jsonb) AS x(id uuid, club_id uuid, pc_ref_id uuid, payment_order_id uuid, cash_payment_id uuid, parent_grant_id uuid, duration_minutes int, duration_seconds int, status text, core_session_id text, voucher_id uuid, returned_voucher_id uuid, source text, accepted_at timestamptz, planned_ends_at timestamptz, ended_at timestamptz, end_reason text, remaining_minutes int, remaining_seconds int, last_error text, created_at timestamptz)
 		)
-		INSERT INTO game_access_grants (id, club_id, pc_ref_id, payment_order_id, cash_payment_id, duration_minutes, duration_seconds, status, core_session_id, voucher_id, returned_voucher_id, source, accepted_at, planned_ends_at, ended_at, end_reason, remaining_minutes, remaining_seconds, last_error, created_at)
-		SELECT id, club_id, pc_ref_id, payment_order_id, cash_payment_id, duration_minutes, COALESCE(NULLIF(duration_seconds, 0), duration_minutes * 60), COALESCE(NULLIF(status, ''), 'pending'), NULLIF(core_session_id, ''), voucher_id, returned_voucher_id, COALESCE(NULLIF(source, ''), 'online_payment'), accepted_at, planned_ends_at, ended_at, NULLIF(end_reason, ''), COALESCE(remaining_minutes, 0), COALESCE(NULLIF(remaining_seconds, 0), remaining_minutes * 60, 0), NULLIF(last_error, ''), COALESCE(created_at, now())
+		INSERT INTO game_access_grants (id, club_id, pc_ref_id, payment_order_id, cash_payment_id, parent_grant_id, duration_minutes, duration_seconds, status, core_session_id, voucher_id, returned_voucher_id, source, accepted_at, planned_ends_at, ended_at, end_reason, remaining_minutes, remaining_seconds, last_error, created_at)
+		SELECT id, club_id, pc_ref_id, payment_order_id, cash_payment_id, parent_grant_id, duration_minutes, COALESCE(NULLIF(duration_seconds, 0), duration_minutes * 60), COALESCE(NULLIF(status, ''), 'pending'), NULLIF(core_session_id, ''), voucher_id, returned_voucher_id, COALESCE(NULLIF(source, ''), 'online_payment'), accepted_at, planned_ends_at, ended_at, NULLIF(end_reason, ''), COALESCE(remaining_minutes, 0), COALESCE(NULLIF(remaining_seconds, 0), remaining_minutes * 60, 0), NULLIF(last_error, ''), COALESCE(created_at, now())
 		FROM input
-		ON CONFLICT (id) DO UPDATE SET duration_minutes = EXCLUDED.duration_minutes, duration_seconds = EXCLUDED.duration_seconds, status = EXCLUDED.status, core_session_id = EXCLUDED.core_session_id, voucher_id = EXCLUDED.voucher_id, returned_voucher_id = EXCLUDED.returned_voucher_id, accepted_at = EXCLUDED.accepted_at, planned_ends_at = EXCLUDED.planned_ends_at, ended_at = EXCLUDED.ended_at, end_reason = EXCLUDED.end_reason, remaining_minutes = EXCLUDED.remaining_minutes, remaining_seconds = EXCLUDED.remaining_seconds, last_error = EXCLUDED.last_error
+		ON CONFLICT (id) DO UPDATE SET parent_grant_id = EXCLUDED.parent_grant_id, duration_minutes = EXCLUDED.duration_minutes, duration_seconds = EXCLUDED.duration_seconds, status = EXCLUDED.status, core_session_id = EXCLUDED.core_session_id, voucher_id = EXCLUDED.voucher_id, returned_voucher_id = EXCLUDED.returned_voucher_id, accepted_at = EXCLUDED.accepted_at, planned_ends_at = EXCLUDED.planned_ends_at, ended_at = EXCLUDED.ended_at, end_reason = EXCLUDED.end_reason, remaining_minutes = EXCLUDED.remaining_minutes, remaining_seconds = EXCLUDED.remaining_seconds, last_error = EXCLUDED.last_error
 	`, payload["game_access_grants"]); err != nil {
+		return err
+	}
+	if err := execJSON(ctx, tx, `
+		WITH input AS (
+			SELECT * FROM jsonb_to_recordset($1::jsonb) AS x(public_token text, session_grant_id uuid, expires_at timestamptz)
+		)
+		UPDATE qr_codes q
+		SET session_grant_id = input.session_grant_id,
+		    expires_at = input.expires_at
+		FROM input
+		WHERE q.public_token = input.public_token
+	`, payload["qr_codes"]); err != nil {
 		return err
 	}
 	if err := execJSON(ctx, tx, `
@@ -3541,9 +3566,6 @@ func (s *Server) applyPaymentSuccess(ctx context.Context, success paymentSuccess
 	if order.AmountTiyin != success.AmountTiyin {
 		return "", fmt.Errorf("amount mismatch")
 	}
-	if order.Status == "paid" && order.ExtensionGrantID != nil && *order.ExtensionGrantID != "" {
-		return *order.ExtensionGrantID, tx.Commit(ctx)
-	}
 	if order.DurationSeconds <= 0 {
 		order.DurationSeconds = order.DurationMinutes * 60
 	}
@@ -3558,7 +3580,7 @@ func (s *Server) applyPaymentSuccess(ctx context.Context, success paymentSuccess
 		ORDER BY created_at DESC
 		LIMIT 1
 	`, order.ID).Scan(&existingGrantID, &existingGrantStatus, &existingCoreSessionID)
-	if err == nil && existingGrantID != "" && existingGrantStatus == "accepted" {
+	if err == nil && existingGrantID != "" && (existingGrantStatus == "accepted" || existingGrantStatus == "extended") {
 		return existingGrantID, tx.Commit(ctx)
 	}
 	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
@@ -3615,13 +3637,40 @@ func (s *Server) applyPaymentSuccess(ctx context.Context, success paymentSuccess
 		}
 	}
 
+	var orderVoucherID any
+	if order.VoucherID != nil && *order.VoucherID != "" {
+		orderVoucherID = *order.VoucherID
+	}
+
 	if order.ExtensionGrantID != nil && *order.ExtensionGrantID != "" {
-		extensionGrant, ok, err := grantByID(ctx, tx, *order.ExtensionGrantID)
+		sessionGrant, ok, err := grantByID(ctx, tx, *order.ExtensionGrantID)
 		if err != nil {
 			return "", err
 		}
-		if !ok || extensionGrant.CoreSessionID == "" {
+		if !ok || sessionGrant.CoreSessionID == "" {
 			return "", fmt.Errorf("active session for extension not found")
+		}
+		extensionGrantID := existingGrantID
+		if extensionGrantID != "" {
+			_, err = tx.Exec(ctx, `
+				UPDATE game_access_grants
+				SET status = 'pending', parent_grant_id = $2, core_session_id = $3,
+				    duration_minutes = $4, duration_seconds = $5, voucher_id = $6, last_error = NULL
+				WHERE id = $1
+			`, extensionGrantID, sessionGrant.ID, sessionGrant.CoreSessionID, order.DurationMinutes, order.DurationSeconds, orderVoucherID)
+		} else {
+			err = tx.QueryRow(ctx, `
+				INSERT INTO game_access_grants (
+					club_id, pc_ref_id, payment_order_id, voucher_id, parent_grant_id,
+					duration_minutes, duration_seconds, status, core_session_id, source
+				)
+				VALUES ($1, $2, $3, $4, $5, $6, $7, 'pending', $8, 'session_extend')
+				RETURNING id
+			`, order.ClubID, order.PCID, order.ID, orderVoucherID, sessionGrant.ID,
+				order.DurationMinutes, order.DurationSeconds, sessionGrant.CoreSessionID).Scan(&extensionGrantID)
+		}
+		if err != nil {
+			return "", err
 		}
 		if err := tx.Commit(ctx); err != nil {
 			return "", err
@@ -3631,20 +3680,16 @@ func (s *Server) applyPaymentSuccess(ctx context.Context, success paymentSuccess
 				UPDATE vouchers
 				SET redeemed_grant_id = $1
 				WHERE id = $2 AND redeemed_grant_id IS NULL
-			`, extensionGrant.ID, *order.VoucherID)
+			`, extensionGrantID, *order.VoucherID)
 		}
-		err = s.extendGrantSession(ctx, extensionGrant.ID, extensionGrant.CoreSessionID, order.ClubID, order.PCID, order.ExternalPCID, order.DurationSeconds, "online_payment", order.ID, success.InvoiceID)
+		err = s.extendGrantSession(ctx, extensionGrantID, sessionGrant.ID, sessionGrant.CoreSessionID, order.ClubID, order.PCID, order.ExternalPCID, order.DurationSeconds, "online_payment", order.ID, success.InvoiceID)
 		if err != nil {
 			return "", err
 		}
-		return extensionGrant.ID, nil
+		return extensionGrantID, nil
 	}
 
 	var grantID string
-	var orderVoucherID any
-	if order.VoucherID != nil && *order.VoucherID != "" {
-		orderVoucherID = *order.VoucherID
-	}
 	if existingGrantID != "" {
 		grantID = existingGrantID
 		_, err = tx.Exec(ctx, `
@@ -3765,6 +3810,7 @@ func activeGrantForPC(ctx context.Context, q queryRower, pcID string) (activeGra
 		FROM game_access_grants
 		WHERE pc_ref_id = $1
 		  AND status = 'accepted'
+		  AND parent_grant_id IS NULL
 		  AND COALESCE(planned_ends_at, accepted_at + make_interval(secs => duration_seconds), accepted_at + make_interval(mins => duration_minutes), now() + interval '1 minute') > now()
 		ORDER BY accepted_at DESC NULLS LAST, created_at DESC
 		LIMIT 1
@@ -3783,7 +3829,7 @@ func grantByID(ctx context.Context, q queryRower, grantID string) (activeGrantRo
 	err := q.QueryRow(ctx, `
 		SELECT id, COALESCE(core_session_id, ''), planned_ends_at, duration_minutes, duration_seconds
 		FROM game_access_grants
-		WHERE id = $1 AND status = 'accepted'
+		WHERE id = $1 AND status = 'accepted' AND parent_grant_id IS NULL
 		FOR UPDATE
 	`, grantID).Scan(&grant.ID, &grant.CoreSessionID, &grant.PlannedEndsAt, &grant.DurationMinutes, &grant.DurationSeconds)
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -3826,7 +3872,7 @@ func (s *Server) deactivateSessionExtendQR(ctx context.Context, grantID string) 
 	`, grantID)
 }
 
-func (s *Server) extendGrantSession(ctx context.Context, grantID, coreSessionID, clubID, pcID, externalPCID string, addSeconds int, source, paymentOrderID, invoiceID string) error {
+func (s *Server) extendGrantSession(ctx context.Context, extensionGrantID, sessionGrantID, coreSessionID, clubID, pcID, externalPCID string, addSeconds int, source, paymentOrderID, invoiceID string) error {
 	if addSeconds <= 0 {
 		return fmt.Errorf("extension duration is required")
 	}
@@ -3834,8 +3880,8 @@ func (s *Server) extendGrantSession(ctx context.Context, grantID, coreSessionID,
 		return fmt.Errorf("core_session_id is required for extension")
 	}
 	_, err := s.core.ExtendSession(ctx, coreSessionID, core.ExtendSessionCommand{
-		RequestID:      "extend_" + grantID + "_" + randomHex(4),
-		GrantID:        grantID,
+		RequestID:      "extend_" + extensionGrantID + "_" + randomHex(4),
+		GrantID:        extensionGrantID,
 		ClubID:         clubID,
 		ExternalPCID:   externalPCID,
 		AddSeconds:     addSeconds,
@@ -3849,7 +3895,7 @@ func (s *Server) extendGrantSession(ctx context.Context, grantID, coreSessionID,
 			UPDATE game_access_grants
 			SET last_error = $1
 			WHERE id = $2
-		`, err.Error(), grantID)
+		`, err.Error(), extensionGrantID)
 		return err
 	}
 	_, err = s.db.Exec(ctx, `
@@ -3862,7 +3908,7 @@ func (s *Server) extendGrantSession(ctx context.Context, grantID, coreSessionID,
 		    ) + make_interval(secs => $1),
 		    last_error = NULL
 		WHERE id = $2
-	`, addSeconds, grantID)
+	`, addSeconds, sessionGrantID)
 	if err != nil {
 		return err
 	}
@@ -3878,7 +3924,17 @@ func (s *Server) extendGrantSession(ctx context.Context, grantID, coreSessionID,
 		  AND g.id = $1
 		  AND q.type = 'session_extend'
 		  AND q.status = 'active'
-	`, grantID)
+	`, sessionGrantID)
+	if err != nil {
+		return err
+	}
+	_, err = s.db.Exec(ctx, `
+		UPDATE game_access_grants extension_grant
+		SET status = 'extended', core_session_id = $1, accepted_at = now(),
+		    planned_ends_at = session_grant.planned_ends_at, last_error = NULL
+		FROM game_access_grants session_grant
+		WHERE extension_grant.id = $2 AND session_grant.id = $3
+	`, coreSessionID, extensionGrantID, sessionGrantID)
 	return err
 }
 
@@ -4399,16 +4455,29 @@ func (s *Server) handleCashSession(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if extendExisting {
+		var extensionGrantID string
+		err = tx.QueryRow(ctx, `
+			INSERT INTO game_access_grants (
+				club_id, pc_ref_id, cash_payment_id, parent_grant_id,
+				duration_minutes, duration_seconds, status, core_session_id, source
+			)
+			VALUES ($1, $2, $3, $4, $5, $6, 'pending', $7, 'session_extend')
+			RETURNING id
+		`, clubID, req.PCID, cashID, extensionGrant.ID, duration, durationSeconds, extensionGrant.CoreSessionID).Scan(&extensionGrantID)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
 		if err := tx.Commit(ctx); err != nil {
 			writeError(w, http.StatusInternalServerError, err.Error())
 			return
 		}
 		s.logCashPayment(ctx, clubID, auth.UserID, cashID, req.PCID, amount, durationSeconds, reason)
-		if err := s.extendGrantSession(ctx, extensionGrant.ID, extensionGrant.CoreSessionID, clubID, req.PCID, externalPCID, durationSeconds, "cash", "", ""); err != nil {
+		if err := s.extendGrantSession(ctx, extensionGrantID, extensionGrant.ID, extensionGrant.CoreSessionID, clubID, req.PCID, externalPCID, durationSeconds, "cash", "", ""); err != nil {
 			writeError(w, http.StatusInternalServerError, err.Error())
 			return
 		}
-		writeJSON(w, http.StatusCreated, map[string]any{"cash_payment_id": cashID, "grant_id": extensionGrant.ID, "extended": true})
+		writeJSON(w, http.StatusCreated, map[string]any{"cash_payment_id": cashID, "grant_id": extensionGrantID, "extended": true})
 		return
 	}
 
@@ -4820,22 +4889,34 @@ func (s *Server) redeemVoucherToPC(ctx context.Context, req redeemVoucherRequest
 	}
 
 	if extendExisting {
+		var extensionGrantID string
+		err = tx.QueryRow(ctx, `
+			INSERT INTO game_access_grants (
+				club_id, pc_ref_id, voucher_id, parent_grant_id,
+				duration_minutes, duration_seconds, status, core_session_id, source
+			)
+			VALUES ($1, $2, $3, $4, $5, $6, 'pending', $7, 'session_extend')
+			RETURNING id
+		`, voucherClubID, pcID, voucherID, extensionGrant.ID, minutes, seconds, extensionGrant.CoreSessionID).Scan(&extensionGrantID)
+		if err != nil {
+			return nil, err
+		}
 		_, err = tx.Exec(ctx, `
 			UPDATE vouchers
 			SET status = 'redeemed', redeemed_at = now(), redeemed_grant_id = $1
 			WHERE id = $2
-		`, extensionGrant.ID, voucherID)
+		`, extensionGrantID, voucherID)
 		if err != nil {
 			return nil, err
 		}
 		if err := tx.Commit(ctx); err != nil {
 			return nil, err
 		}
-		if err := s.extendGrantSession(ctx, extensionGrant.ID, extensionGrant.CoreSessionID, voucherClubID, pcID, externalPCID, seconds, "voucher", "", ""); err != nil {
+		if err := s.extendGrantSession(ctx, extensionGrantID, extensionGrant.ID, extensionGrant.CoreSessionID, voucherClubID, pcID, externalPCID, seconds, "voucher", "", ""); err != nil {
 			return nil, err
 		}
 		return map[string]any{
-			"success": true, "voucher_id": voucherID, "grant_id": extensionGrant.ID,
+			"success": true, "voucher_id": voucherID, "grant_id": extensionGrantID,
 			"minutes_left": minutes, "seconds_left": seconds, "status": "redeemed", "extended": true,
 		}, nil
 	}
@@ -4927,6 +5008,21 @@ func (s *Server) finishGrant(ctx context.Context, grantID, reason string, remain
 	}
 	defer tx.Rollback(ctx)
 
+	var sessionGrantID string
+	err = tx.QueryRow(ctx, `
+		SELECT COALESCE(parent_grant_id, id)::text
+		FROM game_access_grants
+		WHERE id = $1
+		FOR UPDATE
+	`, grantID).Scan(&sessionGrantID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, fmt.Errorf("grant not found")
+	}
+	if err != nil {
+		return nil, err
+	}
+	grantID = sessionGrantID
+
 	var clubID, pcID string
 	var paymentOrderID, returnedVoucherID *string
 	err = tx.QueryRow(ctx, `
@@ -4938,6 +5034,14 @@ func (s *Server) finishGrant(ctx context.Context, grantID, reason string, remain
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, fmt.Errorf("grant not found")
 	}
+	if err != nil {
+		return nil, err
+	}
+	_, err = tx.Exec(ctx, `
+		UPDATE game_access_grants
+		SET status = 'ended', ended_at = now(), end_reason = $1
+		WHERE parent_grant_id = $2 AND status IN ('pending', 'extended')
+	`, defaultString(reason, "ended"), grantID)
 	if err != nil {
 		return nil, err
 	}
@@ -7201,6 +7305,15 @@ func (s *Server) expireElapsedGrants(ctx context.Context) error {
 				OR (planned_ends_at IS NULL AND accepted_at IS NOT NULL AND duration_seconds <= 0 AND accepted_at + make_interval(mins => duration_minutes) <= now())
 			  )
 			RETURNING id, pc_ref_id
+		), expired_extension_grants AS (
+			UPDATE game_access_grants
+			SET status = 'ended',
+			    ended_at = now(),
+			    end_reason = 'time_expired',
+			    remaining_minutes = 0,
+			    remaining_seconds = 0
+			WHERE parent_grant_id IN (SELECT id FROM expired)
+			  AND status IN ('pending', 'extended')
 		), expired_qrs AS (
 			UPDATE qr_codes
 			SET status = 'inactive'
