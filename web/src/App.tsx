@@ -639,9 +639,10 @@ function QRPage({ token }: { token: string }) {
   const customAmountUZS = parseUZSInput(customAmount);
   const checkoutAmountUZS = customAmountUZS || selectedTariff?.price_uzs || 0;
   const isSessionExtendQR = data?.qr_type === 'session_extend';
-  const canStartOrExtend = data ? isPayableStatus(data.pc.status) || (data.pc.status === 'occupied' && isSessionExtendQR) : false;
-  const isExtension = data?.pc.status === 'occupied' && isSessionExtendQR;
-  const isStaticBusyQR = data?.pc.status === 'occupied' && !isSessionExtendQR;
+  const isSessionExtendable = data ? isSessionExtendableStatus(data.pc.status) : false;
+  const canStartOrExtend = data ? isPayableStatus(data.pc.status) || (isSessionExtendable && isSessionExtendQR) : false;
+  const isExtension = isSessionExtendable && isSessionExtendQR;
+  const isStaticBusyQR = isSessionExtendable && !isSessionExtendQR;
   const busyUntilLabel = data?.active_session?.planned_ends_at ? formatTime(data.active_session.planned_ends_at) : '';
   const voucherReadyForAutoApply = Boolean(voucherCode.trim() && voucherCheck?.can_redeem);
   const voucherDurationSeconds = voucherCheck?.seconds_left || (voucherCheck?.minutes_left ? voucherCheck.minutes_left * 60 : 0);
@@ -2795,11 +2796,16 @@ function isPayableStatus(status: string) {
   return status === 'available' || status === 'sleeping';
 }
 
+function isSessionExtendableStatus(status: string) {
+  return status === 'occupied' || status === 'frozen';
+}
+
 function pcStatusLabel(status: string) {
   const labels: Record<string, string> = {
     available: 'Свободен',
     sleeping: 'Спит',
     occupied: 'Занят',
+    frozen: 'Время закончилось',
     maintenance: 'Ремонт',
     offline: 'Нет связи',
     blocked: 'Заблокирован',
