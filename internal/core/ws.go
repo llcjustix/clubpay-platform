@@ -506,7 +506,9 @@ func normalizePCState(value string) string {
 		return "available"
 	case "OCCUPIED", "BUSY":
 		return "occupied"
-	case "FROZEN", "BLOCKED", "LOCKED":
+	case "FROZEN":
+		return "frozen"
+	case "BLOCKED", "LOCKED":
 		return "blocked"
 	case "SLEEPING", "SLEEP":
 		return "sleeping"

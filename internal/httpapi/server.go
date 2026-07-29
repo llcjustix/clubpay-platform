@@ -1331,7 +1331,7 @@ func (s *Server) handleQR(w http.ResponseWriter, r *http.Request) {
 			    q.session_grant_id IS NOT NULL AND q.expires_at > now() AND EXISTS (
 			      SELECT 1 FROM game_access_grants g
 			      WHERE g.id = q.session_grant_id AND g.pc_ref_id = p.id AND g.status = 'accepted'
-			        AND COALESCE(g.planned_ends_at, g.accepted_at + make_interval(secs => g.duration_seconds), g.accepted_at + make_interval(mins => g.duration_minutes)) > now()
+			        AND COALESCE(g.grace_ends_at, g.planned_ends_at, g.accepted_at + make_interval(secs => g.duration_seconds), g.accepted_at + make_interval(mins => g.duration_minutes)) > now()
 			    )
 			  ))
 		`, token).Scan(
@@ -1364,7 +1364,7 @@ func (s *Server) handleQR(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	var activeSession map[string]any
-	if pc.Status == "occupied" {
+	if isSessionExtensionState(pc.Status) {
 		grant, ok, err := activeGrantForPC(ctx, s.db, pc.PCID)
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, err.Error())
@@ -1497,7 +1497,7 @@ func (s *Server) handleCreateCheckout(w http.ResponseWriter, r *http.Request) {
 			    q.session_grant_id IS NOT NULL AND q.expires_at > now() AND EXISTS (
 			      SELECT 1 FROM game_access_grants g
 			      WHERE g.id = q.session_grant_id AND g.pc_ref_id = p.id AND g.status = 'accepted'
-			        AND COALESCE(g.planned_ends_at, g.accepted_at + make_interval(secs => g.duration_seconds), g.accepted_at + make_interval(mins => g.duration_minutes)) > now()
+			        AND COALESCE(g.grace_ends_at, g.planned_ends_at, g.accepted_at + make_interval(secs => g.duration_seconds), g.accepted_at + make_interval(mins => g.duration_minutes)) > now()
 			    )
 			  ))
 		`, req.QRToken).Scan(
@@ -1538,14 +1538,14 @@ func (s *Server) handleCreateCheckout(w http.ResponseWriter, r *http.Request) {
 	}
 	orderSeed.PCStatus = s.syncCorePCStatus(ctx, orderSeed.PCID, orderSeed.ExternalPCID, orderSeed.PCStatus)
 	if !canUseQRForSession(orderSeed.PCStatus, orderSeed.QRType) {
-		if orderSeed.PCStatus == "occupied" && orderSeed.QRType != "session_extend" {
+		if isSessionExtensionState(orderSeed.PCStatus) && orderSeed.QRType != "session_extend" {
 			writeError(w, http.StatusConflict, "PC is occupied. Use session QR to extend")
 			return
 		}
 		writeError(w, http.StatusConflict, "PC is not available")
 		return
 	}
-	if orderSeed.PCStatus == "occupied" {
+	if isSessionExtensionState(orderSeed.PCStatus) {
 		grant, ok, err := activeGrantForPC(ctx, s.db, orderSeed.PCID)
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, err.Error())
@@ -3201,7 +3201,7 @@ func (s *Server) edgeSnapshotData(ctx context.Context, clubID string, includeTec
 	grants, err := s.queryMaps(ctx, `
 		SELECT id, club_id, pc_ref_id, payment_order_id, cash_payment_id, parent_grant_id, duration_minutes, duration_seconds, status,
 		       COALESCE(core_session_id, '') AS core_session_id, voucher_id, returned_voucher_id, source, accepted_at,
-		       planned_ends_at, ended_at, COALESCE(end_reason, '') AS end_reason,
+		       planned_ends_at, grace_ends_at, ended_at, COALESCE(end_reason, '') AS end_reason,
 		       remaining_minutes, remaining_seconds, COALESCE(last_error, '') AS last_error, created_at
 		FROM game_access_grants
 		WHERE club_id = $1
@@ -3460,12 +3460,12 @@ func (s *Server) applyEdgeSnapshotData(ctx context.Context, clubID string, paylo
 	}
 	if err := execJSON(ctx, tx, `
 		WITH input AS (
-			SELECT * FROM jsonb_to_recordset($1::jsonb) AS x(id uuid, club_id uuid, pc_ref_id uuid, payment_order_id uuid, cash_payment_id uuid, parent_grant_id uuid, duration_minutes int, duration_seconds int, status text, core_session_id text, voucher_id uuid, returned_voucher_id uuid, source text, accepted_at timestamptz, planned_ends_at timestamptz, ended_at timestamptz, end_reason text, remaining_minutes int, remaining_seconds int, last_error text, created_at timestamptz)
+			SELECT * FROM jsonb_to_recordset($1::jsonb) AS x(id uuid, club_id uuid, pc_ref_id uuid, payment_order_id uuid, cash_payment_id uuid, parent_grant_id uuid, duration_minutes int, duration_seconds int, status text, core_session_id text, voucher_id uuid, returned_voucher_id uuid, source text, accepted_at timestamptz, planned_ends_at timestamptz, grace_ends_at timestamptz, ended_at timestamptz, end_reason text, remaining_minutes int, remaining_seconds int, last_error text, created_at timestamptz)
 		)
-		INSERT INTO game_access_grants (id, club_id, pc_ref_id, payment_order_id, cash_payment_id, parent_grant_id, duration_minutes, duration_seconds, status, core_session_id, voucher_id, returned_voucher_id, source, accepted_at, planned_ends_at, ended_at, end_reason, remaining_minutes, remaining_seconds, last_error, created_at)
-		SELECT id, club_id, pc_ref_id, payment_order_id, cash_payment_id, parent_grant_id, duration_minutes, COALESCE(NULLIF(duration_seconds, 0), duration_minutes * 60), COALESCE(NULLIF(status, ''), 'pending'), NULLIF(core_session_id, ''), voucher_id, returned_voucher_id, COALESCE(NULLIF(source, ''), 'online_payment'), accepted_at, planned_ends_at, ended_at, NULLIF(end_reason, ''), COALESCE(remaining_minutes, 0), COALESCE(NULLIF(remaining_seconds, 0), remaining_minutes * 60, 0), NULLIF(last_error, ''), COALESCE(created_at, now())
+		INSERT INTO game_access_grants (id, club_id, pc_ref_id, payment_order_id, cash_payment_id, parent_grant_id, duration_minutes, duration_seconds, status, core_session_id, voucher_id, returned_voucher_id, source, accepted_at, planned_ends_at, grace_ends_at, ended_at, end_reason, remaining_minutes, remaining_seconds, last_error, created_at)
+		SELECT id, club_id, pc_ref_id, payment_order_id, cash_payment_id, parent_grant_id, duration_minutes, COALESCE(NULLIF(duration_seconds, 0), duration_minutes * 60), COALESCE(NULLIF(status, ''), 'pending'), NULLIF(core_session_id, ''), voucher_id, returned_voucher_id, COALESCE(NULLIF(source, ''), 'online_payment'), accepted_at, planned_ends_at, grace_ends_at, ended_at, NULLIF(end_reason, ''), COALESCE(remaining_minutes, 0), COALESCE(NULLIF(remaining_seconds, 0), remaining_minutes * 60, 0), NULLIF(last_error, ''), COALESCE(created_at, now())
 		FROM input
-		ON CONFLICT (id) DO UPDATE SET parent_grant_id = EXCLUDED.parent_grant_id, duration_minutes = EXCLUDED.duration_minutes, duration_seconds = EXCLUDED.duration_seconds, status = EXCLUDED.status, core_session_id = EXCLUDED.core_session_id, voucher_id = EXCLUDED.voucher_id, returned_voucher_id = EXCLUDED.returned_voucher_id, accepted_at = EXCLUDED.accepted_at, planned_ends_at = EXCLUDED.planned_ends_at, ended_at = EXCLUDED.ended_at, end_reason = EXCLUDED.end_reason, remaining_minutes = EXCLUDED.remaining_minutes, remaining_seconds = EXCLUDED.remaining_seconds, last_error = EXCLUDED.last_error
+		ON CONFLICT (id) DO UPDATE SET parent_grant_id = EXCLUDED.parent_grant_id, duration_minutes = EXCLUDED.duration_minutes, duration_seconds = EXCLUDED.duration_seconds, status = EXCLUDED.status, core_session_id = EXCLUDED.core_session_id, voucher_id = EXCLUDED.voucher_id, returned_voucher_id = EXCLUDED.returned_voucher_id, accepted_at = EXCLUDED.accepted_at, planned_ends_at = EXCLUDED.planned_ends_at, grace_ends_at = EXCLUDED.grace_ends_at, ended_at = EXCLUDED.ended_at, end_reason = EXCLUDED.end_reason, remaining_minutes = EXCLUDED.remaining_minutes, remaining_seconds = EXCLUDED.remaining_seconds, last_error = EXCLUDED.last_error
 	`, payload["game_access_grants"]); err != nil {
 		return err
 	}
@@ -3725,7 +3725,7 @@ func (s *Server) applyPaymentSuccess(ctx context.Context, success paymentSuccess
 		return "", err
 	}
 
-	extendExpiry := time.Now().UTC().Add(time.Duration(order.DurationSeconds) * time.Second)
+	extendExpiry := time.Now().UTC().Add(time.Duration(order.DurationSeconds)*time.Second + s.sessionGraceDuration())
 	extendURL, err := s.createSessionExtendURL(ctx, order.ClubID, order.PCID, grantID, extendExpiry)
 	if err != nil {
 		_, _ = s.db.Exec(ctx, `
@@ -3771,15 +3771,16 @@ func (s *Server) applyPaymentSuccess(ctx context.Context, success paymentSuccess
 		endsAt := time.Now().UTC().Add(time.Duration(order.DurationSeconds) * time.Second)
 		plannedEndsAt = &endsAt
 	}
+	graceEndsAt := plannedEndsAt.Add(s.sessionGraceDuration())
 	_, err = s.db.Exec(ctx, `
 		UPDATE game_access_grants
-		SET status = 'accepted', core_session_id = $1, accepted_at = now(), planned_ends_at = $2, last_error = NULL
-		WHERE id = $3
-	`, coreSessionID, plannedEndsAt, grantID)
+		SET status = 'accepted', core_session_id = $1, accepted_at = now(), planned_ends_at = $2, grace_ends_at = $3, last_error = NULL
+		WHERE id = $4
+	`, coreSessionID, plannedEndsAt, graceEndsAt, grantID)
 	if err != nil {
 		return "", err
 	}
-	s.updateSessionExtendQRExpiry(ctx, grantID, *plannedEndsAt)
+	s.updateSessionExtendQRExpiry(ctx, grantID, graceEndsAt)
 	_, err = s.db.Exec(ctx, `
 		UPDATE pc_refs
 		SET status_cache = 'occupied'
@@ -3811,7 +3812,7 @@ func activeGrantForPC(ctx context.Context, q queryRower, pcID string) (activeGra
 		WHERE pc_ref_id = $1
 		  AND status = 'accepted'
 		  AND parent_grant_id IS NULL
-		  AND COALESCE(planned_ends_at, accepted_at + make_interval(secs => duration_seconds), accepted_at + make_interval(mins => duration_minutes), now() + interval '1 minute') > now()
+		  AND COALESCE(grace_ends_at, planned_ends_at, accepted_at + make_interval(secs => duration_seconds), accepted_at + make_interval(mins => duration_minutes), now() + interval '1 minute') > now()
 		ORDER BY accepted_at DESC NULLS LAST, created_at DESC
 		LIMIT 1
 	`, pcID).Scan(&grant.ID, &grant.CoreSessionID, &grant.PlannedEndsAt, &grant.DurationMinutes, &grant.DurationSeconds)
@@ -3906,9 +3907,13 @@ func (s *Server) extendGrantSession(ctx context.Context, extensionGrantID, sessi
 		      COALESCE(planned_ends_at, accepted_at + make_interval(secs => duration_seconds), accepted_at + make_interval(mins => duration_minutes), now()),
 		      now()
 		    ) + make_interval(secs => $1),
+		    grace_ends_at = GREATEST(
+		      COALESCE(planned_ends_at, accepted_at + make_interval(secs => duration_seconds), accepted_at + make_interval(mins => duration_minutes), now()),
+		      now()
+		    ) + make_interval(secs => $1 + $3),
 		    last_error = NULL
 		WHERE id = $2
-	`, addSeconds, sessionGrantID)
+	`, addSeconds, sessionGrantID, int(s.sessionGraceDuration().Seconds()))
 	if err != nil {
 		return err
 	}
@@ -3918,7 +3923,7 @@ func (s *Server) extendGrantSession(ctx context.Context, extensionGrantID, sessi
 	}
 	_, err = s.db.Exec(ctx, `
 		UPDATE qr_codes q
-		SET expires_at = COALESCE(g.planned_ends_at, q.expires_at)
+		SET expires_at = COALESCE(g.grace_ends_at, g.planned_ends_at, q.expires_at)
 		FROM game_access_grants g
 		WHERE q.session_grant_id = g.id
 		  AND g.id = $1
@@ -3931,7 +3936,7 @@ func (s *Server) extendGrantSession(ctx context.Context, extensionGrantID, sessi
 	_, err = s.db.Exec(ctx, `
 		UPDATE game_access_grants extension_grant
 		SET status = 'extended', core_session_id = $1, accepted_at = now(),
-		    planned_ends_at = session_grant.planned_ends_at, last_error = NULL
+		    planned_ends_at = session_grant.planned_ends_at, grace_ends_at = session_grant.grace_ends_at, last_error = NULL
 		FROM game_access_grants session_grant
 		WHERE extension_grant.id = $2 AND session_grant.id = $3
 	`, coreSessionID, extensionGrantID, sessionGrantID)
@@ -4493,7 +4498,7 @@ func (s *Server) handleCashSession(w http.ResponseWriter, r *http.Request) {
 	}
 
 	extendToken := "se_" + randomHex(16)
-	extendExpiry := time.Now().UTC().Add(time.Duration(durationSeconds) * time.Second)
+	extendExpiry := time.Now().UTC().Add(time.Duration(durationSeconds)*time.Second + s.sessionGraceDuration())
 	_, err = tx.Exec(ctx, `
 		INSERT INTO qr_codes (club_id, pc_ref_id, public_token, type, status, session_grant_id, expires_at)
 		VALUES ($1, $2, $3, 'session_extend', 'active', $4, $5)
@@ -4537,13 +4542,14 @@ func (s *Server) handleCashSession(w http.ResponseWriter, r *http.Request) {
 		endsAt := time.Now().UTC().Add(time.Duration(durationSeconds) * time.Second)
 		plannedEndsAt = &endsAt
 	}
-	_, _ = tx.Exec(ctx, `UPDATE qr_codes SET expires_at = $2 WHERE session_grant_id = $1 AND type = 'session_extend' AND status = 'active'`, grantID, plannedEndsAt.UTC())
+	graceEndsAt := plannedEndsAt.Add(s.sessionGraceDuration())
+	_, _ = tx.Exec(ctx, `UPDATE qr_codes SET expires_at = $2 WHERE session_grant_id = $1 AND type = 'session_extend' AND status = 'active'`, grantID, graceEndsAt.UTC())
 
 	_, err = tx.Exec(ctx, `
 		UPDATE game_access_grants
-		SET status = 'accepted', core_session_id = $1, accepted_at = now(), planned_ends_at = $2
-		WHERE id = $3
-	`, coreSessionID, plannedEndsAt, grantID)
+		SET status = 'accepted', core_session_id = $1, accepted_at = now(), planned_ends_at = $2, grace_ends_at = $3
+		WHERE id = $4
+	`, coreSessionID, plannedEndsAt, graceEndsAt, grantID)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -4764,7 +4770,7 @@ func (s *Server) handleCheckVoucher(w http.ResponseWriter, r *http.Request) {
 			    q.session_grant_id IS NOT NULL AND q.expires_at > now() AND EXISTS (
 			      SELECT 1 FROM game_access_grants g
 			      WHERE g.id = q.session_grant_id AND g.pc_ref_id = p.id AND g.status = 'accepted'
-			        AND COALESCE(g.planned_ends_at, g.accepted_at + make_interval(secs => g.duration_seconds), g.accepted_at + make_interval(mins => g.duration_minutes)) > now()
+			        AND COALESCE(g.grace_ends_at, g.planned_ends_at, g.accepted_at + make_interval(secs => g.duration_seconds), g.accepted_at + make_interval(mins => g.duration_minutes)) > now()
 			    )
 			  ))
 			`, req.QRToken).Scan(&pcID, &pcClubID, &qrType, &pcStatus, &zoneID, &zoneName)
@@ -4808,7 +4814,7 @@ func (s *Server) validVoucherForPC(ctx context.Context, code, clubID, pcID, pcSt
 		return "", 0, fmt.Errorf("voucher belongs to another club")
 	}
 	if !canUseQRForSession(pcStatus, qrType) {
-		if pcStatus == "occupied" && qrType != "session_extend" {
+		if isSessionExtensionState(pcStatus) && qrType != "session_extend" {
 			return "", 0, fmt.Errorf("PC is occupied. Use session QR to extend")
 		}
 		return "", 0, fmt.Errorf("PC is not available")
@@ -4855,7 +4861,7 @@ func (s *Server) redeemVoucherToPC(ctx context.Context, req redeemVoucherRequest
 			q.session_grant_id IS NOT NULL AND q.expires_at > now() AND EXISTS (
 			  SELECT 1 FROM game_access_grants g
 			  WHERE g.id = q.session_grant_id AND g.pc_ref_id = p.id AND g.status = 'accepted'
-			    AND COALESCE(g.planned_ends_at, g.accepted_at + make_interval(secs => g.duration_seconds), g.accepted_at + make_interval(mins => g.duration_minutes)) > now()
+			    AND COALESCE(g.grace_ends_at, g.planned_ends_at, g.accepted_at + make_interval(secs => g.duration_seconds), g.accepted_at + make_interval(mins => g.duration_minutes)) > now()
 			)
 		  ))
 		`, req.QRToken).Scan(&pcID, &pcClubID, &externalPCID, &qrType, &pcStatus)
@@ -4871,12 +4877,12 @@ func (s *Server) redeemVoucherToPC(ctx context.Context, req redeemVoucherRequest
 	var extensionGrant activeGrantRow
 	extendExisting := false
 	if !canUseQRForSession(pcStatus, qrType) {
-		if pcStatus == "occupied" && qrType != "session_extend" {
+		if isSessionExtensionState(pcStatus) && qrType != "session_extend" {
 			return nil, fmt.Errorf("PC is occupied. Use session QR to extend")
 		}
 		return nil, fmt.Errorf("PC is not available")
 	}
-	if pcStatus == "occupied" {
+	if isSessionExtensionState(pcStatus) {
 		var ok bool
 		extensionGrant, ok, err = activeGrantForPC(ctx, tx, pcID)
 		if err != nil {
@@ -4942,7 +4948,7 @@ func (s *Server) redeemVoucherToPC(ctx context.Context, req redeemVoucherRequest
 		return nil, err
 	}
 
-	extendExpiry := time.Now().UTC().Add(time.Duration(seconds) * time.Second)
+	extendExpiry := time.Now().UTC().Add(time.Duration(seconds)*time.Second + s.sessionGraceDuration())
 	extendURL, err := s.createSessionExtendURL(ctx, voucherClubID, pcID, grantID, extendExpiry)
 	if err != nil {
 		_, _ = s.db.Exec(ctx, `UPDATE game_access_grants SET status = 'start_failed', last_error = $1 WHERE id = $2`, err.Error(), grantID)
@@ -4979,15 +4985,16 @@ func (s *Server) redeemVoucherToPC(ctx context.Context, req redeemVoucherRequest
 		endsAt := time.Now().UTC().Add(time.Duration(seconds) * time.Second)
 		plannedEndsAt = &endsAt
 	}
+	graceEndsAt := plannedEndsAt.Add(s.sessionGraceDuration())
 	_, err = s.db.Exec(ctx, `
 		UPDATE game_access_grants
-		SET status = 'accepted', core_session_id = $1, accepted_at = now(), planned_ends_at = $2
-		WHERE id = $3
-	`, coreSessionID, plannedEndsAt, grantID)
+		SET status = 'accepted', core_session_id = $1, accepted_at = now(), planned_ends_at = $2, grace_ends_at = $3
+		WHERE id = $4
+	`, coreSessionID, plannedEndsAt, graceEndsAt, grantID)
 	if err != nil {
 		return nil, err
 	}
-	s.updateSessionExtendQRExpiry(ctx, grantID, *plannedEndsAt)
+	s.updateSessionExtendQRExpiry(ctx, grantID, graceEndsAt)
 	_, err = s.db.Exec(ctx, `UPDATE pc_refs SET status_cache = 'occupied' WHERE id = $1`, pcID)
 	if err != nil {
 		return nil, err
@@ -6880,8 +6887,20 @@ func isPayablePCStatus(status string) bool {
 	return status == "available" || status == "sleeping"
 }
 
+func isSessionExtensionState(status string) bool {
+	return status == "occupied" || status == "frozen"
+}
+
 func canUseQRForSession(status, qrType string) bool {
-	return isPayablePCStatus(status) || (status == "occupied" && qrType == "session_extend")
+	return isPayablePCStatus(status) || (isSessionExtensionState(status) && qrType == "session_extend")
+}
+
+func (s *Server) sessionGraceDuration() time.Duration {
+	seconds := s.cfg.SessionGraceSeconds
+	if seconds <= 0 {
+		seconds = 10 * 60
+	}
+	return time.Duration(seconds) * time.Second
 }
 
 func sessionExtendQRActive(boundGrantID, activeGrantID string, expiresAt *time.Time, now time.Time) bool {
@@ -6890,7 +6909,7 @@ func sessionExtendQRActive(boundGrantID, activeGrantID string, expiresAt *time.T
 
 func isKnownPCStatus(status string) bool {
 	switch status {
-	case "available", "occupied", "sleeping", "offline", "maintenance", "blocked", "unknown":
+	case "available", "occupied", "frozen", "sleeping", "offline", "maintenance", "blocked", "unknown":
 		return true
 	default:
 		return false
@@ -6921,7 +6940,9 @@ func normalizeCoreStatus(status string) string {
 		return "available"
 	case "OCCUPIED", "BUSY":
 		return "occupied"
-	case "FROZEN", "BLOCKED", "LOCKED":
+	case "FROZEN":
+		return "frozen"
+	case "BLOCKED", "LOCKED":
 		return "blocked"
 	case "SLEEPING", "SLEEP":
 		return "sleeping"
@@ -7294,15 +7315,16 @@ func (s *Server) expireElapsedGrants(ctx context.Context) error {
 		WITH expired AS (
 			UPDATE game_access_grants
 			SET status = 'ended',
-			    ended_at = COALESCE(planned_ends_at, accepted_at + make_interval(secs => duration_seconds), accepted_at + make_interval(mins => duration_minutes), now()),
+			    ended_at = COALESCE(grace_ends_at, planned_ends_at, accepted_at + make_interval(secs => duration_seconds), accepted_at + make_interval(mins => duration_minutes), now()),
 			    end_reason = 'time_expired',
 			    remaining_minutes = 0,
 			    remaining_seconds = 0
 			WHERE status = 'accepted'
 			  AND (
-				(planned_ends_at IS NOT NULL AND planned_ends_at <= now())
-				OR (planned_ends_at IS NULL AND accepted_at IS NOT NULL AND accepted_at + make_interval(secs => duration_seconds) <= now())
-				OR (planned_ends_at IS NULL AND accepted_at IS NOT NULL AND duration_seconds <= 0 AND accepted_at + make_interval(mins => duration_minutes) <= now())
+				(grace_ends_at IS NOT NULL AND grace_ends_at <= now())
+				OR (grace_ends_at IS NULL AND planned_ends_at IS NOT NULL AND planned_ends_at <= now())
+				OR (grace_ends_at IS NULL AND planned_ends_at IS NULL AND accepted_at IS NOT NULL AND accepted_at + make_interval(secs => duration_seconds) <= now())
+				OR (grace_ends_at IS NULL AND planned_ends_at IS NULL AND accepted_at IS NOT NULL AND duration_seconds <= 0 AND accepted_at + make_interval(mins => duration_minutes) <= now())
 			  )
 			RETURNING id, pc_ref_id
 		), expired_extension_grants AS (
@@ -7323,7 +7345,7 @@ func (s *Server) expireElapsedGrants(ctx context.Context) error {
 		)
 		UPDATE pc_refs p
 		SET status_cache = 'available'
-		WHERE p.status_cache = 'occupied'
+		WHERE p.status_cache IN ('occupied', 'frozen')
 		  AND p.id IN (SELECT pc_ref_id FROM expired)
 		  AND NOT EXISTS (
 			SELECT 1
@@ -7331,9 +7353,10 @@ func (s *Server) expireElapsedGrants(ctx context.Context) error {
 			WHERE g.pc_ref_id = p.id
 			  AND g.status = 'accepted'
 			  AND (
-				(g.planned_ends_at IS NOT NULL AND g.planned_ends_at > now())
-				OR (g.planned_ends_at IS NULL AND g.accepted_at IS NOT NULL AND g.duration_seconds > 0 AND g.accepted_at + make_interval(secs => g.duration_seconds) > now())
-				OR (g.planned_ends_at IS NULL AND g.accepted_at IS NOT NULL AND g.duration_seconds <= 0 AND g.accepted_at + make_interval(mins => g.duration_minutes) > now())
+				(g.grace_ends_at IS NOT NULL AND g.grace_ends_at > now())
+				OR (g.grace_ends_at IS NULL AND g.planned_ends_at IS NOT NULL AND g.planned_ends_at > now())
+				OR (g.grace_ends_at IS NULL AND g.planned_ends_at IS NULL AND g.accepted_at IS NOT NULL AND g.duration_seconds > 0 AND g.accepted_at + make_interval(secs => g.duration_seconds) > now())
+				OR (g.grace_ends_at IS NULL AND g.planned_ends_at IS NULL AND g.accepted_at IS NOT NULL AND g.duration_seconds <= 0 AND g.accepted_at + make_interval(mins => g.duration_minutes) > now())
 				OR (g.planned_ends_at IS NULL AND g.accepted_at IS NULL)
 			  )
 		  )

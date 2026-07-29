@@ -16,6 +16,8 @@ func TestCanUseQRForSession(t *testing.T) {
 		{name: "sleeping static QR starts session", status: "sleeping", qrType: "static_pc", want: true},
 		{name: "occupied static QR is blocked", status: "occupied", qrType: "static_pc", want: false},
 		{name: "occupied session QR extends session", status: "occupied", qrType: "session_extend", want: true},
+		{name: "frozen static QR is blocked", status: "frozen", qrType: "static_pc", want: false},
+		{name: "frozen session QR extends during grace", status: "frozen", qrType: "session_extend", want: true},
 		{name: "maintenance QR is blocked", status: "maintenance", qrType: "session_extend", want: false},
 	}
 
