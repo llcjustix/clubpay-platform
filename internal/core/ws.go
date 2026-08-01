@@ -25,6 +25,7 @@ type EventMessage struct {
 }
 
 type EventHandler func(context.Context, EventMessage) error
+type WakeHandler func(context.Context, string) error
 
 type WSController struct {
 	token   string
@@ -32,10 +33,24 @@ type WSController struct {
 
 	upgrader websocket.Upgrader
 
-	mu      sync.RWMutex
-	clients map[string]*wsClient
-	pending map[string]chan commandResult
-	events  EventHandler
+	mu       sync.RWMutex
+	clients  map[string]*wsClient
+	pending  map[string]chan commandResult
+	events   EventHandler
+	wake     WakeHandler
+	wakeWait time.Duration
+}
+
+// SetWakeHandler enables the real Controller flow for a sleeping PC: issue
+// WOL locally, wait until the Agent reconnects, and only then send start_session.
+func (c *WSController) SetWakeHandler(handler WakeHandler, wait time.Duration) {
+	if wait <= 0 {
+		wait = 60 * time.Second
+	}
+	c.mu.Lock()
+	c.wake = handler
+	c.wakeWait = wait
+	c.mu.Unlock()
 }
 
 type wsClient struct {
@@ -159,7 +174,7 @@ func (c *WSController) StartSession(ctx context.Context, cmd StartSessionCommand
 	}
 	now := time.Now().UTC()
 	endsAt := now.Add(time.Duration(duration) * time.Second)
-	result, err := c.sendCommand(ctx, cmd.PCExternalID, "start_session", defaultString(cmd.RequestID, "start_"+cmd.GrantID), map[string]any{
+	payload := map[string]any{
 		"external_pc_id":   cmd.PCExternalID,
 		"grant_id":         cmd.GrantID,
 		"payment_order_id": cmd.PaymentOrderID,
@@ -171,24 +186,29 @@ func (c *WSController) StartSession(ctx context.Context, cmd StartSessionCommand
 		"source":           cmd.Source,
 		"invoice_id":       cmd.InvoiceID,
 		"extend_url":       cmd.ExtendURL,
-	})
+	}
+	client, err := c.clientForStart(ctx, cmd.PCExternalID)
 	if err != nil {
 		return StartSessionResult{}, err
 	}
-	payload := result.Payload
-	startedAt := timeValue(payload, "started_at", "start_at")
+	result, err := c.sendCommandToClient(ctx, client, "start_session", defaultString(cmd.RequestID, "start_"+cmd.GrantID), payload)
+	if err != nil {
+		return StartSessionResult{}, err
+	}
+	resultPayload := result.Payload
+	startedAt := timeValue(resultPayload, "started_at", "start_at")
 	if startedAt == nil {
 		startedAt = &now
 	}
-	resultEndsAt := timeValue(payload, "ends_at", "planned_ends_at")
+	resultEndsAt := timeValue(resultPayload, "ends_at", "planned_ends_at")
 	if resultEndsAt == nil {
 		resultEndsAt = &endsAt
 	}
 	return StartSessionResult{
 		Status:        "accepted",
-		CoreSessionID: stringValue(payload, "core_session_id", "session_id"),
-		ExternalPCID:  firstNonEmpty(stringValue(payload, "external_pc_id"), cmd.PCExternalID),
-		GrantID:       firstNonEmpty(stringValue(payload, "grant_id"), cmd.GrantID),
+		CoreSessionID: stringValue(resultPayload, "core_session_id", "session_id"),
+		ExternalPCID:  firstNonEmpty(stringValue(resultPayload, "external_pc_id"), cmd.PCExternalID),
+		GrantID:       firstNonEmpty(stringValue(resultPayload, "grant_id"), cmd.GrantID),
 		StartedAt:     startedAt,
 		EndsAt:        resultEndsAt,
 	}, nil
@@ -265,7 +285,11 @@ func (c *WSController) Unlock(ctx context.Context, externalPCID, reason string) 
 }
 
 func (c *WSController) Wake(ctx context.Context, externalPCID string) error {
-	_, err := c.sendCommand(ctx, externalPCID, "wake", "wake_"+safeCommandID(externalPCID)+"_"+unixMillis(), map[string]any{
+	client, err := c.clientForStart(ctx, externalPCID)
+	if err != nil {
+		return err
+	}
+	_, err = c.sendCommandToClient(ctx, client, "wake", "wake_"+safeCommandID(externalPCID)+"_"+unixMillis(), map[string]any{
 		"external_pc_id": externalPCID,
 	})
 	return err
@@ -287,6 +311,47 @@ func (c *WSController) SetRepair(ctx context.Context, externalPCID string, on bo
 }
 
 var ErrAgentOffline = errors.New("agent_offline")
+
+func (c *WSController) clientForStart(ctx context.Context, externalPCID string) (*wsClient, error) {
+	externalPCID = strings.TrimSpace(externalPCID)
+	if externalPCID == "" {
+		return nil, fmt.Errorf("external_pc_id is required")
+	}
+	if client := c.clientForPC(externalPCID); client != nil {
+		return client, nil
+	}
+	c.mu.RLock()
+	wake, wait := c.wake, c.wakeWait
+	c.mu.RUnlock()
+	if wake == nil {
+		return nil, ErrAgentOffline
+	}
+	if err := wake(ctx, externalPCID); err != nil {
+		if strings.Contains(strings.ToLower(err.Error()), "wol_failed") {
+			return nil, err
+		}
+		return nil, fmt.Errorf("wol_failed: %w", err)
+	}
+	if wait <= 0 {
+		wait = 60 * time.Second
+	}
+	timer := time.NewTimer(wait)
+	defer timer.Stop()
+	ticker := time.NewTicker(100 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		if client := c.clientForPC(externalPCID); client != nil {
+			return client, nil
+		}
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-timer.C:
+			return nil, fmt.Errorf("wol_failed: agent did not reconnect within %s", wait)
+		case <-ticker.C:
+		}
+	}
+}
 
 func (c *WSController) sendCommand(ctx context.Context, externalPCID, name, commandID string, payload map[string]any) (commandResult, error) {
 	externalPCID = strings.TrimSpace(externalPCID)

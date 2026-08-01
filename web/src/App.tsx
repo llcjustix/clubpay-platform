@@ -89,6 +89,7 @@ type PC = {
   external_pc_id: string;
   number: number;
   label: string;
+	mac_address?: string;
   status: string;
   zone_id: string;
   zone: string;
@@ -1514,6 +1515,7 @@ function defaultPCForm(zones: Zone[] = [], pcs: ManagedPC[] = []): Partial<Manag
     label,
     external_pc_id: uniqueExternalPCID(label, pcs),
     status: 'available',
+		mac_address: '',
   };
 }
 
@@ -1777,6 +1779,7 @@ function SettingsPage({ auth, selectedClubID, currentPath, onClubChange, onLogou
       number: Number(pcForm.number || 0),
       label: pcForm.label,
       external_pc_id: pcForm.external_pc_id || uniqueExternalPCID(pcForm.label || '', settings?.pcs || [], pcForm.id),
+		mac_address: pcForm.mac_address || '',
       status: pcForm.id ? pcForm.status || 'available' : 'available',
     };
     const path = pcForm.id ? `/api/backoffice/pcs/${pcForm.id}` : `/api/backoffice/clubs/${selectedClubID}/pcs`;
@@ -2114,6 +2117,7 @@ function SettingsPage({ auth, selectedClubID, currentPath, onClubChange, onLogou
                   <SelectField label="Зона" value={pcForm.zone_id || ''} options={settings.zones.map((zone) => ({ value: zone.id, label: zone.name }))} onChange={(value) => setPCForm({ ...pcForm, zone_id: value })} />
                   <Field label="Номер" type="number" value={String(pcForm.number || 0)} onChange={(value) => setPCForm({ ...pcForm, number: Number(value || 0) })} />
                   <Field label="Название" value={pcForm.label || ''} onChange={updatePCLabel} />
+				  <Field label="MAC-адрес (для Wake-on-LAN)" value={pcForm.mac_address || ''} onChange={(value) => setPCForm({ ...pcForm, mac_address: value })} />
                 </div>
                 <div className="button-row">
                   {pcForm.id && <Button variant="danger" icon={<Trash2 size={16} />} onClick={deletePC}>Удалить</Button>}

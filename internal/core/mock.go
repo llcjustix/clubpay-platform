@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -104,23 +105,61 @@ type Adapter interface {
 	SetRepair(ctx context.Context, externalPCID string, on bool) error
 }
 
-type MockAdapter struct{}
+// MockAdapter models the important Controller transitions instead of always
+// returning an available PC.  This lets local development exercise the same
+// sleep -> wake -> Agent reconnect -> start flow that a club Controller uses.
+type MockAdapter struct {
+	mu  sync.Mutex
+	pcs map[string]mockPC
+}
 
-func (MockAdapter) GetPCStatus(ctx context.Context, externalPCID string) (PCStatus, error) {
+type mockPC struct {
+	status    string
+	agentUp   bool
+	wakeCount int
+}
+
+func NewMockAdapter() *MockAdapter {
+	return &MockAdapter{pcs: make(map[string]mockPC)}
+}
+
+func (a *MockAdapter) state(externalPCID string) mockPC {
+	state, ok := a.pcs[externalPCID]
+	if !ok {
+		return mockPC{status: "available", agentUp: true}
+	}
+	return state
+}
+
+func (a *MockAdapter) GetPCStatus(ctx context.Context, externalPCID string) (PCStatus, error) {
+	a.mu.Lock()
+	state := a.state(externalPCID)
+	a.mu.Unlock()
 	now := time.Now().UTC()
 	return PCStatus{
 		ExternalPCID:     externalPCID,
-		Status:           "available",
-		AgentOnline:      true,
+		Status:           state.status,
+		AgentOnline:      state.agentUp,
 		ControllerOnline: true,
 		LastSeenAt:       &now,
 	}, nil
 }
 
-func (MockAdapter) StartSession(ctx context.Context, cmd StartSessionCommand) (StartSessionResult, error) {
+func (a *MockAdapter) StartSession(ctx context.Context, cmd StartSessionCommand) (StartSessionResult, error) {
 	if cmd.PCExternalID == "" {
 		return StartSessionResult{}, fmt.Errorf("pc external id is required")
 	}
+	a.mu.Lock()
+	state := a.state(cmd.PCExternalID)
+	// A sleeping PC has no running Agent. The mock performs the Controller's
+	// network wake and waits for the simulated Agent reconnect before starting.
+	if state.status == "sleeping" || !state.agentUp {
+		state.status = "available"
+		state.agentUp = true
+		state.wakeCount++
+	}
+	a.pcs[cmd.PCExternalID] = state
+	a.mu.Unlock()
 	startedAt := time.Now().UTC()
 	endsAt := startedAt.Add(time.Duration(cmd.DurationSeconds) * time.Second)
 	return StartSessionResult{
@@ -133,7 +172,7 @@ func (MockAdapter) StartSession(ctx context.Context, cmd StartSessionCommand) (S
 	}, nil
 }
 
-func (MockAdapter) ExtendSession(ctx context.Context, coreSessionID string, cmd ExtendSessionCommand) (ExtendSessionResult, error) {
+func (a *MockAdapter) ExtendSession(ctx context.Context, coreSessionID string, cmd ExtendSessionCommand) (ExtendSessionResult, error) {
 	now := time.Now().UTC()
 	newEndsAt := now.Add(time.Duration(cmd.AddSeconds) * time.Second)
 	return ExtendSessionResult{
@@ -145,7 +184,7 @@ func (MockAdapter) ExtendSession(ctx context.Context, coreSessionID string, cmd 
 	}, nil
 }
 
-func (MockAdapter) EndSession(ctx context.Context, coreSessionID string, cmd EndSessionCommand) (EndSessionResult, error) {
+func (a *MockAdapter) EndSession(ctx context.Context, coreSessionID string, cmd EndSessionCommand) (EndSessionResult, error) {
 	now := time.Now().UTC()
 	return EndSessionResult{
 		Status:        "ended",
@@ -154,24 +193,64 @@ func (MockAdapter) EndSession(ctx context.Context, coreSessionID string, cmd End
 	}, nil
 }
 
-func (MockAdapter) Lock(ctx context.Context, externalPCID, reason string) error {
+func (a *MockAdapter) Lock(ctx context.Context, externalPCID, reason string) error {
+	a.mu.Lock()
+	state := a.state(externalPCID)
+	state.status = "blocked"
+	a.pcs[externalPCID] = state
+	a.mu.Unlock()
 	return nil
 }
 
-func (MockAdapter) Unlock(ctx context.Context, externalPCID, reason string) error {
+func (a *MockAdapter) Unlock(ctx context.Context, externalPCID, reason string) error {
+	a.mu.Lock()
+	state := a.state(externalPCID)
+	state.status = "available"
+	state.agentUp = true
+	a.pcs[externalPCID] = state
+	a.mu.Unlock()
 	return nil
 }
 
-func (MockAdapter) Wake(ctx context.Context, externalPCID string) error {
+func (a *MockAdapter) Wake(ctx context.Context, externalPCID string) error {
+	a.mu.Lock()
+	state := a.state(externalPCID)
+	state.status = "available"
+	state.agentUp = true
+	state.wakeCount++
+	a.pcs[externalPCID] = state
+	a.mu.Unlock()
 	return nil
 }
 
-func (MockAdapter) Sleep(ctx context.Context, externalPCID string) error {
+func (a *MockAdapter) Sleep(ctx context.Context, externalPCID string) error {
+	a.mu.Lock()
+	state := a.state(externalPCID)
+	state.status = "sleeping"
+	state.agentUp = false
+	a.pcs[externalPCID] = state
+	a.mu.Unlock()
 	return nil
 }
 
-func (MockAdapter) SetRepair(ctx context.Context, externalPCID string, on bool) error {
+func (a *MockAdapter) SetRepair(ctx context.Context, externalPCID string, on bool) error {
+	a.mu.Lock()
+	state := a.state(externalPCID)
+	if on {
+		state.status = "maintenance"
+	} else {
+		state.status = "available"
+	}
+	a.pcs[externalPCID] = state
+	a.mu.Unlock()
 	return nil
+}
+
+// WakeCount is intentionally small test-only observability for the local mock.
+func (a *MockAdapter) WakeCount(externalPCID string) int {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return a.state(externalPCID).wakeCount
 }
 
 type HTTPAdapter struct {

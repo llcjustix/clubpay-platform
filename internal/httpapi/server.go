@@ -13,6 +13,7 @@ import (
 	"fmt"
 	"html/template"
 	"math"
+	"net"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -924,6 +925,11 @@ func (s *Server) handleBackofficeCreatePC(w http.ResponseWriter, r *http.Request
 		return
 	}
 	label := defaultString(req.Label, fmt.Sprintf("PC #%02d", req.Number))
+	macAddress, err := normalizeMACAddress(req.MACAddress)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
 	externalPCID := strings.TrimSpace(req.ExternalPCID)
 	if externalPCID == "" {
 		externalPCID = s.uniqueExternalPCID(r.Context(), clubID, label, "")
@@ -938,10 +944,10 @@ func (s *Server) handleBackofficeCreatePC(w http.ResponseWriter, r *http.Request
 	}()
 	var id string
 	err = tx.QueryRow(r.Context(), `
-		INSERT INTO pc_refs (club_id, zone_id, external_pc_id, number, label, status_cache)
-		VALUES ($1, $2, $3, $4, $5, COALESCE(NULLIF($6, ''), 'available'))
+		INSERT INTO pc_refs (club_id, zone_id, external_pc_id, number, label, mac_address, status_cache)
+		VALUES ($1, $2, $3, $4, $5, NULLIF($6, ''), COALESCE(NULLIF($7, ''), 'available'))
 		RETURNING id
-	`, clubID, req.ZoneID, externalPCID, req.Number, label, req.Status).Scan(&id)
+	`, clubID, req.ZoneID, externalPCID, req.Number, label, macAddress, req.Status).Scan(&id)
 	if err != nil {
 		if writeConflictIfUnique(w, err, "pc number or Core external_pc_id already exists in this club") {
 			return
@@ -999,6 +1005,11 @@ func (s *Server) handleBackofficeUpdatePC(w http.ResponseWriter, r *http.Request
 		return
 	}
 	label := defaultString(req.Label, fmt.Sprintf("PC #%02d", req.Number))
+	macAddress, err := normalizeMACAddress(req.MACAddress)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
 	externalPCID := strings.TrimSpace(req.ExternalPCID)
 	if externalPCID == "" {
 		externalPCID = s.uniqueExternalPCID(r.Context(), clubID, label, pcID)
@@ -1013,9 +1024,9 @@ func (s *Server) handleBackofficeUpdatePC(w http.ResponseWriter, r *http.Request
 	}()
 	_, err = tx.Exec(r.Context(), `
 		UPDATE pc_refs
-		SET zone_id = $2, external_pc_id = $3, number = $4, label = $5, status_cache = $6
+		SET zone_id = $2, external_pc_id = $3, number = $4, label = $5, mac_address = NULLIF($6, ''), status_cache = $7
 		WHERE id = $1
-	`, pcID, req.ZoneID, externalPCID, req.Number, label, defaultString(req.Status, "available"))
+	`, pcID, req.ZoneID, externalPCID, req.Number, label, macAddress, defaultString(req.Status, "available"))
 	if err != nil {
 		if writeConflictIfUnique(w, err, "pc number or Core external_pc_id already exists in this club") {
 			return
@@ -3122,7 +3133,7 @@ func (s *Server) edgeSnapshotData(ctx context.Context, clubID string, includeTec
 		return nil, err
 	}
 	pcs, err := s.queryMaps(ctx, `
-		SELECT id, club_id, zone_id, external_pc_id, number, label, status_cache, created_at
+		SELECT id, club_id, zone_id, external_pc_id, number, label, COALESCE(mac_address, '') AS mac_address, status_cache, created_at
 		FROM pc_refs
 		WHERE club_id = $1 AND status_cache <> 'deleted'
 		ORDER BY number
@@ -3384,13 +3395,13 @@ func (s *Server) applyEdgeSnapshotData(ctx context.Context, clubID string, paylo
 	if err := execJSON(ctx, tx, `
 		WITH input AS (
 			SELECT * FROM jsonb_to_recordset($1::jsonb) AS x(
-				id uuid, club_id uuid, zone_id uuid, external_pc_id text, number int, label text, status_cache text, created_at timestamptz
+				id uuid, club_id uuid, zone_id uuid, external_pc_id text, number int, label text, mac_address text, status_cache text, created_at timestamptz
 			)
 		)
-		INSERT INTO pc_refs (id, club_id, zone_id, external_pc_id, number, label, status_cache, created_at)
-		SELECT id, club_id, zone_id, external_pc_id, number, label, COALESCE(NULLIF(status_cache, ''), 'available'), COALESCE(created_at, now())
+		INSERT INTO pc_refs (id, club_id, zone_id, external_pc_id, number, label, mac_address, status_cache, created_at)
+		SELECT id, club_id, zone_id, external_pc_id, number, label, NULLIF(mac_address, ''), COALESCE(NULLIF(status_cache, ''), 'available'), COALESCE(created_at, now())
 		FROM input
-		ON CONFLICT (id) DO UPDATE SET zone_id = EXCLUDED.zone_id, external_pc_id = EXCLUDED.external_pc_id, number = EXCLUDED.number, label = EXCLUDED.label, status_cache = EXCLUDED.status_cache
+		ON CONFLICT (id) DO UPDATE SET zone_id = EXCLUDED.zone_id, external_pc_id = EXCLUDED.external_pc_id, number = EXCLUDED.number, label = EXCLUDED.label, mac_address = EXCLUDED.mac_address, status_cache = EXCLUDED.status_cache
 	`, payload["pcs"]); err != nil {
 		return err
 	}
@@ -5629,8 +5640,21 @@ type pcRequest struct {
 	ExternalPCID string `json:"external_pc_id"`
 	Number       int    `json:"number"`
 	Label        string `json:"label"`
+	MACAddress   string `json:"mac_address"`
 	Status       string `json:"status"`
 	QRToken      string `json:"qr_token"`
+}
+
+func normalizeMACAddress(value string) (string, error) {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return "", nil
+	}
+	mac, err := net.ParseMAC(value)
+	if err != nil || len(mac) != 6 {
+		return "", fmt.Errorf("mac_address must be a valid 6-byte MAC address")
+	}
+	return strings.ToLower(mac.String()), nil
 }
 
 type userRoleRequest struct {
@@ -6378,7 +6402,7 @@ func (s *Server) listTariffs(ctx context.Context, clubID string) ([]map[string]a
 
 func (s *Server) listPCsWithQR(ctx context.Context, clubID string) ([]map[string]any, error) {
 	rows, err := s.db.Query(ctx, `
-		SELECT p.id, p.zone_id, z.name, p.external_pc_id, p.number, p.label,
+		SELECT p.id, p.zone_id, z.name, p.external_pc_id, p.number, p.label, COALESCE(p.mac_address, ''),
 		       CASE WHEN z.status = 'maintenance' THEN 'maintenance' ELSE p.status_cache END,
 		       COALESCE(q.public_token, '')
 		FROM pc_refs p
@@ -6398,14 +6422,14 @@ func (s *Server) listPCsWithQR(ctx context.Context, clubID string) ([]map[string
 	defer rows.Close()
 	result := make([]map[string]any, 0)
 	for rows.Next() {
-		var id, zoneID, zoneName, externalID, label, status, token string
+		var id, zoneID, zoneName, externalID, label, macAddress, status, token string
 		var number int
-		if err := rows.Scan(&id, &zoneID, &zoneName, &externalID, &number, &label, &status, &token); err != nil {
+		if err := rows.Scan(&id, &zoneID, &zoneName, &externalID, &number, &label, &macAddress, &status, &token); err != nil {
 			return nil, err
 		}
 		result = append(result, map[string]any{
 			"id": id, "zone_id": zoneID, "zone": zoneName, "external_pc_id": externalID, "number": number,
-			"label": label, "status": status, "qr_token": token, "qr_url": qrURL(s.cfg.FrontendBaseURL, token),
+			"label": label, "mac_address": macAddress, "status": status, "qr_token": token, "qr_url": qrURL(s.cfg.FrontendBaseURL, token),
 		})
 	}
 	return result, nil

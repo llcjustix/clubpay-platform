@@ -78,6 +78,55 @@ func TestWSControllerStartSessionCommand(t *testing.T) {
 	}
 }
 
+func TestWSControllerWakesAndWaitsForAgentBeforeStartingSession(t *testing.T) {
+	controller := NewWSController("secret", time.Second)
+	server := httptest.NewServer(http.HandlerFunc(controller.ServeHTTP))
+	defer server.Close()
+
+	var agentConn *websocket.Conn
+	controller.SetWakeHandler(func(ctx context.Context, externalPCID string) error {
+		if externalPCID != "pc-001" {
+			t.Fatalf("wake requested for %q", externalPCID)
+		}
+		conn, _, err := websocket.DefaultDialer.Dial(wsURL(server.URL)+"?external_pc_id=pc-001&agent_token=secret", nil)
+		if err != nil {
+			return err
+		}
+		agentConn = conn
+		go func() {
+			var command commandMessage
+			if err := conn.ReadJSON(&command); err != nil {
+				t.Errorf("read start command: %v", err)
+				return
+			}
+			if command.Name != "start_session" {
+				t.Errorf("command name = %q", command.Name)
+				return
+			}
+			_ = conn.WriteJSON(commandResult{
+				Type: "command_result", CommandID: command.CommandID, Status: "ok",
+				Payload: map[string]any{"core_session_id": "core-session-after-wake", "external_pc_id": "pc-001"},
+			})
+		}()
+		return nil
+	}, time.Second)
+	defer func() {
+		if agentConn != nil {
+			_ = agentConn.Close()
+		}
+	}()
+
+	result, err := controller.StartSession(context.Background(), StartSessionCommand{
+		GrantID: "grant-1", PCExternalID: "pc-001", DurationSeconds: 3600,
+	})
+	if err != nil {
+		t.Fatalf("start after wake: %v", err)
+	}
+	if result.CoreSessionID != "core-session-after-wake" {
+		t.Fatalf("core session id = %q", result.CoreSessionID)
+	}
+}
+
 func TestWSControllerForwardsEvents(t *testing.T) {
 	controller := NewWSController("secret", time.Second)
 	events := make(chan EventMessage, 1)

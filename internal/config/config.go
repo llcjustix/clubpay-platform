@@ -30,10 +30,13 @@ type Config struct {
 	PlatformFeeBPS         int
 	SplitPaymentsEnabled   bool
 
-	CoreMode      string
-	CoreBaseURL   string
-	CoreToken     string
-	CoreTimeoutMS int
+	CoreMode         string
+	CoreBaseURL      string
+	CoreToken        string
+	CoreTimeoutMS    int
+	WOLEnabled       bool
+	WOLBroadcastAddr string
+	WOLWaitSeconds   int
 
 	EdgeNodeID              string
 	EdgeClubID              string
@@ -83,6 +86,9 @@ func Load() (Config, error) {
 		CoreBaseURL:             strings.TrimRight(env("CORE_BASE_URL", "http://controller.local:8081"), "/"),
 		CoreToken:               env("CORE_TOKEN", ""),
 		CoreTimeoutMS:           envInt("CORE_TIMEOUT_MS", 10000),
+		WOLEnabled:              envBool("WOL_ENABLED", false),
+		WOLBroadcastAddr:        env("WOL_BROADCAST_ADDR", "255.255.255.255:9"),
+		WOLWaitSeconds:          envInt("WOL_WAIT_SECONDS", 60),
 		EdgeNodeID:              env("EDGE_NODE_ID", ""),
 		EdgeClubID:              env("EDGE_CLUB_ID", ""),
 		EdgeSyncToken:           env("EDGE_SYNC_TOKEN", ""),

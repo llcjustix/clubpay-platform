@@ -1,0 +1,1 @@
+ALTER TABLE pc_refs ADD COLUMN IF NOT EXISTS mac_address TEXT;

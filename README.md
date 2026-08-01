@@ -186,6 +186,10 @@ CORE_MODE=mock
 ```bash
 CORE_MODE=ws
 CORE_TOKEN=shared-secret
+# Включать только на локальном Controller в сети клуба.
+WOL_ENABLED=true
+WOL_BROADCAST_ADDR=255.255.255.255:9
+WOL_WAIT_SECONDS=60
 ```
 
 Agent подключается:
@@ -195,6 +199,12 @@ GET /api/core/ws?external_pc_id=pc-001&agent_token=shared-secret
 ```
 
 Также можно передать токен через `Authorization: Bearer <CORE_TOKEN>` или `X-Agent-Token: <CORE_TOKEN>`.
+
+### Пробуждение спящего ПК (Wake-on-LAN)
+
+Это работает только на локальном Controller клуба (Raspberry Pi/edge или manager), потому что именно он находится в одной сети с игровыми ПК. В карточке каждого ПК в админке укажите его MAC-адрес. При оплате спящего ПК Controller отправляет WoL magic packet на MAC, ждёт переподключения Agent до `WOL_WAIT_SECONDS`, затем отправляет обычную команду `start_session`. Если Agent не вернулся за это время, оплата остаётся без запуска с причиной `wol_failed`.
+
+Для Pi нужны `NODE_MODE=edge` (или `manager`), `CORE_MODE=ws`, `WOL_ENABLED=true`, правильный `EDGE_CLUB_ID` и разрешённый WoL в BIOS/Windows/сетевом оборудовании. Облачный API WoL не отправляет: он не имеет доступа к LAN клуба.
 
 Перед стартом Agent может забрать конфиг ПК:
 

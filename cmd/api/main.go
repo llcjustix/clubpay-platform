@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"log"
 	"net/http"
 	"os"
@@ -33,11 +34,34 @@ func main() {
 		log.Fatalf("run migrations: %v", err)
 	}
 
-	var coreAdapter core.Adapter = core.MockAdapter{}
+	var coreAdapter core.Adapter = core.NewMockAdapter()
+	var wsController *core.WSController
 	if strings.EqualFold(cfg.CoreMode, "http") {
 		coreAdapter = core.NewHTTPAdapter(cfg.CoreBaseURL, cfg.CoreToken, time.Duration(cfg.CoreTimeoutMS)*time.Millisecond)
 	} else if strings.EqualFold(cfg.CoreMode, "ws") || strings.EqualFold(cfg.CoreMode, "websocket") {
-		coreAdapter = core.NewWSController(cfg.CoreToken, time.Duration(cfg.CoreTimeoutMS)*time.Millisecond)
+		wsController = core.NewWSController(cfg.CoreToken, time.Duration(cfg.CoreTimeoutMS)*time.Millisecond)
+		coreAdapter = wsController
+	}
+	if wsController != nil && cfg.WOLEnabled && (cfg.NodeMode == "edge" || cfg.NodeMode == "manager") {
+		wsController.SetWakeHandler(func(ctx context.Context, externalPCID string) error {
+			var macAddress string
+			err := pool.QueryRow(ctx, `
+				SELECT COALESCE(mac_address, '')
+				FROM pc_refs
+				WHERE external_pc_id = $1
+				  AND status_cache <> 'deleted'
+				  AND (NULLIF($2, '')::uuid IS NULL OR club_id = NULLIF($2, '')::uuid)
+				ORDER BY created_at DESC
+				LIMIT 1
+			`, externalPCID, cfg.EdgeClubID).Scan(&macAddress)
+			if err != nil {
+				return fmt.Errorf("lookup PC MAC: %w", err)
+			}
+			if strings.TrimSpace(macAddress) == "" {
+				return fmt.Errorf("PC %s has no MAC address configured", externalPCID)
+			}
+			return core.SendWakeOnLAN(ctx, macAddress, cfg.WOLBroadcastAddr)
+		}, time.Duration(cfg.WOLWaitSeconds)*time.Second)
 	}
 	server := httpapi.NewServer(cfg, pool, coreAdapter)
 	syncCtx, syncCancel := context.WithCancel(context.Background())
