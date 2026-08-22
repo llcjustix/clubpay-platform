@@ -181,6 +181,7 @@ func (c *WSController) StartSession(ctx context.Context, cmd StartSessionCommand
 		"granted_seconds":  duration,
 		"duration_seconds": duration,
 		"duration_minutes": cmd.DurationMinutes,
+		"grace_seconds":    cmd.GraceSeconds,
 		"ends_at":          endsAt.Format(time.RFC3339),
 		"start_at":         now.Format(time.RFC3339),
 		"source":           cmd.Source,

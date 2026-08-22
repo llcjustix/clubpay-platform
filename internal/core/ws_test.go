@@ -52,6 +52,7 @@ func TestWSControllerStartSessionCommand(t *testing.T) {
 		GrantID:         "grant-1",
 		PCExternalID:    "pc-001",
 		DurationSeconds: 3600,
+		GraceSeconds:    180,
 		Source:          "online_payment",
 		PaymentOrderID:  "order-1",
 	})
@@ -72,6 +73,9 @@ func TestWSControllerStartSessionCommand(t *testing.T) {
 		}
 		if got := intValue(cmd.Payload, "duration_seconds"); got != 3600 {
 			t.Fatalf("duration_seconds = %d", got)
+		}
+		if got := intValue(cmd.Payload, "grace_seconds"); got != 180 {
+			t.Fatalf("grace_seconds = %d", got)
 		}
 	case <-time.After(time.Second):
 		t.Fatal("command was not sent")

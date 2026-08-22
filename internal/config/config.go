@@ -102,7 +102,7 @@ func Load() (Config, error) {
 		TelegramPollingEnabled:  envBool("TELEGRAM_POLLING_ENABLED", !strings.EqualFold(appEnv, "production")),
 		VoucherMinMinutes:       envInt("VOUCHER_MIN_MINUTES", 5),
 		VoucherTTLDays:          envInt("VOUCHER_TTL_DAYS", 30),
-		SessionGraceSeconds:     envInt("SESSION_GRACE_SECONDS", 600),
+		SessionGraceSeconds:     envInt("SESSION_GRACE_SECONDS", 180),
 	}
 	if cfg.DatabaseURL == "" {
 		return Config{}, fmt.Errorf("DATABASE_URL is required")

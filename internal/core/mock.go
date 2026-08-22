@@ -32,6 +32,7 @@ type StartSessionCommand struct {
 	PCExternalID    string `json:"external_pc_id"`
 	DurationSeconds int    `json:"duration_seconds"`
 	DurationMinutes int    `json:"duration_minutes,omitempty"`
+	GraceSeconds    int    `json:"grace_seconds"`
 	Source          string `json:"source"`
 	PaymentOrderID  string `json:"payment_order_id,omitempty"`
 	InvoiceID       string `json:"invoice_id,omitempty"`
