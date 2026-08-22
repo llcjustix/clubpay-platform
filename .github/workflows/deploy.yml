@@ -75,14 +75,12 @@ jobs:
           docker container prune --force
           df -h .
 
-      - name: Sync docker-compose
-        run: |
-          mkdir -p /home/ubuntu/clubpay-platform
-          cp ./docker-compose.yml /home/ubuntu/clubpay-platform/docker-compose.yml
-
       - name: Deploy
         run: |
-          cd /home/ubuntu/clubpay-platform
+          # Deploy from the checked-out workspace. The runner and deployment
+          # host are the same machine, and copying this file to /home can fail
+          # when that filesystem is full even though the image build succeeded.
+          cd "$GITHUB_WORKSPACE"
 
           export DB_HOST="${{ secrets.DB_HOST }}"
           export DB_PORT="${{ secrets.DB_PORT }}"
@@ -94,6 +92,5 @@ jobs:
           export CORE_MODE="ws"
           export CORE_TOKEN="${{ secrets.CORE_TOKEN }}"
 
-          docker compose pull
-          docker compose up -d --remove-orphans
+          docker compose up -d --remove-orphans --force-recreate
           docker ps
