@@ -65,6 +65,16 @@ jobs:
           docker push ${{ secrets.DOCKER_USERNAME }}/clubpay-web:${{ github.sha }}
           docker push ${{ secrets.DOCKER_USERNAME }}/clubpay-web:latest
 
+      # The runner is also the deployment host. Old build layers can fill its
+      # disk after a few releases; keep running containers and volumes intact.
+      - name: Reclaim unused Docker disk space
+        run: |
+          df -h .
+          docker builder prune --all --force
+          docker image prune --all --force
+          docker container prune --force
+          df -h .
+
       - name: Sync docker-compose
         run: |
           mkdir -p /home/ubuntu/clubpay-platform
