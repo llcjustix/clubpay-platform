@@ -5263,6 +5263,7 @@ func (s *Server) attachVoucherRecipientAndSend(ctx context.Context, voucherID, c
 		delivery := map[string]any{"status": "telegram_not_configured", "phone": normalizedPhone}
 		if s.cfg.TelegramBotUsername != "" {
 			delivery["telegram_link"] = fmt.Sprintf("https://t.me/%s", s.cfg.TelegramBotUsername)
+			delivery["telegram_bot_username"] = s.cfg.TelegramBotUsername
 		}
 		return delivery, nil
 	}
@@ -5278,6 +5279,9 @@ func (s *Server) attachVoucherRecipientAndSend(ctx context.Context, voucherID, c
 		if link, expiresAt, linkErr := s.createTelegramLink(ctx, normalizedPhone); linkErr == nil {
 			delivery["telegram_link"] = link
 			delivery["link_expires_at"] = expiresAt
+			if username := telegramUsernameFromLink(link); username != "" {
+				delivery["telegram_bot_username"] = username
+			}
 		} else {
 			_, _ = s.db.Exec(ctx, `UPDATE vouchers SET delivery_status = 'telegram_link_failed' WHERE id = $1`, voucherID)
 			delivery["status"] = "telegram_link_failed"
@@ -5294,6 +5298,14 @@ func (s *Server) attachVoucherRecipientAndSend(ctx context.Context, voucherID, c
 	}
 	_, _ = s.db.Exec(ctx, `UPDATE vouchers SET delivery_status = 'sent', delivered_at = now() WHERE id = $1`, voucherID)
 	return map[string]any{"status": "sent", "phone": normalizedPhone}, nil
+}
+
+func telegramUsernameFromLink(link string) string {
+	parsed, err := url.Parse(link)
+	if err != nil || !strings.EqualFold(parsed.Host, "t.me") {
+		return ""
+	}
+	return strings.Trim(strings.TrimSpace(parsed.Path), "/")
 }
 
 func (s *Server) handleTelegramWebhook(w http.ResponseWriter, r *http.Request) {
