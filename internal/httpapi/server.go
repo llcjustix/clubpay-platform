@@ -152,6 +152,9 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("POST /api/payments/mock/success/{invoice_id}", s.handleMockPaymentSuccess)
 	mux.HandleFunc("POST /api/core/events", s.handleCoreEvent)
 	mux.HandleFunc("GET /api/core/bootstrap", s.handleCoreBootstrap)
+	// Called only by an authenticated Agent when a player ends their own session from the kiosk UI.
+	// It deliberately uses the same voucher/Telegram delivery flow as the admin endpoint below.
+	mux.HandleFunc("POST /api/core/agent/session/end", s.handleAgentEndSession)
 	if coreWS, ok := s.core.(http.Handler); ok {
 		mux.Handle("GET /api/core/ws", coreWS)
 	}
@@ -4366,6 +4369,10 @@ func (s *Server) handleAdminEndGrant(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
+	if err := s.attachExistingVoucher(r.Context(), grantID, result); err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
 	if strings.TrimSpace(req.RecipientPhone) != "" {
 		if voucher, ok := result["voucher"].(map[string]any); ok {
 			code, _ := voucher["code"].(string)
@@ -4373,6 +4380,80 @@ func (s *Server) handleAdminEndGrant(w http.ResponseWriter, r *http.Request) {
 			delivery, _ := s.attachVoucherRecipientAndSend(r.Context(), fmt.Sprint(voucher["id"]), code, seconds, req.RecipientPhone, "manager_panel")
 			result["voucher_delivery"] = delivery
 		}
+	}
+	writeJSON(w, http.StatusOK, result)
+}
+
+// handleAgentEndSession is the player-facing equivalent of the admin "end session" action.
+// The Agent is authenticated with CORE_TOKEN, but can end only the current session bound to its own
+// external_pc_id. The remaining time is turned into the same Telegram-delivered voucher as in admin.
+func (s *Server) handleAgentEndSession(w http.ResponseWriter, r *http.Request) {
+	if !s.requireCore(w, r) {
+		return
+	}
+	var req agentEndSessionRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid json")
+		return
+	}
+	req.ExternalPCID = strings.TrimSpace(req.ExternalPCID)
+	req.CoreSessionID = strings.TrimSpace(req.CoreSessionID)
+	req.RecipientPhone = strings.TrimSpace(req.RecipientPhone)
+	if req.ExternalPCID == "" || req.CoreSessionID == "" {
+		writeError(w, http.StatusBadRequest, "external_pc_id and core_session_id are required")
+		return
+	}
+	if req.RecipientPhone == "" || !req.RecipientConsent {
+		writeError(w, http.StatusBadRequest, "recipient phone and consent are required")
+		return
+	}
+
+	var grantID, externalPCID string
+	err := s.db.QueryRow(r.Context(), `
+		SELECT g.id, p.external_pc_id
+		FROM game_access_grants g
+		JOIN pc_refs p ON p.id = g.pc_ref_id
+		WHERE g.core_session_id = $1
+		  AND p.external_pc_id = $2
+		  AND g.status = 'accepted'
+		ORDER BY g.accepted_at DESC NULLS LAST, g.created_at DESC
+		LIMIT 1
+	`, req.CoreSessionID, req.ExternalPCID).Scan(&grantID, &externalPCID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		writeError(w, http.StatusNotFound, "active session not found")
+		return
+	}
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	endResult, err := s.core.EndSession(r.Context(), req.CoreSessionID, core.EndSessionCommand{
+		RequestID:    "client_end_" + grantID + "_" + randomHex(4),
+		ExternalPCID: externalPCID,
+		Reason:       "CLIENT_LEFT",
+		EndedBy:      map[string]string{"type": "client", "id": "kiosk"},
+		CreatedAt:    time.Now().UTC().Format(time.RFC3339),
+	})
+	if err != nil {
+		writeError(w, http.StatusBadGateway, "agent did not confirm session end: "+err.Error())
+		return
+	}
+
+	result, err := s.finishGrant(r.Context(), grantID, "client_left", endResult.RemainingSeconds)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if err := s.attachExistingVoucher(r.Context(), grantID, result); err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if voucher, ok := result["voucher"].(map[string]any); ok {
+		code, _ := voucher["code"].(string)
+		seconds, _ := voucher["seconds_left"].(int)
+		delivery, _ := s.attachVoucherRecipientAndSend(r.Context(), fmt.Sprint(voucher["id"]), code, seconds, req.RecipientPhone, "kiosk_client")
+		result["voucher_delivery"] = delivery
 	}
 	writeJSON(w, http.StatusOK, result)
 }
@@ -5131,6 +5212,33 @@ func (s *Server) finishGrant(ctx context.Context, grantID, reason string, remain
 	return result, nil
 }
 
+// attachExistingVoucher makes an end response deterministic when the Agent's session_ended event
+// reaches Core immediately before the command handler finishes the same end request. finishGrant is
+// idempotent, but its second call otherwise would not include the already-created voucher.
+func (s *Server) attachExistingVoucher(ctx context.Context, grantID string, result map[string]any) error {
+	if _, ok := result["voucher"]; ok {
+		return nil
+	}
+	var id, code string
+	var minutes, seconds int
+	err := s.db.QueryRow(ctx, `
+		SELECT v.id, COALESCE(v.public_code, ''), v.minutes_left, v.seconds_left
+		FROM game_access_grants g
+		JOIN vouchers v ON v.id = g.returned_voucher_id
+		WHERE g.id = $1
+	`, grantID).Scan(&id, &code, &minutes, &seconds)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	result["voucher"] = map[string]any{
+		"id": id, "code": code, "minutes_left": minutes, "seconds_left": seconds,
+	}
+	return nil
+}
+
 func (s *Server) attachVoucherRecipientAndSend(ctx context.Context, voucherID, code string, seconds int, phone, consentSource string) (map[string]any, error) {
 	normalizedPhone := normalizePhone(phone)
 	if voucherID == "" || normalizedPhone == "" {
@@ -5823,6 +5931,13 @@ type endGrantRequest struct {
 	Reason           string `json:"reason"`
 	RemainingMinutes int    `json:"remaining_minutes"`
 	RemainingSeconds int    `json:"remaining_seconds"`
+	RecipientPhone   string `json:"recipient_phone"`
+	RecipientConsent bool   `json:"recipient_consent"`
+}
+
+type agentEndSessionRequest struct {
+	ExternalPCID     string `json:"external_pc_id"`
+	CoreSessionID    string `json:"core_session_id"`
 	RecipientPhone   string `json:"recipient_phone"`
 	RecipientConsent bool   `json:"recipient_consent"`
 }
