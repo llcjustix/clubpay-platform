@@ -1529,6 +1529,13 @@ textarea:focus {
   background: var(--canvas);
 }
 
+/* Mobile Safari zooms a page when a form control is smaller than 16px. */
+.qr-screen input,
+.qr-screen select,
+.qr-screen textarea {
+  font-size: 16px;
+}
+
 .qr-phone {
   width: min(100%, 440px);
   min-height: 100dvh;
