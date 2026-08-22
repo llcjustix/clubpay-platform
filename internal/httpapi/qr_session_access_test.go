@@ -57,3 +57,21 @@ func TestSessionExtendQRActive(t *testing.T) {
 		})
 	}
 }
+
+func TestAgentEndReason(t *testing.T) {
+	tests := map[string]string{
+		"time_expired":  "TIME_UP",
+		"TIME_UP":       "TIME_UP",
+		"refund":        "REFUND",
+		"client_left":   "CLIENT_LEFT",
+		"error":         "ERROR",
+		"admin_request": "MANAGER",
+		"":              "MANAGER",
+	}
+
+	for input, want := range tests {
+		if got := agentEndReason(input); got != want {
+			t.Fatalf("agentEndReason(%q) = %q, want %q", input, got, want)
+		}
+	}
+}

@@ -4340,13 +4340,19 @@ func (s *Server) handleAdminEndGrant(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if coreSessionID != nil && *coreSessionID != "" {
-		_, _ = s.core.EndSession(r.Context(), *coreSessionID, core.EndSessionCommand{
+		if _, err := s.core.EndSession(r.Context(), *coreSessionID, core.EndSessionCommand{
 			RequestID:    "end_" + grantID + "_" + randomHex(4),
 			ExternalPCID: externalPCID,
-			Reason:       reason,
-			EndedBy:      map[string]string{"type": "admin", "id": "mvp-admin"},
-			CreatedAt:    time.Now().UTC().Format(time.RFC3339),
-		})
+			// The Agent contract accepts only its fixed end-reason values. The
+			// administrator-facing reason is still recorded below in Clubpay, but
+			// must not be sent verbatim to the Agent (for example "admin_request").
+			Reason:    agentEndReason(reason),
+			EndedBy:   map[string]string{"type": "admin", "id": "mvp-admin"},
+			CreatedAt: time.Now().UTC().Format(time.RFC3339),
+		}); err != nil {
+			writeError(w, http.StatusBadGateway, "agent did not confirm session end: "+err.Error())
+			return
+		}
 	}
 
 	if req.RemainingSeconds > 0 {
@@ -6693,6 +6699,23 @@ func defaultString(value, fallback string) string {
 		return fallback
 	}
 	return value
+}
+
+// agentEndReason translates Clubpay's free-form/admin reasons to the fixed
+// vocabulary accepted by the Agent Core/Agent contract.
+func agentEndReason(reason string) string {
+	switch strings.ToUpper(strings.TrimSpace(reason)) {
+	case "TIME_UP", "TIME_EXPIRED", "TIME_EXPIRES", "TIMEOUT":
+		return "TIME_UP"
+	case "REFUND", "REFUNDED":
+		return "REFUND"
+	case "CLIENT_LEFT", "CLIENT_LEFT_EARLY":
+		return "CLIENT_LEFT"
+	case "ERROR", "FAILED":
+		return "ERROR"
+	default:
+		return "MANAGER"
+	}
 }
 
 func (s *Server) paymentProviderOptions(clickMerchantID, clickServiceID, clickMerchantUserID, clickSecretKey, paymeMerchantID, paymeSecretKey string) []map[string]any {
