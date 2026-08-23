@@ -560,7 +560,7 @@ function HomePage(props: WorkspaceProps) {
       <WorkspaceHeader {...props} eyebrow="Clubpay" title="Рабочая панель" />
       <Panel>
         <div className="link-grid">
-          <LinkButton href="/qr/pc-001" icon={<Monitor size={18} />}>Открыть QR PC #01</LinkButton>
+          {canOpenSettings && <LinkButton href="/settings/pcs" icon={<QrCode size={18} />}>QR-коды компьютеров</LinkButton>}
           <LinkButton href="/admin" icon={<Activity size={18} />}>Панель менеджера</LinkButton>
           {canOpenOwner && <LinkButton href="/reports" icon={<Banknote size={18} />}>Дашборд</LinkButton>}
           {canOpenSettings && <LinkButton href="/settings" icon={<Settings size={18} />}>Настройки клуба</LinkButton>}
@@ -1797,6 +1797,30 @@ function SettingsPage({ auth, selectedClubID, currentPath, onClubChange, onLogou
     );
   }
 
+  function printPCQR(pc: ManagedPC) {
+    if (!pc.qr_url) {
+      setError('Для этого ПК QR ещё не создан');
+      return;
+    }
+    const popup = window.open('', '_blank', 'noopener,noreferrer,width=520,height=720');
+    if (!popup) {
+      setError('Браузер заблокировал окно печати. Разрешите всплывающие окна для Clubpay.');
+      return;
+    }
+    const escape = (value: string) => value.replace(/[&<>'"]/g, (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;' }[char] || char));
+    const qrImage = `https://api.qrserver.com/v1/create-qr-code/?size=360x360&margin=10&data=${encodeURIComponent(pc.qr_url)}`;
+    popup.document.write(`<!doctype html><html lang="ru"><head><meta charset="utf-8"><title>QR ${escape(pc.label)}</title><style>body{margin:0;min-height:100vh;display:grid;place-items:center;font-family:Arial,sans-serif;color:#111}.card{width:390px;text-align:center;border:1px solid #ddd;border-radius:20px;padding:32px}.club{font-size:14px;color:#666}.pc{font-size:30px;font-weight:800;margin:8px 0 22px}.qr{width:360px;height:360px}.note{margin:20px 0 0;font-size:15px;line-height:1.45;color:#444}@media print{.card{border:0}}</style></head><body><main class="card"><div class="club">${escape(clubForm?.name || 'ClubPay')}</div><div class="pc">${escape(pc.label)}</div><img class="qr" src="${qrImage}" alt="QR-код оплаты" onload="window.print()"><p class="note">Отсканируйте QR, чтобы оплатить игровое время на этом ПК.</p></main></body></html>`);
+    popup.document.close();
+  }
+
+  async function rotatePCQR(pc: ManagedPC) {
+    if (!window.confirm(`Перевыпустить QR для «${pc.label}»? Старый напечатанный QR сразу перестанет работать.`)) return;
+    await persistSettings(
+      () => api(`/api/backoffice/pcs/${pc.id}/qr/rotate`, { method: 'POST' }),
+      'Новый QR создан. Распечатайте и замените старую наклейку.',
+    );
+  }
+
   async function saveUser() {
     const path = userForm.id ? `/api/backoffice/users/${userForm.id}/clubs/${selectedClubID}` : `/api/backoffice/clubs/${selectedClubID}/users`;
     const payload = { ...userForm, role: canManageNetwork && userForm.role === 'owner' ? 'owner' : 'admin' };
@@ -2072,7 +2096,7 @@ function SettingsPage({ auth, selectedClubID, currentPath, onClubChange, onLogou
 
           {!creatingClub && settingsSection === 'pcs' && (
           <Panel className="stack settings-wide">
-            <SectionTitle icon={<Monitor size={18} />} title="Компьютеры" caption="Добавьте компьютеры клуба. QR создается автоматически после сохранения ПК." />
+            <SectionTitle icon={<Monitor size={18} />} title="Компьютеры" caption="Для каждого ПК QR создаётся автоматически. Распечатайте его и разместите у компьютера; системный ID в QR не раскрывается." />
             <div className="table-filter">
               <label>
                 Зона
@@ -2097,8 +2121,14 @@ function SettingsPage({ auth, selectedClubID, currentPath, onClubChange, onLogou
                     <tr key={pc.id}>
                       <td>{pc.label} · #{pc.number}</td>
                       <td>{pc.zone}</td>
-                      <td>{pc.qr_url ? <AppLink className="text-link" href={pc.qr_url}>{pc.qr_token}</AppLink> : '-'}</td>
-                      <td><Button size="sm" variant="ghost" onClick={() => { setPCForm(pc); setShowPCForm(true); }}>Изменить</Button></td>
+                      <td>{pc.qr_url ? <span className="text-link">создан</span> : '-'}</td>
+                      <td>
+                        <div className="row-actions">
+                          <Button size="sm" variant="ghost" icon={<QrCode size={14} />} onClick={() => printPCQR(pc)}>Печать</Button>
+                          <Button size="sm" variant="ghost" icon={<RefreshCw size={14} />} onClick={() => rotatePCQR(pc)}>Перевыпустить</Button>
+                          <Button size="sm" variant="ghost" onClick={() => { setPCForm(pc); setShowPCForm(true); }}>Изменить</Button>
+                        </div>
+                      </td>
                     </tr>
                   ))}
                 </tbody>

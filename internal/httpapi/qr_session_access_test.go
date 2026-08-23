@@ -1,9 +1,24 @@
 package httpapi
 
 import (
+	"strings"
 	"testing"
 	"time"
 )
+
+func TestNewStaticQRToken(t *testing.T) {
+	first := newStaticQRToken()
+	second := newStaticQRToken()
+	if !strings.HasPrefix(first, "pc_") {
+		t.Fatalf("token %q does not have static QR prefix", first)
+	}
+	if len(first) != len("pc_")+64 {
+		t.Fatalf("token length = %d, want %d", len(first), len("pc_")+64)
+	}
+	if first == second {
+		t.Fatal("two generated static QR tokens are equal")
+	}
+}
 
 func TestCanUseQRForSession(t *testing.T) {
 	tests := []struct {

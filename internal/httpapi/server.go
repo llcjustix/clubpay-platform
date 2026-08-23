@@ -188,6 +188,7 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("DELETE /api/backoffice/tariffs/{tariff_id}", s.handleBackofficeDeleteTariff)
 	mux.HandleFunc("POST /api/backoffice/clubs/{club_id}/pcs", s.handleBackofficeCreatePC)
 	mux.HandleFunc("POST /api/backoffice/pcs/{pc_id}", s.handleBackofficeUpdatePC)
+	mux.HandleFunc("POST /api/backoffice/pcs/{pc_id}/qr/rotate", s.handleBackofficeRotatePCQR)
 	mux.HandleFunc("DELETE /api/backoffice/pcs/{pc_id}", s.handleBackofficeDeletePC)
 	mux.HandleFunc("POST /api/backoffice/clubs/{club_id}/users", s.handleBackofficeCreateUser)
 	mux.HandleFunc("POST /api/backoffice/users/{user_id}/clubs/{club_id}", s.handleBackofficeUpdateUserRole)
@@ -958,19 +959,9 @@ func (s *Server) handleBackofficeCreatePC(w http.ResponseWriter, r *http.Request
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	token := strings.TrimSpace(req.QRToken)
-	if token == "" {
-		token = fmt.Sprintf("%s-%s", strings.TrimSuffix(slugify(label), "-"), randomHex(3))
-	}
-	_, err = tx.Exec(r.Context(), `
-		INSERT INTO qr_codes (club_id, pc_ref_id, public_token, type, status)
-		VALUES ($1, $2, $3, 'static_pc', 'active')
-	`, clubID, id, token)
+	token, err := insertStaticQRCode(r.Context(), tx, clubID, id)
 	if err != nil {
-		if writeConflictIfUnique(w, err, "qr token already exists") {
-			return
-		}
-		writeError(w, http.StatusBadRequest, err.Error())
+		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 	if err := tx.Commit(r.Context()); err != nil {
@@ -1037,39 +1028,54 @@ func (s *Server) handleBackofficeUpdatePC(w http.ResponseWriter, r *http.Request
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	if strings.TrimSpace(req.QRToken) != "" {
-		token := strings.TrimSpace(req.QRToken)
-		var existingPCID string
-		err = tx.QueryRow(r.Context(), `SELECT pc_ref_id FROM qr_codes WHERE public_token = $1`, token).Scan(&existingPCID)
-		if err != nil && !errors.Is(err, pgx.ErrNoRows) {
-			writeError(w, http.StatusBadRequest, err.Error())
-			return
-		}
-		if err == nil && existingPCID != pcID {
-			writeError(w, http.StatusConflict, "qr token already belongs to another pc")
-			return
-		}
-		if errors.Is(err, pgx.ErrNoRows) {
-			_, err = tx.Exec(r.Context(), `
-			INSERT INTO qr_codes (club_id, pc_ref_id, public_token, type, status)
-			VALUES ($1, $2, $3, 'static_pc', 'active')
-		`, clubID, pcID, token)
-		} else {
-			_, err = tx.Exec(r.Context(), `UPDATE qr_codes SET club_id = $2, status = 'active' WHERE public_token = $1`, token, clubID)
-		}
-		if err != nil {
-			if writeConflictIfUnique(w, err, "qr token already exists") {
-				return
-			}
-			writeError(w, http.StatusBadRequest, err.Error())
-			return
-		}
-	}
 	if err := tx.Commit(r.Context()); err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"success": true})
+}
+
+// handleBackofficeRotatePCQR invalidates the old physical QR and issues a new,
+// opaque URL. QR tokens are deliberately server-generated: a label or external
+// PC id must never become a public payment URL.
+func (s *Server) handleBackofficeRotatePCQR(w http.ResponseWriter, r *http.Request) {
+	auth, ok := s.requireAuth(w, r)
+	if !ok {
+		return
+	}
+	pcID := r.PathValue("pc_id")
+	clubID, err := s.clubIDForEntity(r.Context(), "pc_refs", pcID)
+	if err != nil {
+		writeError(w, http.StatusNotFound, "pc not found")
+		return
+	}
+	if _, ok := s.requireClubRole(w, r, auth, clubID, "owner", "manager"); !ok {
+		return
+	}
+	tx, err := s.db.Begin(r.Context())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	defer func() { _ = tx.Rollback(r.Context()) }()
+	if _, err := tx.Exec(r.Context(), `
+		UPDATE qr_codes
+		SET status = 'inactive'
+		WHERE pc_ref_id = $1 AND type = 'static_pc' AND status = 'active'
+	`, pcID); err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	token, err := insertStaticQRCode(r.Context(), tx, clubID, pcID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if err := tx.Commit(r.Context()); err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"qr_token": token, "qr_url": qrURL(s.cfg.FrontendBaseURL, token)})
 }
 
 func (s *Server) handleBackofficeDeletePC(w http.ResponseWriter, r *http.Request) {
@@ -6753,6 +6759,28 @@ func randomHex(bytesLen int) string {
 		return fmt.Sprintf("%d", time.Now().UnixNano())
 	}
 	return hex.EncodeToString(bytes)
+}
+
+func newStaticQRToken() string {
+	return "pc_" + randomHex(32)
+}
+
+func insertStaticQRCode(ctx context.Context, tx pgx.Tx, clubID, pcID string) (string, error) {
+	for attempt := 0; attempt < 5; attempt++ {
+		token := newStaticQRToken()
+		_, err := tx.Exec(ctx, `
+			INSERT INTO qr_codes (club_id, pc_ref_id, public_token, type, status)
+			VALUES ($1, $2, $3, 'static_pc', 'active')
+		`, clubID, pcID, token)
+		if err == nil {
+			return token, nil
+		}
+		var pgErr *pgconn.PgError
+		if !errors.As(err, &pgErr) || pgErr.Code != "23505" {
+			return "", err
+		}
+	}
+	return "", fmt.Errorf("could not generate a unique QR token")
 }
 
 func hashCode(code string) string {
