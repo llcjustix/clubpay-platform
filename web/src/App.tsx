@@ -1802,7 +1802,10 @@ function SettingsPage({ auth, selectedClubID, currentPath, onClubChange, onLogou
       setError('Для этого ПК QR ещё не создан');
       return;
     }
-    const popup = window.open('', '_blank', 'noopener,noreferrer,width=520,height=720');
+    // Do not pass `noopener`/`noreferrer` here: Chromium intentionally returns
+    // `null` for that combination even when it did create the blank popup. That
+    // made the UI report a blocked popup and left the print window blank.
+    const popup = window.open('', '_blank', 'width=520,height=720');
     if (!popup) {
       setError('Браузер заблокировал окно печати. Разрешите всплывающие окна для Clubpay.');
       return;
