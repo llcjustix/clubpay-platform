@@ -92,5 +92,11 @@ jobs:
           export CORE_MODE="ws"
           export CORE_TOKEN="${{ secrets.CORE_TOKEN }}"
 
+          # Telegram delivery is optional in local development, but must be
+          # configured explicitly on production deployments.
+          export TELEGRAM_BOT_TOKEN="${{ secrets.TELEGRAM_BOT_TOKEN }}"
+          export TELEGRAM_BOT_USERNAME="clubPay_tg_bot"
+          export TELEGRAM_POLLING_ENABLED="true"
+
           docker compose up -d --remove-orphans --force-recreate
           docker ps
