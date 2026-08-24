@@ -88,6 +88,9 @@ jobs:
           export DB_USER="${{ secrets.DB_USER }}"
           export DB_PASSWORD="${{ secrets.DB_PASSWORD }}"
           export DOCKER_USERNAME="${{ secrets.DOCKER_USERNAME }}"
+          # Use the immutable image created by this run. Do not rely on a
+          # previously cached `latest` image on the self-hosted runner.
+          export IMAGE_TAG="${{ github.sha }}"
 
           export CORE_MODE="ws"
           export CORE_TOKEN="${{ secrets.CORE_TOKEN }}"
@@ -98,5 +101,6 @@ jobs:
           export TELEGRAM_BOT_USERNAME="clubPay_tg_bot"
           export TELEGRAM_POLLING_ENABLED="true"
 
+          docker compose pull api web
           docker compose up -d --remove-orphans --force-recreate
           docker ps

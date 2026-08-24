@@ -21,7 +21,9 @@ services:
   api:
 #    image: golang:1.22-alpine
     # image: clubpay-api:latest
-    image: ${DOCKER_USERNAME}/clubpay-api:latest
+    # Pin deployments to a commit image. Falling back to `latest` keeps local
+    # development convenient, while production passes IMAGE_TAG from Actions.
+    image: ${DOCKER_USERNAME}/clubpay-api:${IMAGE_TAG:-latest}
     mem_limit: 200m
     cpus: 0.2   
 #    working_dir: /app
@@ -88,7 +90,7 @@ services:
   web:
 #    image: node:22-alpine
     # image: clubpay-web:latest
-    image: ${DOCKER_USERNAME}/clubpay-web:latest
+    image: ${DOCKER_USERNAME}/clubpay-web:${IMAGE_TAG:-latest}
     mem_limit: 200m
     cpus: 0.2   
 #    working_dir: /app/web
