@@ -1539,7 +1539,12 @@ function SettingsPage({ auth, selectedClubID, currentPath, onClubChange, onLogou
   const [showZoneForm, setShowZoneForm] = useState(false);
   const [showTariffForm, setShowTariffForm] = useState(false);
   const [showPCForm, setShowPCForm] = useState(false);
-  const [showUserForm, setShowUserForm] = useState(false);
+  // Keep a shareable fallback for the access form. This is useful when a
+  // browser extension or an aggressive popup/click blocker interferes with
+  // the inline "New user" button in the settings UI.
+  const [showUserForm, setShowUserForm] = useState(
+    () => new URLSearchParams(window.location.search).get('new-user') === '1',
+  );
   const [showNetworkForm, setShowNetworkForm] = useState(false);
   const [tariffZoneFilter, setTariffZoneFilter] = useState('');
   const [pcZoneFilter, setPCZoneFilter] = useState('');
