@@ -1563,7 +1563,10 @@ function SettingsPage({ auth, selectedClubID, currentPath, onClubChange, onLogou
       setShowZoneForm(false);
       setShowTariffForm(false);
       setShowPCForm(false);
-      setShowUserForm(false);
+      // Do not immediately close the direct access form after the settings
+      // payload arrives. The `?new-user=1` link is used as a safe fallback
+      // when a browser extension prevents the normal button click.
+      setShowUserForm(new URLSearchParams(window.location.search).get('new-user') === '1');
       setTariffZoneFilter((current) => current && payload.zones.some((zone) => zone.id === current) ? current : payload.zones[0]?.id || '');
       setPCZoneFilter((current) => current && payload.zones.some((zone) => zone.id === current) ? current : '');
       setError('');
