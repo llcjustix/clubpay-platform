@@ -4477,7 +4477,8 @@ func (s *Server) handleAdminEndGrant(w http.ResponseWriter, r *http.Request) {
 
 // handleAgentEndSession is the player-facing equivalent of the admin "end session" action.
 // The Agent is authenticated with CORE_TOKEN, but can end only the current session bound to its own
-// external_pc_id. The remaining time is turned into the same Telegram-delivered voucher as in admin.
+// external_pc_id. A signed-in player's remaining time is returned to their Clubpay balance; a guest
+// receives the legacy voucher fallback.
 func (s *Server) handleAgentEndSession(w http.ResponseWriter, r *http.Request) {
 	if !s.requireCore(w, r) {
 		return
@@ -4494,8 +4495,11 @@ func (s *Server) handleAgentEndSession(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "external_pc_id and core_session_id are required")
 		return
 	}
-	if req.RecipientPhone == "" || !req.RecipientConsent {
-		writeError(w, http.StatusBadRequest, "recipient phone and consent are required")
+	// The kiosk no longer asks every player for a phone number when a session is
+	// ended. A phone is optional legacy voucher-delivery data; require consent
+	// only if one was actually supplied.
+	if req.RecipientPhone != "" && !req.RecipientConsent {
+		writeError(w, http.StatusBadRequest, "recipient consent is required")
 		return
 	}
 
@@ -4540,7 +4544,7 @@ func (s *Server) handleAgentEndSession(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	if voucher, ok := result["voucher"].(map[string]any); ok {
+	if voucher, ok := result["voucher"].(map[string]any); ok && req.RecipientPhone != "" {
 		code, _ := voucher["code"].(string)
 		seconds, _ := voucher["seconds_left"].(int)
 		delivery, _ := s.attachVoucherRecipientAndSend(r.Context(), fmt.Sprint(voucher["id"]), code, seconds, req.RecipientPhone, "kiosk_client")
