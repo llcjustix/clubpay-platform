@@ -84,6 +84,14 @@ type VoucherCheck = {
   zone?: { id: string; name: string };
 };
 
+type PlayerAuthResponse = {
+  auth_token?: string;
+  telegram_link?: string;
+  status: 'active' | 'awaiting_contact' | 'verified' | 'expired' | string;
+  expires_at?: string;
+  player?: { id: string; phone: string; first_name?: string; balance_seconds: number };
+};
+
 type PC = {
   id: string;
   external_pc_id: string;
@@ -584,6 +592,9 @@ function QRPage({ token }: { token: string }) {
   const [creating, setCreating] = useState(false);
   const [redeeming, setRedeeming] = useState(false);
   const [createdCheckout, setCreatedCheckout] = useState<CheckoutResponse | null>(null);
+  const [playerAuth, setPlayerAuth] = useState<PlayerAuthResponse | null>(null);
+  const [startingPlayerAuth, setStartingPlayerAuth] = useState(false);
+  const [redeemingBalance, setRedeemingBalance] = useState(false);
   const [error, setError] = useState('');
 
   function loadQR() {
@@ -600,6 +611,22 @@ function QRPage({ token }: { token: string }) {
   }
 
   useEffect(loadQR, [token]);
+
+  useEffect(() => {
+    if (!playerAuth?.auth_token || playerAuth.status === 'verified' || playerAuth.status === 'expired') return;
+    let disposed = false;
+    const poll = async () => {
+      try {
+        const status = await api<PlayerAuthResponse>(`/api/player-auth/${encodeURIComponent(playerAuth.auth_token || '')}`);
+        if (!disposed) setPlayerAuth((current) => current ? { ...current, ...status } : status);
+      } catch (err) {
+        if (!disposed) setError(String((err as Error).message || err));
+      }
+    };
+    poll();
+    const timer = window.setInterval(poll, 1800);
+    return () => { disposed = true; window.clearInterval(timer); };
+  }, [playerAuth?.auth_token, playerAuth?.status]);
 
   useEffect(() => {
     const code = voucherCode.trim();
@@ -647,6 +674,39 @@ function QRPage({ token }: { token: string }) {
   const busyUntilLabel = data?.active_session?.planned_ends_at ? formatTime(data.active_session.planned_ends_at) : '';
   const voucherReadyForAutoApply = Boolean(voucherCode.trim() && voucherCheck?.can_redeem);
   const voucherDurationSeconds = voucherCheck?.seconds_left || (voucherCheck?.minutes_left ? voucherCheck.minutes_left * 60 : 0);
+  const playerBalanceSeconds = playerAuth?.status === 'verified' ? (playerAuth.player?.balance_seconds || 0) : 0;
+
+  async function startPlayerAuth() {
+    setStartingPlayerAuth(true);
+    setError('');
+    try {
+      const auth = await api<PlayerAuthResponse>('/api/player-auth/start', { method: 'POST', body: JSON.stringify({ qr_token: token }) });
+      setPlayerAuth(auth);
+    } catch (err) {
+      setError(String((err as Error).message || err));
+    } finally {
+      setStartingPlayerAuth(false);
+    }
+  }
+
+  async function redeemPlayerBalance() {
+    if (!playerAuth?.auth_token || !playerBalanceSeconds) return;
+    setRedeemingBalance(true);
+    setError('');
+    try {
+      const result = await api<{ seconds_used: number; extended?: boolean }>('/api/player-balance/redeem', {
+        method: 'POST',
+        body: JSON.stringify({ qr_token: token, player_auth_token: playerAuth.auth_token }),
+      });
+      setVoucherMessage(result.extended ? `Баланс применён: сессия продлена на ${formatDurationClock(result.seconds_used)}.` : `Баланс применён: сеанс начат на ${formatDurationClock(result.seconds_used)}.`);
+      setPlayerAuth((current) => current?.player ? { ...current, player: { ...current.player, balance_seconds: 0 } } : current);
+      loadQR();
+    } catch (err) {
+      setError(String((err as Error).message || err));
+    } finally {
+      setRedeemingBalance(false);
+    }
+  }
 
   async function createCheckout() {
     if (!selected && !customAmountUZS) return;
@@ -666,6 +726,7 @@ function QRPage({ token }: { token: string }) {
           ...(!customAmountUZS && selected ? { tariff_block_id: selected } : {}),
           ...(customAmountUZS ? { amount_uzs: customAmountUZS } : {}),
           ...(voucherReadyForAutoApply ? { voucher_code: voucherCode.trim() } : {}),
+          ...(playerAuth?.status === 'verified' && playerAuth.auth_token ? { player_auth_token: playerAuth.auth_token } : {}),
         }),
       });
       localStorage.setItem('clubpay:last_order_id', payload.order.invoice_id);
@@ -753,10 +814,45 @@ function QRPage({ token }: { token: string }) {
           </div>
         </section>
 
+        <section className="qr-player-card">
+          {playerAuth?.status === 'verified' && playerAuth.player ? (
+            <>
+              <div className="qr-player-copy">
+                <p>Профиль Clubpay подключён</p>
+                <h2>{playerAuth.player.first_name ? `${playerAuth.player.first_name}, ваш баланс` : 'Ваш баланс времени'}</h2>
+                <strong>{formatDurationClock(playerBalanceSeconds)}</strong>
+                <span>Время сохраняется в этом клубе после завершения сеанса.</span>
+              </div>
+              {playerBalanceSeconds > 0 ? (
+                <Button variant="secondary" disabled={isBusy || redeemingBalance} icon={redeemingBalance ? <RefreshCw className="spin" size={16} /> : <Play size={16} />} onClick={redeemPlayerBalance}>
+                  {redeemingBalance ? 'Запускаем сеанс' : `Использовать ${formatDurationClock(playerBalanceSeconds)}`}
+                </Button>
+              ) : <p className="qr-player-empty">Выберите пакет ниже и оплатите его — сеанс начнётся сразу, а остаток сохранится здесь.</p>}
+            </>
+          ) : playerAuth?.status === 'expired' ? (
+            <>
+              <div className="qr-player-copy"><p>Вход не завершён</p><h2>Ссылка истекла</h2><span>Откройте новую ссылку и подтвердите номер в Telegram.</span></div>
+              <Button variant="secondary" disabled={startingPlayerAuth} icon={<Send size={16} />} onClick={startPlayerAuth}>Получить новую ссылку</Button>
+            </>
+          ) : playerAuth?.telegram_link ? (
+            <>
+              <div className="qr-player-copy"><p>Профиль Clubpay</p><h2>Подтвердите вход в Telegram</h2><span>Откройте бота, поделитесь номером и вернитесь сюда. Пароль не нужен.</span></div>
+              <a className="btn secondary" href={playerAuth.telegram_link}><Send size={16} /><span>Открыть Telegram</span></a>
+            </>
+          ) : (
+            <>
+              <div className="qr-player-copy"><p>Профиль Clubpay</p><h2>Сохраняйте остаток времени</h2><span>Войдите через Telegram один раз. Будущие сеансы и баланс минут будут привязаны к номеру.</span></div>
+              <Button variant="secondary" disabled={startingPlayerAuth} icon={startingPlayerAuth ? <RefreshCw className="spin" size={16} /> : <Send size={16} />} onClick={startPlayerAuth}>
+                {startingPlayerAuth ? 'Создаём ссылку' : 'Войти через Telegram'}
+              </Button>
+            </>
+          )}
+        </section>
+
         <section className="qr-voucher-card">
           <div>
-            <p>Есть остаток времени?</p>
-            <h2>Применить ваучер</h2>
+            <p>Старый ваучер</p>
+            <h2>Применить код</h2>
           </div>
           <div className="qr-voucher-form">
             <input

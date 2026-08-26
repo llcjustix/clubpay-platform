@@ -139,6 +139,9 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("GET /api/auth/me", s.handleMe)
 	mux.HandleFunc("POST /api/auth/logout", s.handleLogout)
 	mux.HandleFunc("GET /api/qr/{token}", s.handleQR)
+	mux.HandleFunc("POST /api/player-auth/start", s.handleStartPlayerAuth)
+	mux.HandleFunc("GET /api/player-auth/{token}", s.handlePlayerAuthStatus)
+	mux.HandleFunc("POST /api/player-balance/redeem", s.handleRedeemPlayerBalance)
 	mux.HandleFunc("GET /api/orders/{invoice_id}", s.handleOrder)
 	mux.HandleFunc("POST /api/checkouts", s.handleCreateCheckout)
 	mux.HandleFunc("POST /api/payments/click/prepare", s.handleClickPrepare)
@@ -1588,6 +1591,14 @@ func (s *Server) handleCreateCheckout(w http.ResponseWriter, r *http.Request) {
 	if orderSeed.DurationSeconds <= 0 {
 		orderSeed.DurationSeconds = orderSeed.DurationMinutes * 60
 	}
+	if strings.TrimSpace(req.PlayerAuthToken) != "" {
+		player, err := s.verifiedPlayerForAuthToken(ctx, s.db, req.PlayerAuthToken, orderSeed.ClubID)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "Telegram authorization is no longer valid. Sign in again.")
+			return
+		}
+		orderSeed.PlayerID = player.ID
+	}
 	if strings.TrimSpace(req.VoucherCode) != "" {
 		voucherID, voucherSeconds, err := s.validVoucherForPC(ctx, req.VoucherCode, orderSeed.ClubID, orderSeed.PCID, orderSeed.PCStatus, orderSeed.QRType)
 		if err != nil {
@@ -1641,13 +1652,13 @@ func (s *Server) handleCreateCheckout(w http.ResponseWriter, r *http.Request) {
 	err = tx.QueryRow(ctx, `
 		INSERT INTO payment_orders (
 			invoice_id, club_id, pc_ref_id, tariff_block_id, amount_tiyin, duration_minutes, duration_seconds, voucher_id,
-			provider, provider_prepare_id, status, split_platform_amount_tiyin, split_club_amount_tiyin, expires_at,
+			player_id, provider, provider_prepare_id, status, split_platform_amount_tiyin, split_club_amount_tiyin, expires_at,
 			extension_grant_id, split_payload, fiscal_payload
 		)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, NULLIF($8, '')::uuid, $9, NULLIF($10, ''), 'created', $11, $12, $13, NULLIF($14, '')::uuid, $15, $16)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, NULLIF($8, '')::uuid, NULLIF($9, '')::uuid, $10, NULLIF($11, ''), 'created', $12, $13, $14, NULLIF($15, '')::uuid, $16, $17)
 		RETURNING id
 	`, invoiceID, orderSeed.ClubID, orderSeed.PCID, tariffIDArg, orderSeed.AmountTiyin, orderSeed.DurationMinutes, orderSeed.DurationSeconds, orderSeed.VoucherID,
-		provider, providerPrepareID, platformSplitAmount, clubSplitAmount, expiresAt, orderSeed.ExtensionGrantID, splitPayloadJSON, fiscalPayloadJSON).Scan(&orderID)
+		orderSeed.PlayerID, provider, providerPrepareID, platformSplitAmount, clubSplitAmount, expiresAt, orderSeed.ExtensionGrantID, splitPayloadJSON, fiscalPayloadJSON).Scan(&orderID)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -3179,11 +3190,38 @@ func (s *Server) edgeSnapshotData(ctx context.Context, clubID string, includeTec
 	if err != nil {
 		return nil, err
 	}
+	players, err := s.queryMaps(ctx, `
+		SELECT DISTINCT p.id, p.phone, COALESCE(p.telegram_chat_id, '') AS telegram_chat_id,
+		       COALESCE(p.telegram_username, '') AS telegram_username, COALESCE(p.first_name, '') AS first_name,
+		       p.status, p.phone_verified_at, p.telegram_consent_at, p.created_at, p.updated_at
+		FROM players p
+		WHERE EXISTS (SELECT 1 FROM player_club_balances b WHERE b.player_id = p.id AND b.club_id = $1)
+		   OR EXISTS (SELECT 1 FROM payment_orders po WHERE po.player_id = p.id AND po.club_id = $1)
+		   OR EXISTS (SELECT 1 FROM game_access_grants g WHERE g.player_id = p.id AND g.club_id = $1)
+		ORDER BY p.created_at
+	`, clubID)
+	if err != nil {
+		return nil, err
+	}
+	playerBalances, err := s.queryMaps(ctx, `
+		SELECT player_id, club_id, seconds_balance, updated_at
+		FROM player_club_balances WHERE club_id = $1
+	`, clubID)
+	if err != nil {
+		return nil, err
+	}
+	playerLedger, err := s.queryMaps(ctx, `
+		SELECT id, player_id, club_id, seconds_delta, kind, game_access_grant_id, payment_order_id, idempotency_key, created_at
+		FROM player_time_ledger WHERE club_id = $1 ORDER BY created_at
+	`, clubID)
+	if err != nil {
+		return nil, err
+	}
 	paymentOrders, err := s.queryMaps(ctx, `
 		SELECT id, invoice_id, provider, COALESCE(provider_payment_id, '') AS provider_payment_id,
 		       COALESCE(provider_prepare_id, '') AS provider_prepare_id,
 		       COALESCE(provider_time_ms, 0) AS provider_time_ms,
-		       provider_payload, club_id, pc_ref_id, tariff_block_id, amount_tiyin, duration_minutes, duration_seconds,
+		       provider_payload, club_id, pc_ref_id, tariff_block_id, player_id, amount_tiyin, duration_minutes, duration_seconds,
 		       status, COALESCE(provider_status, '') AS provider_status, COALESCE(checkout_url, '') AS checkout_url,
 		       COALESCE(receipt_url, '') AS receipt_url, receipt_kind, fiscal_status,
 		       split_platform_amount_tiyin, split_club_amount_tiyin, split_payload, fiscal_payload, COALESCE(fiscal_error, '') AS fiscal_error,
@@ -3219,7 +3257,7 @@ func (s *Server) edgeSnapshotData(ctx context.Context, clubID string, includeTec
 		return nil, err
 	}
 	grants, err := s.queryMaps(ctx, `
-		SELECT id, club_id, pc_ref_id, payment_order_id, cash_payment_id, parent_grant_id, duration_minutes, duration_seconds, status,
+		SELECT id, club_id, pc_ref_id, payment_order_id, cash_payment_id, parent_grant_id, player_id, duration_minutes, duration_seconds, status,
 		       COALESCE(core_session_id, '') AS core_session_id, voucher_id, returned_voucher_id, source, accepted_at,
 		       planned_ends_at, grace_ends_at, ended_at, COALESCE(end_reason, '') AS end_reason,
 		       remaining_minutes, remaining_seconds, COALESCE(last_error, '') AS last_error, created_at
@@ -3263,6 +3301,9 @@ func (s *Server) edgeSnapshotData(ctx context.Context, clubID string, includeTec
 		"qr_codes":              qrs,
 		"users":                 users,
 		"user_club_roles":       roles,
+		"players":               players,
+		"player_club_balances":  playerBalances,
+		"player_time_ledger":    playerLedger,
 		"payment_orders":        paymentOrders,
 		"payments":              paymentsRows,
 		"cash_payments":         cashPayments,
@@ -3441,18 +3482,32 @@ func (s *Server) applyEdgeSnapshotData(ctx context.Context, clubID string, paylo
 	if err := execJSON(ctx, tx, `
 		WITH input AS (
 			SELECT * FROM jsonb_to_recordset($1::jsonb) AS x(
+				id uuid, phone text, telegram_chat_id text, telegram_username text, first_name text, status text,
+				phone_verified_at timestamptz, telegram_consent_at timestamptz, created_at timestamptz, updated_at timestamptz
+			)
+		)
+		INSERT INTO players (id, phone, telegram_chat_id, telegram_username, first_name, status, phone_verified_at, telegram_consent_at, created_at, updated_at)
+		SELECT id, phone, NULLIF(telegram_chat_id, ''), NULLIF(telegram_username, ''), NULLIF(first_name, ''), COALESCE(NULLIF(status, ''), 'active'), COALESCE(phone_verified_at, now()), COALESCE(telegram_consent_at, now()), COALESCE(created_at, now()), COALESCE(updated_at, now())
+		FROM input
+		ON CONFLICT (id) DO UPDATE SET phone = EXCLUDED.phone, telegram_chat_id = EXCLUDED.telegram_chat_id, telegram_username = EXCLUDED.telegram_username, first_name = EXCLUDED.first_name, status = EXCLUDED.status, phone_verified_at = EXCLUDED.phone_verified_at, telegram_consent_at = EXCLUDED.telegram_consent_at, updated_at = EXCLUDED.updated_at
+	`, payload["players"]); err != nil {
+		return err
+	}
+	if err := execJSON(ctx, tx, `
+		WITH input AS (
+			SELECT * FROM jsonb_to_recordset($1::jsonb) AS x(
 				id uuid, invoice_id text, provider text, provider_payment_id text, provider_prepare_id text, provider_time_ms bigint,
-				provider_payload jsonb, club_id uuid, pc_ref_id uuid, tariff_block_id uuid, amount_tiyin bigint,
+				provider_payload jsonb, club_id uuid, pc_ref_id uuid, tariff_block_id uuid, player_id uuid, amount_tiyin bigint,
 				duration_minutes int, duration_seconds int, status text, provider_status text, checkout_url text, receipt_url text,
 				receipt_kind text, fiscal_status text, split_platform_amount_tiyin bigint, split_club_amount_tiyin bigint,
 				split_payload jsonb, fiscal_payload jsonb, fiscal_error text,
 				expires_at timestamptz, paid_at timestamptz, extension_grant_id uuid, voucher_id uuid, created_at timestamptz, updated_at timestamptz
 			)
 		)
-		INSERT INTO payment_orders (id, invoice_id, provider, provider_payment_id, provider_prepare_id, provider_time_ms, provider_payload, club_id, pc_ref_id, tariff_block_id, amount_tiyin, duration_minutes, duration_seconds, status, provider_status, checkout_url, receipt_url, receipt_kind, fiscal_status, split_platform_amount_tiyin, split_club_amount_tiyin, split_payload, fiscal_payload, fiscal_error, expires_at, paid_at, extension_grant_id, voucher_id, created_at, updated_at)
-		SELECT id, invoice_id, COALESCE(NULLIF(provider, ''), 'mock'), NULLIF(provider_payment_id, ''), NULLIF(provider_prepare_id, ''), provider_time_ms, COALESCE(provider_payload, '{}'::jsonb), club_id, pc_ref_id, tariff_block_id, amount_tiyin, duration_minutes, COALESCE(NULLIF(duration_seconds, 0), duration_minutes * 60), COALESCE(NULLIF(status, ''), 'created'), NULLIF(provider_status, ''), NULLIF(checkout_url, ''), NULLIF(receipt_url, ''), COALESCE(NULLIF(receipt_kind, ''), 'provider_receipt'), COALESCE(NULLIF(fiscal_status, ''), 'not_requested'), COALESCE(split_platform_amount_tiyin, 0), COALESCE(split_club_amount_tiyin, 0), COALESCE(split_payload, '[]'::jsonb), COALESCE(fiscal_payload, '{}'::jsonb), NULLIF(fiscal_error, ''), expires_at, paid_at, extension_grant_id, voucher_id, COALESCE(created_at, now()), COALESCE(updated_at, now())
+		INSERT INTO payment_orders (id, invoice_id, provider, provider_payment_id, provider_prepare_id, provider_time_ms, provider_payload, club_id, pc_ref_id, tariff_block_id, player_id, amount_tiyin, duration_minutes, duration_seconds, status, provider_status, checkout_url, receipt_url, receipt_kind, fiscal_status, split_platform_amount_tiyin, split_club_amount_tiyin, split_payload, fiscal_payload, fiscal_error, expires_at, paid_at, extension_grant_id, voucher_id, created_at, updated_at)
+		SELECT id, invoice_id, COALESCE(NULLIF(provider, ''), 'mock'), NULLIF(provider_payment_id, ''), NULLIF(provider_prepare_id, ''), provider_time_ms, COALESCE(provider_payload, '{}'::jsonb), club_id, pc_ref_id, tariff_block_id, player_id, amount_tiyin, duration_minutes, COALESCE(NULLIF(duration_seconds, 0), duration_minutes * 60), COALESCE(NULLIF(status, ''), 'created'), NULLIF(provider_status, ''), NULLIF(checkout_url, ''), NULLIF(receipt_url, ''), COALESCE(NULLIF(receipt_kind, ''), 'provider_receipt'), COALESCE(NULLIF(fiscal_status, ''), 'not_requested'), COALESCE(split_platform_amount_tiyin, 0), COALESCE(split_club_amount_tiyin, 0), COALESCE(split_payload, '[]'::jsonb), COALESCE(fiscal_payload, '{}'::jsonb), NULLIF(fiscal_error, ''), expires_at, paid_at, extension_grant_id, voucher_id, COALESCE(created_at, now()), COALESCE(updated_at, now())
 		FROM input
-		ON CONFLICT (id) DO UPDATE SET provider_payment_id = EXCLUDED.provider_payment_id, provider_prepare_id = EXCLUDED.provider_prepare_id, provider_time_ms = EXCLUDED.provider_time_ms, provider_payload = EXCLUDED.provider_payload, amount_tiyin = EXCLUDED.amount_tiyin, duration_minutes = EXCLUDED.duration_minutes, duration_seconds = EXCLUDED.duration_seconds, status = EXCLUDED.status, provider_status = EXCLUDED.provider_status, checkout_url = EXCLUDED.checkout_url, receipt_url = EXCLUDED.receipt_url, receipt_kind = EXCLUDED.receipt_kind, fiscal_status = EXCLUDED.fiscal_status, split_platform_amount_tiyin = EXCLUDED.split_platform_amount_tiyin, split_club_amount_tiyin = EXCLUDED.split_club_amount_tiyin, split_payload = EXCLUDED.split_payload, fiscal_payload = EXCLUDED.fiscal_payload, fiscal_error = EXCLUDED.fiscal_error, expires_at = EXCLUDED.expires_at, paid_at = EXCLUDED.paid_at, extension_grant_id = EXCLUDED.extension_grant_id, voucher_id = EXCLUDED.voucher_id, updated_at = EXCLUDED.updated_at
+		ON CONFLICT (id) DO UPDATE SET provider_payment_id = EXCLUDED.provider_payment_id, provider_prepare_id = EXCLUDED.provider_prepare_id, provider_time_ms = EXCLUDED.provider_time_ms, provider_payload = EXCLUDED.provider_payload, player_id = EXCLUDED.player_id, amount_tiyin = EXCLUDED.amount_tiyin, duration_minutes = EXCLUDED.duration_minutes, duration_seconds = EXCLUDED.duration_seconds, status = EXCLUDED.status, provider_status = EXCLUDED.provider_status, checkout_url = EXCLUDED.checkout_url, receipt_url = EXCLUDED.receipt_url, receipt_kind = EXCLUDED.receipt_kind, fiscal_status = EXCLUDED.fiscal_status, split_platform_amount_tiyin = EXCLUDED.split_platform_amount_tiyin, split_club_amount_tiyin = EXCLUDED.split_club_amount_tiyin, split_payload = EXCLUDED.split_payload, fiscal_payload = EXCLUDED.fiscal_payload, fiscal_error = EXCLUDED.fiscal_error, expires_at = EXCLUDED.expires_at, paid_at = EXCLUDED.paid_at, extension_grant_id = EXCLUDED.extension_grant_id, voucher_id = EXCLUDED.voucher_id, updated_at = EXCLUDED.updated_at
 	`, payload["payment_orders"]); err != nil {
 		return err
 	}
@@ -3480,13 +3535,33 @@ func (s *Server) applyEdgeSnapshotData(ctx context.Context, clubID string, paylo
 	}
 	if err := execJSON(ctx, tx, `
 		WITH input AS (
-			SELECT * FROM jsonb_to_recordset($1::jsonb) AS x(id uuid, club_id uuid, pc_ref_id uuid, payment_order_id uuid, cash_payment_id uuid, parent_grant_id uuid, duration_minutes int, duration_seconds int, status text, core_session_id text, voucher_id uuid, returned_voucher_id uuid, source text, accepted_at timestamptz, planned_ends_at timestamptz, grace_ends_at timestamptz, ended_at timestamptz, end_reason text, remaining_minutes int, remaining_seconds int, last_error text, created_at timestamptz)
+			SELECT * FROM jsonb_to_recordset($1::jsonb) AS x(id uuid, club_id uuid, pc_ref_id uuid, payment_order_id uuid, cash_payment_id uuid, parent_grant_id uuid, player_id uuid, duration_minutes int, duration_seconds int, status text, core_session_id text, voucher_id uuid, returned_voucher_id uuid, source text, accepted_at timestamptz, planned_ends_at timestamptz, grace_ends_at timestamptz, ended_at timestamptz, end_reason text, remaining_minutes int, remaining_seconds int, last_error text, created_at timestamptz)
 		)
-		INSERT INTO game_access_grants (id, club_id, pc_ref_id, payment_order_id, cash_payment_id, parent_grant_id, duration_minutes, duration_seconds, status, core_session_id, voucher_id, returned_voucher_id, source, accepted_at, planned_ends_at, grace_ends_at, ended_at, end_reason, remaining_minutes, remaining_seconds, last_error, created_at)
-		SELECT id, club_id, pc_ref_id, payment_order_id, cash_payment_id, parent_grant_id, duration_minutes, COALESCE(NULLIF(duration_seconds, 0), duration_minutes * 60), COALESCE(NULLIF(status, ''), 'pending'), NULLIF(core_session_id, ''), voucher_id, returned_voucher_id, COALESCE(NULLIF(source, ''), 'online_payment'), accepted_at, planned_ends_at, grace_ends_at, ended_at, NULLIF(end_reason, ''), COALESCE(remaining_minutes, 0), COALESCE(NULLIF(remaining_seconds, 0), remaining_minutes * 60, 0), NULLIF(last_error, ''), COALESCE(created_at, now())
+		INSERT INTO game_access_grants (id, club_id, pc_ref_id, payment_order_id, cash_payment_id, parent_grant_id, player_id, duration_minutes, duration_seconds, status, core_session_id, voucher_id, returned_voucher_id, source, accepted_at, planned_ends_at, grace_ends_at, ended_at, end_reason, remaining_minutes, remaining_seconds, last_error, created_at)
+		SELECT id, club_id, pc_ref_id, payment_order_id, cash_payment_id, parent_grant_id, player_id, duration_minutes, COALESCE(NULLIF(duration_seconds, 0), duration_minutes * 60), COALESCE(NULLIF(status, ''), 'pending'), NULLIF(core_session_id, ''), voucher_id, returned_voucher_id, COALESCE(NULLIF(source, ''), 'online_payment'), accepted_at, planned_ends_at, grace_ends_at, ended_at, NULLIF(end_reason, ''), COALESCE(remaining_minutes, 0), COALESCE(NULLIF(remaining_seconds, 0), remaining_minutes * 60, 0), NULLIF(last_error, ''), COALESCE(created_at, now())
 		FROM input
-		ON CONFLICT (id) DO UPDATE SET parent_grant_id = EXCLUDED.parent_grant_id, duration_minutes = EXCLUDED.duration_minutes, duration_seconds = EXCLUDED.duration_seconds, status = EXCLUDED.status, core_session_id = EXCLUDED.core_session_id, voucher_id = EXCLUDED.voucher_id, returned_voucher_id = EXCLUDED.returned_voucher_id, accepted_at = EXCLUDED.accepted_at, planned_ends_at = EXCLUDED.planned_ends_at, grace_ends_at = EXCLUDED.grace_ends_at, ended_at = EXCLUDED.ended_at, end_reason = EXCLUDED.end_reason, remaining_minutes = EXCLUDED.remaining_minutes, remaining_seconds = EXCLUDED.remaining_seconds, last_error = EXCLUDED.last_error
+		ON CONFLICT (id) DO UPDATE SET parent_grant_id = EXCLUDED.parent_grant_id, player_id = EXCLUDED.player_id, duration_minutes = EXCLUDED.duration_minutes, duration_seconds = EXCLUDED.duration_seconds, status = EXCLUDED.status, core_session_id = EXCLUDED.core_session_id, voucher_id = EXCLUDED.voucher_id, returned_voucher_id = EXCLUDED.returned_voucher_id, accepted_at = EXCLUDED.accepted_at, planned_ends_at = EXCLUDED.planned_ends_at, grace_ends_at = EXCLUDED.grace_ends_at, ended_at = EXCLUDED.ended_at, end_reason = EXCLUDED.end_reason, remaining_minutes = EXCLUDED.remaining_minutes, remaining_seconds = EXCLUDED.remaining_seconds, last_error = EXCLUDED.last_error
 	`, payload["game_access_grants"]); err != nil {
+		return err
+	}
+	if err := execJSON(ctx, tx, `
+		WITH input AS (
+			SELECT * FROM jsonb_to_recordset($1::jsonb) AS x(player_id uuid, club_id uuid, seconds_balance int, updated_at timestamptz)
+		)
+		INSERT INTO player_club_balances (player_id, club_id, seconds_balance, updated_at)
+		SELECT player_id, club_id, GREATEST(seconds_balance, 0), COALESCE(updated_at, now()) FROM input
+		ON CONFLICT (player_id, club_id) DO UPDATE SET seconds_balance = EXCLUDED.seconds_balance, updated_at = EXCLUDED.updated_at
+	`, payload["player_club_balances"]); err != nil {
+		return err
+	}
+	if err := execJSON(ctx, tx, `
+		WITH input AS (
+			SELECT * FROM jsonb_to_recordset($1::jsonb) AS x(id uuid, player_id uuid, club_id uuid, seconds_delta int, kind text, game_access_grant_id uuid, payment_order_id uuid, idempotency_key text, created_at timestamptz)
+		)
+		INSERT INTO player_time_ledger (id, player_id, club_id, seconds_delta, kind, game_access_grant_id, payment_order_id, idempotency_key, created_at)
+		SELECT id, player_id, club_id, seconds_delta, kind, game_access_grant_id, payment_order_id, idempotency_key, COALESCE(created_at, now()) FROM input
+		ON CONFLICT DO NOTHING
+	`, payload["player_time_ledger"]); err != nil {
 		return err
 	}
 	if err := execJSON(ctx, tx, `
@@ -3571,12 +3646,12 @@ func (s *Server) applyPaymentSuccess(ctx context.Context, success paymentSuccess
 	var order paymentOrderForCallback
 	err = tx.QueryRow(ctx, `
 		SELECT po.id, po.club_id, po.pc_ref_id, po.amount_tiyin, po.duration_minutes, po.duration_seconds, po.status, p.external_pc_id,
-		       po.extension_grant_id, po.voucher_id
+		       po.extension_grant_id, po.voucher_id, po.player_id
 		FROM payment_orders po
 		JOIN pc_refs p ON p.id = po.pc_ref_id
 		WHERE po.invoice_id = $1
 		FOR UPDATE
-	`, success.InvoiceID).Scan(&order.ID, &order.ClubID, &order.PCID, &order.AmountTiyin, &order.DurationMinutes, &order.DurationSeconds, &order.Status, &order.ExternalPCID, &order.ExtensionGrantID, &order.VoucherID)
+	`, success.InvoiceID).Scan(&order.ID, &order.ClubID, &order.PCID, &order.AmountTiyin, &order.DurationMinutes, &order.DurationSeconds, &order.Status, &order.ExternalPCID, &order.ExtensionGrantID, &order.VoucherID, &order.PlayerID)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return "", fmt.Errorf("invoice not found")
 	}
@@ -3670,23 +3745,33 @@ func (s *Server) applyPaymentSuccess(ctx context.Context, success paymentSuccess
 		if !ok || sessionGrant.CoreSessionID == "" {
 			return "", fmt.Errorf("active session for extension not found")
 		}
+		if order.PlayerID != nil && *order.PlayerID != "" {
+			_, err = tx.Exec(ctx, `
+				UPDATE game_access_grants
+				SET player_id = COALESCE(player_id, $1::uuid)
+				WHERE id = $2
+			`, *order.PlayerID, sessionGrant.ID)
+			if err != nil {
+				return "", err
+			}
+		}
 		extensionGrantID := existingGrantID
 		if extensionGrantID != "" {
 			_, err = tx.Exec(ctx, `
 				UPDATE game_access_grants
 				SET status = 'pending', parent_grant_id = $2, core_session_id = $3,
-				    duration_minutes = $4, duration_seconds = $5, voucher_id = $6, last_error = NULL
+				    duration_minutes = $4, duration_seconds = $5, voucher_id = $6, player_id = COALESCE($7::uuid, player_id), last_error = NULL
 				WHERE id = $1
-			`, extensionGrantID, sessionGrant.ID, sessionGrant.CoreSessionID, order.DurationMinutes, order.DurationSeconds, orderVoucherID)
+			`, extensionGrantID, sessionGrant.ID, sessionGrant.CoreSessionID, order.DurationMinutes, order.DurationSeconds, orderVoucherID, order.PlayerID)
 		} else {
 			err = tx.QueryRow(ctx, `
 				INSERT INTO game_access_grants (
 					club_id, pc_ref_id, payment_order_id, voucher_id, parent_grant_id,
-					duration_minutes, duration_seconds, status, core_session_id, source
+					player_id, duration_minutes, duration_seconds, status, core_session_id, source
 				)
-				VALUES ($1, $2, $3, $4, $5, $6, $7, 'pending', $8, 'session_extend')
+				VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'pending', $9, 'session_extend')
 				RETURNING id
-			`, order.ClubID, order.PCID, order.ID, orderVoucherID, sessionGrant.ID,
+			`, order.ClubID, order.PCID, order.ID, orderVoucherID, sessionGrant.ID, order.PlayerID,
 				order.DurationMinutes, order.DurationSeconds, sessionGrant.CoreSessionID).Scan(&extensionGrantID)
 		}
 		if err != nil {
@@ -3714,18 +3799,18 @@ func (s *Server) applyPaymentSuccess(ctx context.Context, success paymentSuccess
 		grantID = existingGrantID
 		_, err = tx.Exec(ctx, `
 			UPDATE game_access_grants
-			SET status = 'pending', duration_minutes = $2, duration_seconds = $3, voucher_id = $4, last_error = NULL
+			SET status = 'pending', duration_minutes = $2, duration_seconds = $3, voucher_id = $4, player_id = COALESCE($5::uuid, player_id), last_error = NULL
 			WHERE id = $1
-		`, grantID, order.DurationMinutes, order.DurationSeconds, orderVoucherID)
+		`, grantID, order.DurationMinutes, order.DurationSeconds, orderVoucherID, order.PlayerID)
 		if err != nil {
 			return "", err
 		}
 	} else {
 		err = tx.QueryRow(ctx, `
-			INSERT INTO game_access_grants (club_id, pc_ref_id, payment_order_id, voucher_id, duration_minutes, duration_seconds, status, source)
-			VALUES ($1, $2, $3, $4, $5, $6, 'pending', 'online_payment')
+			INSERT INTO game_access_grants (club_id, pc_ref_id, payment_order_id, voucher_id, player_id, duration_minutes, duration_seconds, status, source)
+			VALUES ($1, $2, $3, $4, $5, $6, $7, 'pending', 'online_payment')
 			RETURNING id
-		`, order.ClubID, order.PCID, order.ID, orderVoucherID, order.DurationMinutes, order.DurationSeconds).Scan(&grantID)
+		`, order.ClubID, order.PCID, order.ID, orderVoucherID, order.PlayerID, order.DurationMinutes, order.DurationSeconds).Scan(&grantID)
 		if err != nil {
 			return "", err
 		}
@@ -5138,13 +5223,14 @@ func (s *Server) finishGrant(ctx context.Context, grantID, reason string, remain
 	grantID = sessionGrantID
 
 	var clubID, pcID string
+	var playerID *string
 	var paymentOrderID, returnedVoucherID *string
 	err = tx.QueryRow(ctx, `
-		SELECT club_id, pc_ref_id, payment_order_id, returned_voucher_id
+		SELECT club_id, pc_ref_id, player_id, payment_order_id, returned_voucher_id
 		FROM game_access_grants
 		WHERE id = $1
 		FOR UPDATE
-	`, grantID).Scan(&clubID, &pcID, &paymentOrderID, &returnedVoucherID)
+	`, grantID).Scan(&clubID, &pcID, &playerID, &paymentOrderID, &returnedVoucherID)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, fmt.Errorf("grant not found")
 	}
@@ -5190,7 +5276,15 @@ func (s *Server) finishGrant(ctx context.Context, grantID, reason string, remain
 	}
 
 	result := map[string]any{"success": true, "grant_id": grantID, "status": "ended", "remaining_minutes": remainingMinutes, "remaining_seconds": remainingSeconds}
-	if remainingSeconds > 0 && returnedVoucherID == nil {
+	if remainingSeconds > 0 && playerID != nil && *playerID != "" {
+		if err := s.recordPlayerTime(ctx, tx, *playerID, clubID, remainingSeconds, "session_remaining", grantID, stringOrEmpty(paymentOrderID), "session-return:"+grantID); err != nil {
+			return nil, err
+		}
+		result["player_balance"] = map[string]any{
+			"seconds_added": remainingSeconds,
+			"message":       "Остаток времени сохранён в вашем профиле Clubpay.",
+		}
+	} else if remainingSeconds > 0 && returnedVoucherID == nil {
 		code := strings.ToUpper(randomHex(4) + "-" + randomHex(4))
 		hash := hashCode(code)
 		expiresAt := time.Now().AddDate(0, 0, s.cfg.VoucherTTLDays)
@@ -5346,6 +5440,19 @@ func (s *Server) processTelegramUpdate(ctx context.Context, update telegramUpdat
 			startPayload = strings.TrimSpace(parts[1])
 		}
 	}
+	if phone == "" && strings.HasPrefix(startPayload, "auth_") {
+		knownPlayer, err := s.claimTelegramPlayerAuthChallenge(ctx, startPayload, chatID)
+		if err != nil {
+			_ = s.sendTelegramMessage(ctx, chatID, "Ссылка для входа устарела. Вернитесь к QR-коду компьютера и откройте новую.")
+			return map[string]any{"success": true, "status": "auth_expired"}, nil
+		}
+		if knownPlayer {
+			_ = s.sendTelegramMessage(ctx, chatID, "Вход в Clubpay подтверждён. Вернитесь к странице оплаты.")
+			return map[string]any{"success": true, "status": "auth_verified"}, nil
+		}
+		_ = s.sendTelegramMessageWithMarkup(ctx, chatID, "Чтобы создать профиль Clubpay, поделитесь номером. Он нужен только для входа и сохранения остатка времени.", telegramContactKeyboard())
+		return map[string]any{"success": true, "status": "auth_contact_required"}, nil
+	}
 	if phone == "" && startPayload != "" {
 		if strings.HasPrefix(startPayload, "cp_") {
 			var err error
@@ -5362,6 +5469,10 @@ func (s *Server) processTelegramUpdate(ctx context.Context, update telegramUpdat
 		_ = s.sendTelegramContactRequest(ctx, chatID)
 		return map[string]any{"success": true, "status": "phone_required"}, nil
 	}
+	if message.Contact.UserID != 0 && message.From.ID != 0 && message.Contact.UserID != message.From.ID {
+		_ = s.sendTelegramMessage(ctx, chatID, "Для входа отправьте свой номер через кнопку бота.")
+		return map[string]any{"success": true, "status": "own_phone_required"}, nil
+	}
 	_, _ = s.db.Exec(ctx, `DELETE FROM telegram_users WHERE chat_id = $1 AND phone <> $2`, chatID, phone)
 	_, err := s.db.Exec(ctx, `
 		INSERT INTO telegram_users (phone, chat_id, username, first_name, status)
@@ -5376,12 +5487,19 @@ func (s *Server) processTelegramUpdate(ctx context.Context, update telegramUpdat
 	if err != nil {
 		return nil, err
 	}
+	completedAuth, err := s.completeTelegramPlayerAuth(ctx, chatID, phone, message.From.Username, message.From.FirstName)
+	if err != nil {
+		return nil, err
+	}
+	if completedAuth {
+		_ = s.sendTelegramMessage(ctx, chatID, "Профиль Clubpay подтверждён. Вернитесь к странице оплаты — остаток времени будет сохраняться в профиле.")
+	}
 	sentPending, sendErr := s.sendPendingTelegramVouchers(ctx, phone, chatID)
 	if sendErr != nil {
 		_ = s.sendTelegramMessage(ctx, chatID, "Номер привязан, но ваучер сейчас не удалось отправить. Попросите менеджера повторить отправку или попробуйте позже.")
 		return map[string]any{"success": true, "phone": phone, "sent_pending": sentPending, "send_error": sendErr.Error()}, nil
 	}
-	if sentPending == 0 {
+	if sentPending == 0 && !completedAuth {
 		_ = s.sendTelegramMessage(ctx, chatID, "Готово. Номер привязан. Ожидающих ваучеров сейчас нет.")
 	}
 	return map[string]any{"success": true, "phone": phone, "sent_pending": sentPending}, nil
@@ -5510,14 +5628,18 @@ func (s *Server) sendTelegramMessage(ctx context.Context, chatID, text string) e
 }
 
 func (s *Server) sendTelegramContactRequest(ctx context.Context, chatID string) error {
-	markup := map[string]any{
+	markup := telegramContactKeyboard()
+	return s.sendTelegramMessageWithMarkup(ctx, chatID, "Нажмите кнопку ниже, чтобы привязать номер и получать ваучеры Clubpay.", markup)
+}
+
+func telegramContactKeyboard() map[string]any {
+	return map[string]any{
 		"keyboard": [][]map[string]any{{
 			{"text": "Поделиться номером", "request_contact": true},
 		}},
 		"resize_keyboard":   true,
 		"one_time_keyboard": true,
 	}
-	return s.sendTelegramMessageWithMarkup(ctx, chatID, "Нажмите кнопку ниже, чтобы привязать номер и получать ваучеры Clubpay.", markup)
 }
 
 func (s *Server) sendTelegramMessageWithMarkup(ctx context.Context, chatID, text string, replyMarkup any) error {
@@ -5807,6 +5929,16 @@ type createCheckoutRequest struct {
 	AmountUZS       int64  `json:"amount_uzs"`
 	PaymentProvider string `json:"payment_provider"`
 	VoucherCode     string `json:"voucher_code"`
+	PlayerAuthToken string `json:"player_auth_token"`
+}
+
+type startPlayerAuthRequest struct {
+	QRToken string `json:"qr_token"`
+}
+
+type redeemPlayerBalanceRequest struct {
+	QRToken         string `json:"qr_token"`
+	PlayerAuthToken string `json:"player_auth_token"`
 }
 
 type checkoutSeed struct {
@@ -5818,6 +5950,7 @@ type checkoutSeed struct {
 	DurationSeconds                                                      int
 	VoucherID                                                            string
 	VoucherSeconds                                                       int
+	PlayerID                                                             string
 	AmountTiyin                                                          int64
 	HourlyPriceTiyin                                                     int64
 	ClickMerchantID, ClickServiceID, ClickMerchantUserID, ClickSecretKey string
@@ -5834,6 +5967,7 @@ type paymentOrderForCallback struct {
 	ID, ClubID, PCID, Status, ExternalPCID string
 	ExtensionGrantID                       *string
 	VoucherID                              *string
+	PlayerID                               *string
 	AmountTiyin                            int64
 	DurationMinutes                        int
 	DurationSeconds                        int
@@ -6015,12 +6149,14 @@ type telegramChat struct {
 }
 
 type telegramUser struct {
+	ID        int64  `json:"id"`
 	Username  string `json:"username"`
 	FirstName string `json:"first_name"`
 }
 
 type telegramContact struct {
 	PhoneNumber string `json:"phone_number"`
+	UserID      int64  `json:"user_id"`
 }
 
 type telegramGetMeResponse struct {

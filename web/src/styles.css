@@ -1687,6 +1687,51 @@ textarea:focus {
   padding: 16px 0;
 }
 
+.qr-player-card {
+  display: grid;
+  gap: 13px;
+  border: 1px solid color-mix(in srgb, var(--accent) 42%, var(--divider));
+  border-radius: var(--radius-control);
+  background:
+    linear-gradient(130deg, color-mix(in srgb, var(--accent-soft) 72%, transparent), transparent 70%),
+    var(--surface);
+  padding: 15px;
+  margin: 0 0 14px;
+}
+
+.qr-player-copy {
+  display: grid;
+  gap: 5px;
+}
+
+.qr-player-copy p,
+.qr-player-copy span,
+.qr-player-empty {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 11px;
+  line-height: 1.45;
+}
+
+.qr-player-copy h2 {
+  margin: 0;
+  font-size: 17px;
+  font-weight: 650;
+}
+
+.qr-player-copy strong {
+  color: var(--accent-strong);
+  font-family: var(--font-mono);
+  font-size: 23px;
+  font-weight: 650;
+  letter-spacing: -.04em;
+}
+
+.qr-player-card > .btn {
+  width: 100%;
+  justify-content: center;
+}
+
 .qr-custom-amount > span,
 .qr-payment-methods p,
 .qr-payment-methods > div:first-child span,

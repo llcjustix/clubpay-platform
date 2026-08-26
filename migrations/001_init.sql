@@ -358,6 +358,65 @@ CREATE TABLE IF NOT EXISTS telegram_link_tokens (
 
 CREATE INDEX IF NOT EXISTS telegram_link_tokens_phone_idx ON telegram_link_tokens(phone, status, expires_at);
 
+-- Player identities are deliberately separate from staff users. A player owns only
+-- time in a particular club; they never receive backoffice permissions.
+CREATE TABLE IF NOT EXISTS players (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  phone TEXT NOT NULL UNIQUE,
+  telegram_chat_id TEXT UNIQUE,
+  telegram_username TEXT,
+  first_name TEXT,
+  status TEXT NOT NULL DEFAULT 'active',
+  phone_verified_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  telegram_consent_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS player_auth_challenges (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  token_hash TEXT NOT NULL UNIQUE,
+  club_id UUID NOT NULL REFERENCES clubs(id) ON DELETE CASCADE,
+  pc_ref_id UUID NOT NULL REFERENCES pc_refs(id) ON DELETE CASCADE,
+  player_id UUID REFERENCES players(id),
+  chat_id TEXT,
+  status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'awaiting_contact', 'verified', 'expired', 'cancelled')),
+  expires_at TIMESTAMPTZ NOT NULL,
+  started_at TIMESTAMPTZ,
+  verified_at TIMESTAMPTZ,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS player_auth_challenges_chat_idx ON player_auth_challenges(chat_id, status, expires_at);
+
+CREATE TABLE IF NOT EXISTS player_club_balances (
+  player_id UUID NOT NULL REFERENCES players(id) ON DELETE CASCADE,
+  club_id UUID NOT NULL REFERENCES clubs(id) ON DELETE CASCADE,
+  seconds_balance INT NOT NULL DEFAULT 0 CHECK (seconds_balance >= 0),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  PRIMARY KEY (player_id, club_id)
+);
+
+CREATE TABLE IF NOT EXISTS player_time_ledger (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  player_id UUID NOT NULL REFERENCES players(id) ON DELETE CASCADE,
+  club_id UUID NOT NULL REFERENCES clubs(id) ON DELETE CASCADE,
+  seconds_delta INT NOT NULL CHECK (seconds_delta <> 0),
+  kind TEXT NOT NULL CHECK (kind IN ('session_remaining', 'session_start', 'session_start_refund', 'manual_adjustment')),
+  game_access_grant_id UUID,
+  payment_order_id UUID,
+  idempotency_key TEXT NOT NULL UNIQUE,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS player_time_ledger_player_club_idx ON player_time_ledger(player_id, club_id, created_at DESC);
+
+ALTER TABLE payment_orders ADD COLUMN IF NOT EXISTS player_id UUID REFERENCES players(id);
+ALTER TABLE game_access_grants ADD COLUMN IF NOT EXISTS player_id UUID REFERENCES players(id);
+CREATE INDEX IF NOT EXISTS payment_orders_player_idx ON payment_orders(player_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS game_access_grants_player_idx ON game_access_grants(player_id, created_at DESC);
+
 CREATE TABLE IF NOT EXISTS core_events (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   event_id TEXT NOT NULL UNIQUE,
