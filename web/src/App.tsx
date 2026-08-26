@@ -671,6 +671,7 @@ function QRPage({ token }: { token: string }) {
   const canStartOrExtend = data ? isPayableStatus(data.pc.status) || (isSessionExtendable && isSessionExtendQR) : false;
   const isExtension = isSessionExtendable && isSessionExtendQR;
   const isStaticBusyQR = isSessionExtendable && !isSessionExtendQR;
+  const canShowPlayerProfile = !isSessionExtendQR && !isStaticBusyQR;
   const busyUntilLabel = data?.active_session?.planned_ends_at ? formatTime(data.active_session.planned_ends_at) : '';
   const voucherReadyForAutoApply = Boolean(voucherCode.trim() && voucherCheck?.can_redeem);
   const voucherDurationSeconds = voucherCheck?.seconds_left || (voucherCheck?.minutes_left ? voucherCheck.minutes_left * 60 : 0);
@@ -814,7 +815,7 @@ function QRPage({ token }: { token: string }) {
           </div>
         </section>
 
-        {!isSessionExtendQR && <section className="qr-player-card">
+        {canShowPlayerProfile && <section className="qr-player-card">
           {playerAuth?.status === 'verified' && playerAuth.player ? (
             <>
               <div className="qr-player-copy">
@@ -882,7 +883,7 @@ function QRPage({ token }: { token: string }) {
           {checkingVoucher && <p className="qr-method-message">Проверяем ваучер...</p>}
         </section>
 
-        {!isSessionExtendQR && data.telegram?.bot_link && (
+        {canShowPlayerProfile && data.telegram?.bot_link && (
           <section className="qr-telegram-card">
             <div className="qr-telegram-copy">
               <p>Telegram-бот</p>
