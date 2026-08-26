@@ -814,7 +814,7 @@ function QRPage({ token }: { token: string }) {
           </div>
         </section>
 
-        <section className="qr-player-card">
+        {!isSessionExtendQR && <section className="qr-player-card">
           {playerAuth?.status === 'verified' && playerAuth.player ? (
             <>
               <div className="qr-player-copy">
@@ -847,7 +847,7 @@ function QRPage({ token }: { token: string }) {
               </Button>
             </>
           )}
-        </section>
+        </section>}
 
         <section className="qr-voucher-card">
           <div>
@@ -882,7 +882,7 @@ function QRPage({ token }: { token: string }) {
           {checkingVoucher && <p className="qr-method-message">Проверяем ваучер...</p>}
         </section>
 
-        {data.telegram?.bot_link && (
+        {!isSessionExtendQR && data.telegram?.bot_link && (
           <section className="qr-telegram-card">
             <div className="qr-telegram-copy">
               <p>Telegram-бот</p>
