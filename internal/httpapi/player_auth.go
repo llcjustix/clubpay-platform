@@ -64,10 +64,15 @@ func (s *Server) handleStartPlayerAuth(w http.ResponseWriter, r *http.Request) {
 
 	token := "auth_" + randomHex(18)
 	expiresAt := time.Now().UTC().Add(playerAuthTTL)
+	returnURL := fmt.Sprintf("%s/qr/%s?player_auth_token=%s",
+		strings.TrimRight(s.cfg.FrontendBaseURL, "/"),
+		url.PathEscape(req.QRToken),
+		url.QueryEscape(token),
+	)
 	_, err = s.db.Exec(r.Context(), `
-		INSERT INTO player_auth_challenges (token_hash, club_id, pc_ref_id, expires_at)
-		VALUES ($1, $2, $3, $4)
-	`, hashToken(token), clubID, pcID, expiresAt)
+		INSERT INTO player_auth_challenges (token_hash, club_id, pc_ref_id, return_url, expires_at)
+		VALUES ($1, $2, $3, $4, $5)
+	`, hashToken(token), clubID, pcID, returnURL, expiresAt)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -198,57 +203,63 @@ func (s *Server) recordPlayerTime(ctx context.Context, tx pgx.Tx, playerID, club
 	return err
 }
 
-func (s *Server) claimTelegramPlayerAuthChallenge(ctx context.Context, token, chatID string) (bool, error) {
+func (s *Server) claimTelegramPlayerAuthChallenge(ctx context.Context, token, chatID string) (knownPlayer bool, returnURL string, err error) {
 	tx, err := s.db.Begin(ctx)
 	if err != nil {
-		return false, err
+		return false, "", err
 	}
 	defer tx.Rollback(ctx)
-	var challengeID string
+	var challengeID, storedReturnURL string
 	err = tx.QueryRow(ctx, `
 		UPDATE player_auth_challenges
 		SET chat_id = $2, status = 'awaiting_contact', started_at = now(), updated_at = now()
 		WHERE token_hash = $1 AND status = 'active' AND expires_at > now()
-		RETURNING id
-	`, hashToken(token), chatID).Scan(&challengeID)
+		RETURNING id, COALESCE(return_url, '')
+	`, hashToken(token), chatID).Scan(&challengeID, &storedReturnURL)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return false, fmt.Errorf("authorization link not found or expired")
+		return false, "", fmt.Errorf("authorization link not found or expired")
 	}
 	if err != nil {
-		return false, err
+		return false, "", err
 	}
 	var playerID string
 	err = tx.QueryRow(ctx, `SELECT id FROM players WHERE telegram_chat_id = $1 AND status = 'active'`, chatID).Scan(&playerID)
 	if err == nil {
 		_, err = tx.Exec(ctx, `UPDATE player_auth_challenges SET player_id = $2, status = 'verified', verified_at = now(), updated_at = now() WHERE id = $1`, challengeID, playerID)
 		if err != nil {
-			return false, err
+			return false, "", err
 		}
-		return true, tx.Commit(ctx)
+		if err := tx.Commit(ctx); err != nil {
+			return false, "", err
+		}
+		return true, storedReturnURL, nil
 	}
 	if !errors.Is(err, pgx.ErrNoRows) {
-		return false, err
+		return false, "", err
 	}
-	return false, tx.Commit(ctx)
+	if err := tx.Commit(ctx); err != nil {
+		return false, "", err
+	}
+	return false, storedReturnURL, nil
 }
 
-func (s *Server) completeTelegramPlayerAuth(ctx context.Context, chatID, phone, username, firstName string) (bool, error) {
+func (s *Server) completeTelegramPlayerAuth(ctx context.Context, chatID, phone, username, firstName string) (completed bool, returnURL string, err error) {
 	tx, err := s.db.Begin(ctx)
 	if err != nil {
-		return false, err
+		return false, "", err
 	}
 	defer tx.Rollback(ctx)
-	var challengeID string
+	var challengeID, storedReturnURL string
 	err = tx.QueryRow(ctx, `
-		SELECT id FROM player_auth_challenges
+		SELECT id, COALESCE(return_url, '') FROM player_auth_challenges
 		WHERE chat_id = $1 AND status = 'awaiting_contact' AND expires_at > now()
 		ORDER BY created_at DESC LIMIT 1 FOR UPDATE
-	`, chatID).Scan(&challengeID)
+	`, chatID).Scan(&challengeID, &storedReturnURL)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return false, nil
+		return false, "", nil
 	}
 	if err != nil {
-		return false, err
+		return false, "", err
 	}
 	var playerID string
 	err = tx.QueryRow(ctx, `
@@ -262,7 +273,7 @@ func (s *Server) completeTelegramPlayerAuth(ctx context.Context, chatID, phone, 
 		RETURNING id
 	`, phone, chatID, username, firstName).Scan(&playerID)
 	if err != nil {
-		return false, err
+		return false, "", err
 	}
 	_, err = tx.Exec(ctx, `
 		UPDATE player_auth_challenges
@@ -270,9 +281,12 @@ func (s *Server) completeTelegramPlayerAuth(ctx context.Context, chatID, phone, 
 		WHERE id = $1
 	`, challengeID, playerID)
 	if err != nil {
-		return false, err
+		return false, "", err
 	}
-	return true, tx.Commit(ctx)
+	if err := tx.Commit(ctx); err != nil {
+		return false, "", err
+	}
+	return true, storedReturnURL, nil
 }
 
 func (s *Server) handleRedeemPlayerBalance(w http.ResponseWriter, r *http.Request) {

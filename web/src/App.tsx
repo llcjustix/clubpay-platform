@@ -596,6 +596,7 @@ function QRPage({ token }: { token: string }) {
   const [startingPlayerAuth, setStartingPlayerAuth] = useState(false);
   const [redeemingBalance, setRedeemingBalance] = useState(false);
   const [error, setError] = useState('');
+  const returnAuthToken = useMemo(() => new URLSearchParams(window.location.search).get('player_auth_token')?.trim() || '', []);
 
   function loadQR() {
     setLoading(true);
@@ -611,6 +612,19 @@ function QRPage({ token }: { token: string }) {
   }
 
   useEffect(loadQR, [token]);
+
+  useEffect(() => {
+    if (!returnAuthToken) return;
+    let disposed = false;
+    api<PlayerAuthResponse>(`/api/player-auth/${encodeURIComponent(returnAuthToken)}`)
+      .then((status) => {
+        if (!disposed) setPlayerAuth({ ...status, auth_token: returnAuthToken });
+      })
+      .catch((err) => {
+        if (!disposed) setError(String(err.message || err));
+      });
+    return () => { disposed = true; };
+  }, [returnAuthToken]);
 
   useEffect(() => {
     if (!playerAuth?.auth_token || playerAuth.status === 'verified' || playerAuth.status === 'expired') return;

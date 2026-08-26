@@ -5445,13 +5445,13 @@ func (s *Server) processTelegramUpdate(ctx context.Context, update telegramUpdat
 		}
 	}
 	if phone == "" && strings.HasPrefix(startPayload, "auth_") {
-		knownPlayer, err := s.claimTelegramPlayerAuthChallenge(ctx, startPayload, chatID)
+		knownPlayer, returnURL, err := s.claimTelegramPlayerAuthChallenge(ctx, startPayload, chatID)
 		if err != nil {
 			_ = s.sendTelegramMessage(ctx, chatID, "Ссылка для входа устарела. Вернитесь к QR-коду компьютера и откройте новую.")
 			return map[string]any{"success": true, "status": "auth_expired"}, nil
 		}
 		if knownPlayer {
-			_ = s.sendTelegramMessage(ctx, chatID, "Вход в Clubpay подтверждён. Вернитесь к странице оплаты.")
+			_ = s.sendTelegramPlayerAuthConfirmed(ctx, chatID, returnURL)
 			return map[string]any{"success": true, "status": "auth_verified"}, nil
 		}
 		_ = s.sendTelegramMessageWithMarkup(ctx, chatID, "Чтобы создать профиль Clubpay, поделитесь номером. Он нужен только для входа и сохранения остатка времени.", telegramContactKeyboard())
@@ -5491,12 +5491,12 @@ func (s *Server) processTelegramUpdate(ctx context.Context, update telegramUpdat
 	if err != nil {
 		return nil, err
 	}
-	completedAuth, err := s.completeTelegramPlayerAuth(ctx, chatID, phone, message.From.Username, message.From.FirstName)
+	completedAuth, returnURL, err := s.completeTelegramPlayerAuth(ctx, chatID, phone, message.From.Username, message.From.FirstName)
 	if err != nil {
 		return nil, err
 	}
 	if completedAuth {
-		_ = s.sendTelegramMessage(ctx, chatID, "Профиль Clubpay подтверждён. Вернитесь к странице оплаты — остаток времени будет сохраняться в профиле.")
+		_ = s.sendTelegramPlayerAuthConfirmed(ctx, chatID, returnURL)
 	}
 	sentPending, sendErr := s.sendPendingTelegramVouchers(ctx, phone, chatID)
 	if sendErr != nil {
@@ -5644,6 +5644,18 @@ func telegramContactKeyboard() map[string]any {
 		"resize_keyboard":   true,
 		"one_time_keyboard": true,
 	}
+}
+
+func (s *Server) sendTelegramPlayerAuthConfirmed(ctx context.Context, chatID, returnURL string) error {
+	const text = "Вход в Clubpay подтверждён. Откройте страницу оплаты — ваш профиль уже подключён."
+	if strings.TrimSpace(returnURL) == "" {
+		return s.sendTelegramMessage(ctx, chatID, text)
+	}
+	return s.sendTelegramMessageWithMarkup(ctx, chatID, text, map[string]any{
+		"inline_keyboard": [][]map[string]string{{
+			{"text": "Вернуться к оплате", "url": returnURL},
+		}},
+	})
 }
 
 func (s *Server) sendTelegramMessageWithMarkup(ctx context.Context, chatID, text string, replyMarkup any) error {
