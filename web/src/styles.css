@@ -1743,6 +1743,41 @@ textarea:focus {
   width: 100%;
 }
 
+.qr-guest-mode {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  border-bottom: 1px solid var(--divider);
+  padding: 0 0 14px;
+  margin: 0 0 16px;
+}
+
+.qr-guest-mode > div {
+  display: grid;
+  gap: 3px;
+}
+
+.qr-guest-mode p,
+.qr-guest-mode span {
+  margin: 0;
+}
+
+.qr-guest-mode p {
+  color: var(--text-secondary);
+  font-size: 12px;
+  font-weight: 640;
+}
+
+.qr-guest-mode span {
+  color: var(--text-faint);
+  font-size: 10px;
+}
+
+.qr-guest-mode .btn {
+  flex: 0 0 auto;
+}
+
 .qr-guest-entry {
   display: grid;
   justify-items: center;

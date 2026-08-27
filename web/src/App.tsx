@@ -707,6 +707,11 @@ function QRPage({ token }: { token: string }) {
     }
   }
 
+  async function switchGuestToPlayerAuth() {
+    setPaymentEntry('choose');
+    await startPlayerAuth();
+  }
+
   async function redeemPlayerBalance() {
     if (!playerAuth?.auth_token || !playerBalanceSeconds) return;
     setRedeemingBalance(true);
@@ -870,6 +875,18 @@ function QRPage({ token }: { token: string }) {
             </button>
           </section>
         ) : <>
+          {paymentEntry === 'guest' && canShowPlayerProfile && (
+            <section className="qr-guest-mode">
+              <div>
+                <p>Гостевой режим</p>
+                <span>Время этого сеанса не сохранится в профиле.</span>
+              </div>
+              <Button variant="ghost" size="sm" disabled={startingPlayerAuth} icon={startingPlayerAuth ? <RefreshCw className="spin" size={14} /> : <Send size={14} />} onClick={switchGuestToPlayerAuth}>
+                Войти через Telegram
+              </Button>
+            </section>
+          )}
+
           {hasVerifiedPlayer && playerAuth?.player && <section className="qr-player-card">
             <div className="qr-player-copy">
               <p>Профиль Clubpay подключён</p>
@@ -884,38 +901,38 @@ function QRPage({ token }: { token: string }) {
             ) : <p className="qr-player-empty">Выберите пакет ниже и оплатите его — сеанс начнётся сразу, а остаток сохранится здесь.</p>}
           </section>}
 
-          <section className="qr-voucher-card">
-          <div>
-            <p>Старый ваучер</p>
-            <h2>Применить код</h2>
-          </div>
-          <div className="qr-voucher-form">
-            <input
-              id="voucher"
-              value={voucherCode}
-              onChange={(event) => setVoucherCode(event.target.value)}
-              placeholder="Код ваучера"
-              autoComplete="off"
-              inputMode="text"
-            />
-            <Button variant="secondary" disabled={isBusy || checkingVoucher || redeeming || !voucherCode.trim()} icon={checkingVoucher ? <RefreshCw className="spin" size={16} /> : <Ticket size={16} />} onClick={redeemVoucher}>
-              {redeeming ? 'Применяем' : 'Применить'}
-            </Button>
-          </div>
-          {voucherCheck?.can_redeem && (
-            <div className="qr-voucher-status success">
-              <strong>Ваучер валиден: {formatDurationClock(voucherDurationSeconds)}</strong>
-              <span>Можно применить сразу или добавить время к выбранной оплате.</span>
+          {paymentEntry === 'guest' && <section className="qr-voucher-card">
+            <div>
+              <p>Старый ваучер</p>
+              <h2>Применить код</h2>
             </div>
-          )}
-          {voucherCheck && !voucherCheck.can_redeem && (
-            <div className="qr-voucher-status danger">
-              <strong>Ваучер нельзя применить</strong>
-              <span>Проверьте клуб, зону или статус компьютера.</span>
+            <div className="qr-voucher-form">
+              <input
+                id="voucher"
+                value={voucherCode}
+                onChange={(event) => setVoucherCode(event.target.value)}
+                placeholder="Код ваучера"
+                autoComplete="off"
+                inputMode="text"
+              />
+              <Button variant="secondary" disabled={isBusy || checkingVoucher || redeeming || !voucherCode.trim()} icon={checkingVoucher ? <RefreshCw className="spin" size={16} /> : <Ticket size={16} />} onClick={redeemVoucher}>
+                {redeeming ? 'Применяем' : 'Применить'}
+              </Button>
             </div>
-          )}
-          {checkingVoucher && <p className="qr-method-message">Проверяем ваучер...</p>}
-          </section>
+            {voucherCheck?.can_redeem && (
+              <div className="qr-voucher-status success">
+                <strong>Ваучер валиден: {formatDurationClock(voucherDurationSeconds)}</strong>
+                <span>Можно применить сразу или добавить время к выбранной оплате.</span>
+              </div>
+            )}
+            {voucherCheck && !voucherCheck.can_redeem && (
+              <div className="qr-voucher-status danger">
+                <strong>Ваучер нельзя применить</strong>
+                <span>Проверьте клуб, зону или статус компьютера.</span>
+              </div>
+            )}
+            {checkingVoucher && <p className="qr-method-message">Проверяем ваучер...</p>}
+          </section>}
 
           {hasVerifiedPlayer && data.telegram?.bot_link && (
             <section className="qr-telegram-card">
