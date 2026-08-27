@@ -887,7 +887,7 @@ function QRPage({ token }: { token: string }) {
             </section>
           )}
 
-          {hasVerifiedPlayer && playerAuth?.player && <section className="qr-player-card">
+          {canShowPlayerProfile && hasVerifiedPlayer && playerAuth?.player && <section className="qr-player-card">
             <div className="qr-player-copy">
               <p>Профиль Clubpay подключён</p>
               <h2>{playerAuth.player.first_name ? `${playerAuth.player.first_name}, ваш баланс` : 'Ваш баланс времени'}</h2>
