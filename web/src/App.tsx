@@ -891,12 +891,12 @@ function QRPage({ token }: { token: string }) {
             <div className="qr-player-copy">
               <p>Профиль Clubpay подключён</p>
               <h2>{playerAuth.player.first_name ? `${playerAuth.player.first_name}, ваш баланс` : 'Ваш баланс времени'}</h2>
-              <strong>{formatDurationClock(playerBalanceSeconds)}</strong>
+              <strong>{formatPlayerBalanceDuration(playerBalanceSeconds)}</strong>
               <span>Время сохраняется в этом клубе после завершения сеанса.</span>
             </div>
             {playerBalanceSeconds > 0 ? (
               <Button variant="secondary" disabled={isBusy || redeemingBalance} icon={redeemingBalance ? <RefreshCw className="spin" size={16} /> : <Play size={16} />} onClick={redeemPlayerBalance}>
-                {redeemingBalance ? 'Запускаем сеанс' : `Использовать ${formatDurationClock(playerBalanceSeconds)}`}
+                {redeemingBalance ? 'Запускаем сеанс' : `Использовать ${formatPlayerBalanceDuration(playerBalanceSeconds)}`}
               </Button>
             ) : <p className="qr-player-empty">Выберите пакет ниже и оплатите его — сеанс начнётся сразу, а остаток сохранится здесь.</p>}
           </section>}
@@ -2994,6 +2994,22 @@ function formatDurationClock(seconds?: number) {
 
   const days = Math.floor(hours / 24);
   return [days, hours % 24, minutes].map((part) => String(part).padStart(2, '0')).join(':');
+}
+
+// The QR payment screen is currently Russian-only. Keep the profile balance
+// self-explanatory even at a glance: 05ч:48м (or 01д:05ч:48м).
+function formatPlayerBalanceDuration(seconds?: number) {
+  const safeSeconds = Math.max(0, Math.floor(seconds || 0));
+  const totalMinutes = Math.floor(safeSeconds / 60);
+  const hours = Math.floor(totalMinutes / 60);
+  const minutes = totalMinutes % 60;
+
+  if (safeSeconds <= 24 * 60 * 60) {
+    return `${String(hours).padStart(2, '0')}ч:${String(minutes).padStart(2, '0')}м`;
+  }
+
+  const days = Math.floor(hours / 24);
+  return `${String(days).padStart(2, '0')}д:${String(hours % 24).padStart(2, '0')}ч:${String(minutes).padStart(2, '0')}м`;
 }
 
 function isPayableStatus(status: string) {
