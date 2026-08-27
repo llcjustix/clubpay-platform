@@ -5280,8 +5280,13 @@ func (s *Server) finishGrant(ctx context.Context, grantID, reason string, remain
 		return nil, err
 	}
 
-	result := map[string]any{"success": true, "grant_id": grantID, "status": "ended", "remaining_minutes": remainingMinutes, "remaining_seconds": remainingSeconds}
-	if remainingSeconds > 0 && playerID != nil && *playerID != "" {
+	isProfileSession := playerID != nil && *playerID != ""
+	result := map[string]any{
+		"success": true, "grant_id": grantID, "status": "ended",
+		"remaining_minutes": remainingMinutes, "remaining_seconds": remainingSeconds,
+		"player_profile": isProfileSession,
+	}
+	if remainingSeconds > 0 && isProfileSession {
 		if err := s.recordPlayerTime(ctx, tx, *playerID, clubID, remainingSeconds, "session_remaining", grantID, stringOrEmpty(paymentOrderID), "session-return:"+grantID); err != nil {
 			return nil, err
 		}
