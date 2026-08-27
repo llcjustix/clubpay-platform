@@ -2785,6 +2785,7 @@ func (s *Server) handleCoreBootstrap(w http.ResponseWriter, r *http.Request) {
 		ClubID           string
 		ClubName         string
 		ClubSlug         *string
+		ClubTimezone     string
 		PCID             string
 		ExternalPCID     string
 		Number           int
@@ -2797,7 +2798,7 @@ func (s *Server) handleCoreBootstrap(w http.ResponseWriter, r *http.Request) {
 		QRToken          string
 	}
 	err := s.db.QueryRow(r.Context(), `
-		SELECT c.id, c.name, c.slug, p.id, p.external_pc_id, p.number, p.label, p.status_cache,
+		SELECT c.id, c.name, c.slug, c.timezone, p.id, p.external_pc_id, p.number, p.label, p.status_cache,
 		       z.id, z.name, z.hourly_price_tiyin, z.status, COALESCE(q.public_token, '')
 		FROM pc_refs p
 		JOIN clubs c ON c.id = p.club_id
@@ -2811,7 +2812,7 @@ func (s *Server) handleCoreBootstrap(w http.ResponseWriter, r *http.Request) {
 		ORDER BY q.created_at DESC NULLS LAST, p.created_at DESC
 		LIMIT 1
 	`, externalPCID, clubIDFilter).Scan(
-		&row.ClubID, &row.ClubName, &row.ClubSlug, &row.PCID, &row.ExternalPCID, &row.Number, &row.Label, &row.Status,
+		&row.ClubID, &row.ClubName, &row.ClubSlug, &row.ClubTimezone, &row.PCID, &row.ExternalPCID, &row.Number, &row.Label, &row.Status,
 		&row.ZoneID, &row.ZoneName, &row.HourlyPriceTiyin, &row.ZoneStatus, &row.QRToken,
 	)
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -2857,7 +2858,7 @@ func (s *Server) handleCoreBootstrap(w http.ResponseWriter, r *http.Request) {
 		"server_time":    time.Now().UTC().Format(time.RFC3339),
 		"config_version": "mvp-core-agent-v1",
 		"club": map[string]any{
-			"id": row.ClubID, "name": row.ClubName, "slug": row.ClubSlug,
+			"id": row.ClubID, "name": row.ClubName, "slug": row.ClubSlug, "timezone": row.ClubTimezone,
 		},
 		"pc": map[string]any{
 			"id": row.PCID, "external_pc_id": row.ExternalPCID, "number": row.Number, "label": row.Label, "status": row.Status,

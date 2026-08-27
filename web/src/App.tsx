@@ -2983,7 +2983,17 @@ function formatRemainingTime(seconds?: number) {
 }
 
 function formatDurationClock(seconds?: number) {
-  return formatRemainingTime(seconds);
+  const safeSeconds = Math.max(0, Math.floor(seconds || 0));
+  const totalMinutes = Math.floor(safeSeconds / 60);
+  const hours = Math.floor(totalMinutes / 60);
+  const minutes = totalMinutes % 60;
+
+  if (safeSeconds <= 24 * 60 * 60) {
+    return [hours, minutes].map((part) => String(part).padStart(2, '0')).join(':');
+  }
+
+  const days = Math.floor(hours / 24);
+  return [days, hours % 24, minutes].map((part) => String(part).padStart(2, '0')).join(':');
 }
 
 function isPayableStatus(status: string) {
