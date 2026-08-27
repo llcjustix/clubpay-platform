@@ -934,7 +934,7 @@ function QRPage({ token }: { token: string }) {
             {checkingVoucher && <p className="qr-method-message">Проверяем ваучер...</p>}
           </section>}
 
-          {hasVerifiedPlayer && data.telegram?.bot_link && (
+          {paymentEntry === 'guest' && data.telegram?.bot_link && (
             <section className="qr-telegram-card">
             <div className="qr-telegram-copy">
               <p>Telegram-бот</p>
