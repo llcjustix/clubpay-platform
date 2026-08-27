@@ -596,6 +596,7 @@ function QRPage({ token }: { token: string }) {
   const [startingPlayerAuth, setStartingPlayerAuth] = useState(false);
   const [redeemingBalance, setRedeemingBalance] = useState(false);
   const [error, setError] = useState('');
+  const [paymentEntry, setPaymentEntry] = useState<'choose' | 'guest'>('choose');
   const returnAuthToken = useMemo(() => new URLSearchParams(window.location.search).get('player_auth_token')?.trim() || '', []);
 
   function loadQR() {
@@ -690,6 +691,8 @@ function QRPage({ token }: { token: string }) {
   const voucherReadyForAutoApply = Boolean(voucherCode.trim() && voucherCheck?.can_redeem);
   const voucherDurationSeconds = voucherCheck?.seconds_left || (voucherCheck?.minutes_left ? voucherCheck.minutes_left * 60 : 0);
   const playerBalanceSeconds = playerAuth?.status === 'verified' ? (playerAuth.player?.balance_seconds || 0) : 0;
+  const hasVerifiedPlayer = playerAuth?.status === 'verified' && Boolean(playerAuth.player);
+  const needsPaymentEntryChoice = canShowPlayerProfile && canStartOrExtend && !hasVerifiedPlayer && paymentEntry === 'choose';
 
   async function startPlayerAuth() {
     setStartingPlayerAuth(true);
@@ -829,42 +832,59 @@ function QRPage({ token }: { token: string }) {
           </div>
         </section>
 
-        {canShowPlayerProfile && <section className="qr-player-card">
-          {playerAuth?.status === 'verified' && playerAuth.player ? (
-            <>
-              <div className="qr-player-copy">
-                <p>Профиль Clubpay подключён</p>
-                <h2>{playerAuth.player.first_name ? `${playerAuth.player.first_name}, ваш баланс` : 'Ваш баланс времени'}</h2>
-                <strong>{formatDurationClock(playerBalanceSeconds)}</strong>
-                <span>Время сохраняется в этом клубе после завершения сеанса.</span>
-              </div>
-              {playerBalanceSeconds > 0 ? (
-                <Button variant="secondary" disabled={isBusy || redeemingBalance} icon={redeemingBalance ? <RefreshCw className="spin" size={16} /> : <Play size={16} />} onClick={redeemPlayerBalance}>
-                  {redeemingBalance ? 'Запускаем сеанс' : `Использовать ${formatDurationClock(playerBalanceSeconds)}`}
+        {needsPaymentEntryChoice ? (
+          <section className="qr-entry-card" aria-live="polite">
+            {playerAuth?.status === 'expired' ? (
+              <>
+                <div className="qr-entry-copy">
+                  <p>Вход не завершён</p>
+                  <h2>Ссылка истекла</h2>
+                  <span>Откройте новую ссылку и подтвердите номер в Telegram.</span>
+                </div>
+                <Button full disabled={startingPlayerAuth} icon={<Send size={16} />} onClick={startPlayerAuth}>Получить новую ссылку</Button>
+              </>
+            ) : playerAuth?.telegram_link ? (
+              <>
+                <div className="qr-entry-copy">
+                  <p>Профиль Clubpay</p>
+                  <h2>Подтвердите вход в Telegram</h2>
+                  <span>Откройте бота, поделитесь номером и вернитесь сюда. Пароль не нужен.</span>
+                </div>
+                <a className="btn primary qr-entry-primary" href={playerAuth.telegram_link}><Send size={16} /><span>Открыть Telegram</span></a>
+              </>
+            ) : (
+              <>
+                <div className="qr-entry-copy">
+                  <p>Clubpay профиль</p>
+                  <h2>Сохраняйте остаток времени</h2>
+                  <span>Войдите через Telegram один раз — остаток после сеанса останется в вашем профиле.</span>
+                </div>
+                <Button full disabled={startingPlayerAuth} icon={startingPlayerAuth ? <RefreshCw className="spin" size={16} /> : <Send size={16} />} onClick={startPlayerAuth}>
+                  {startingPlayerAuth ? 'Создаём ссылку' : 'Войти через Telegram'}
                 </Button>
-              ) : <p className="qr-player-empty">Выберите пакет ниже и оплатите его — сеанс начнётся сразу, а остаток сохранится здесь.</p>}
-            </>
-          ) : playerAuth?.status === 'expired' ? (
-            <>
-              <div className="qr-player-copy"><p>Вход не завершён</p><h2>Ссылка истекла</h2><span>Откройте новую ссылку и подтвердите номер в Telegram.</span></div>
-              <Button variant="secondary" disabled={startingPlayerAuth} icon={<Send size={16} />} onClick={startPlayerAuth}>Получить новую ссылку</Button>
-            </>
-          ) : playerAuth?.telegram_link ? (
-            <>
-              <div className="qr-player-copy"><p>Профиль Clubpay</p><h2>Подтвердите вход в Telegram</h2><span>Откройте бота, поделитесь номером и вернитесь сюда. Пароль не нужен.</span></div>
-              <a className="btn secondary" href={playerAuth.telegram_link}><Send size={16} /><span>Открыть Telegram</span></a>
-            </>
-          ) : (
-            <>
-              <div className="qr-player-copy"><p>Профиль Clubpay</p><h2>Сохраняйте остаток времени</h2><span>Войдите через Telegram один раз. Будущие сеансы и баланс минут будут привязаны к номеру.</span></div>
-              <Button variant="secondary" disabled={startingPlayerAuth} icon={startingPlayerAuth ? <RefreshCw className="spin" size={16} /> : <Send size={16} />} onClick={startPlayerAuth}>
-                {startingPlayerAuth ? 'Создаём ссылку' : 'Войти через Telegram'}
+              </>
+            )}
+            <button type="button" className="qr-guest-entry" onClick={() => setPaymentEntry('guest')}>
+              <strong>Войти как гость</strong>
+              <span>Без профиля — остаток времени не сохранится</span>
+            </button>
+          </section>
+        ) : <>
+          {hasVerifiedPlayer && playerAuth?.player && <section className="qr-player-card">
+            <div className="qr-player-copy">
+              <p>Профиль Clubpay подключён</p>
+              <h2>{playerAuth.player.first_name ? `${playerAuth.player.first_name}, ваш баланс` : 'Ваш баланс времени'}</h2>
+              <strong>{formatDurationClock(playerBalanceSeconds)}</strong>
+              <span>Время сохраняется в этом клубе после завершения сеанса.</span>
+            </div>
+            {playerBalanceSeconds > 0 ? (
+              <Button variant="secondary" disabled={isBusy || redeemingBalance} icon={redeemingBalance ? <RefreshCw className="spin" size={16} /> : <Play size={16} />} onClick={redeemPlayerBalance}>
+                {redeemingBalance ? 'Запускаем сеанс' : `Использовать ${formatDurationClock(playerBalanceSeconds)}`}
               </Button>
-            </>
-          )}
-        </section>}
+            ) : <p className="qr-player-empty">Выберите пакет ниже и оплатите его — сеанс начнётся сразу, а остаток сохранится здесь.</p>}
+          </section>}
 
-        <section className="qr-voucher-card">
+          <section className="qr-voucher-card">
           <div>
             <p>Старый ваучер</p>
             <h2>Применить код</h2>
@@ -895,28 +915,28 @@ function QRPage({ token }: { token: string }) {
             </div>
           )}
           {checkingVoucher && <p className="qr-method-message">Проверяем ваучер...</p>}
-        </section>
+          </section>
 
-        {canShowPlayerProfile && data.telegram?.bot_link && (
-          <section className="qr-telegram-card">
+          {hasVerifiedPlayer && data.telegram?.bot_link && (
+            <section className="qr-telegram-card">
             <div className="qr-telegram-copy">
               <p>Telegram-бот</p>
               <h2>Получайте ваучеры</h2>
               <span>Если менеджер завершит сессию, остаток времени придёт сюда.</span>
               <LinkButton href={data.telegram.bot_link} variant="secondary" icon={<Send size={16} />}>Открыть бота</LinkButton>
             </div>
-          </section>
-        )}
+            </section>
+          )}
 
-        <section className="qr-section-heading">
+          <section className="qr-section-heading">
           <div>
             <p>Пакеты</p>
             <h2>Сколько времени нужно?</h2>
           </div>
           <span>{formatPackageCount(data.tariffs.length)}</span>
-        </section>
+          </section>
 
-        <div className="qr-tariff-stack">
+          <div className="qr-tariff-stack">
           {data.tariffs.map((tariff) => (
             <button
               type="button"
@@ -934,9 +954,9 @@ function QRPage({ token }: { token: string }) {
               <span className="qr-card-name">{data.zone.name}</span>
             </button>
           ))}
-        </div>
+          </div>
 
-        <label className="qr-custom-amount">
+          <label className="qr-custom-amount">
           <span>Своя сумма</span>
           <input
             value={customAmount}
@@ -949,9 +969,9 @@ function QRPage({ token }: { token: string }) {
             autoComplete="off"
             disabled={isBusy}
           />
-        </label>
+          </label>
 
-        <section className="qr-payment-methods">
+          <section className="qr-payment-methods">
           <div>
             <p>Способ оплаты</p>
             <span>Выберите, куда открыть платеж</span>
@@ -971,11 +991,11 @@ function QRPage({ token }: { token: string }) {
             ))}
           </div>
           {selectedProviderOption && !selectedProviderOption.configured && <p className="qr-method-message">{selectedProviderOption.message}</p>}
-        </section>
+          </section>
 
-        {voucherMessage && <Notice tone="success">{voucherMessage}</Notice>}
-        {createdCheckout && (
-          <section className="qr-order-card">
+          {voucherMessage && <Notice tone="success">{voucherMessage}</Notice>}
+          {createdCheckout && (
+            <section className="qr-order-card">
             <div>
               <p>Payme заказ создан</p>
               <h2>Order ID</h2>
@@ -986,18 +1006,19 @@ function QRPage({ token }: { token: string }) {
               <Button size="sm" variant="ghost" icon={<Copy size={13} />} onClick={copyCreatedOrderID}>Скопировать</Button>
               <LinkButton href={createdCheckout.checkout_url} variant="secondary" icon={<CreditCard size={16} />}>Открыть Payme</LinkButton>
             </div>
-          </section>
-        )}
-        {voucherError && <Notice tone="danger">{voucherError}</Notice>}
-        {error && <Notice tone="danger">{error}</Notice>}
+            </section>
+          )}
+          {voucherError && <Notice tone="danger">{voucherError}</Notice>}
+          {error && <Notice tone="danger">{error}</Notice>}
 
-        <div className="qr-checkout-bar">
-          <div className="qr-checkout-inner">
-            <Button full className="qr-pay-button" disabled={isBusy || checkingVoucher || (!selected && !customAmountUZS) || !checkoutAmountUZS || creating || !paymentMethodReady} icon={creating ? <RefreshCw className="spin" size={18} /> : <CreditCard size={18} />} onClick={createCheckout}>
-              {creating ? 'Открываем оплату' : payLabel}
-            </Button>
+          <div className="qr-checkout-bar">
+            <div className="qr-checkout-inner">
+              <Button full className="qr-pay-button" disabled={isBusy || checkingVoucher || (!selected && !customAmountUZS) || !checkoutAmountUZS || creating || !paymentMethodReady} icon={creating ? <RefreshCw className="spin" size={18} /> : <CreditCard size={18} />} onClick={createCheckout}>
+                {creating ? 'Открываем оплату' : payLabel}
+              </Button>
+            </div>
           </div>
-        </div>
+        </>}
       </section>
     </main>
   );
