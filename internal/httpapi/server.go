@@ -4552,6 +4552,12 @@ func (s *Server) handleAgentEndSession(w http.ResponseWriter, r *http.Request) {
 		delivery, _ := s.attachVoucherRecipientAndSend(r.Context(), fmt.Sprint(voucher["id"]), code, seconds, req.RecipientPhone, "kiosk_client")
 		result["voucher_delivery"] = delivery
 	}
+	// A profile session already has a verified Telegram chat. Confirm the
+	// resulting club balance there as well, so the player does not have to
+	// scan another QR just to learn whether their unused time was saved.
+	if isProfileSessionResult(result) {
+		s.sendProfileSessionBalanceNotification(r.Context(), grantID)
+	}
 	writeJSON(w, http.StatusOK, result)
 }
 
@@ -5636,6 +5642,45 @@ func (s *Server) sendPendingTelegramVouchers(ctx context.Context, phone, chatID 
 
 func (s *Server) sendTelegramMessage(ctx context.Context, chatID, text string) error {
 	return s.sendTelegramMessageWithMarkup(ctx, chatID, text, nil)
+}
+
+func isProfileSessionResult(result map[string]any) bool {
+	profileSession, _ := result["player_profile"].(bool)
+	return profileSession
+}
+
+// sendProfileSessionBalanceNotification deliberately runs after finishGrant
+// commits. A Telegram outage must never undo a completed session or the time
+// already returned to the player's Clubpay balance.
+func (s *Server) sendProfileSessionBalanceNotification(ctx context.Context, grantID string) {
+	if s.cfg.TelegramBotToken == "" || grantID == "" {
+		return
+	}
+
+	var chatID, clubName string
+	var balanceSeconds int
+	err := s.db.QueryRow(ctx, `
+		SELECT COALESCE(p.telegram_chat_id, ''),
+		       c.name,
+		       COALESCE(b.seconds_balance, 0)
+		FROM game_access_grants g
+		JOIN players p ON p.id = g.player_id
+		JOIN clubs c ON c.id = g.club_id
+		LEFT JOIN player_club_balances b ON b.player_id = g.player_id AND b.club_id = g.club_id
+		WHERE g.id = $1 AND g.status = 'ended'
+	`, grantID).Scan(&chatID, &clubName, &balanceSeconds)
+	if err != nil || strings.TrimSpace(chatID) == "" {
+		return
+	}
+	_ = s.sendTelegramMessage(ctx, chatID, telegramProfileBalanceText(clubName, balanceSeconds))
+}
+
+func telegramProfileBalanceText(clubName string, balanceSeconds int) string {
+	clubName = strings.TrimSpace(clubName)
+	if clubName == "" {
+		return fmt.Sprintf("Сеанс завершён. На вашем балансе Clubpay: %s.", formatDurationForMessage(balanceSeconds))
+	}
+	return fmt.Sprintf("Сеанс завершён. На вашем балансе Clubpay в клубе «%s»: %s.", clubName, formatDurationForMessage(balanceSeconds))
 }
 
 func (s *Server) sendTelegramContactRequest(ctx context.Context, chatID string) error {

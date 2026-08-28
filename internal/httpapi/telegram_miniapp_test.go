@@ -63,3 +63,12 @@ func TestValidateTelegramMiniAppInitDataRejectsTamperingAndExpiry(t *testing.T) 
 		t.Fatal("expired Mini App data was accepted")
 	}
 }
+
+func TestTelegramProfileBalanceText(t *testing.T) {
+	if got, want := telegramProfileBalanceText("Test Cyber Club", 4*3600+11*60+6), "Сеанс завершён. На вашем балансе Clubpay в клубе «Test Cyber Club»: 04:11:06."; got != want {
+		t.Fatalf("telegramProfileBalanceText() = %q, want %q", got, want)
+	}
+	if got, want := telegramProfileBalanceText("", 0), "Сеанс завершён. На вашем балансе Clubpay: 0 сек."; got != want {
+		t.Fatalf("telegramProfileBalanceText() without club = %q, want %q", got, want)
+	}
+}
