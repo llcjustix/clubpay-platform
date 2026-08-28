@@ -99,6 +99,9 @@ jobs:
           # configured explicitly on production deployments.
           export TELEGRAM_BOT_TOKEN="${{ secrets.TELEGRAM_BOT_TOKEN }}"
           export TELEGRAM_BOT_USERNAME="clubPay_tg_bot"
+          # Enable only after BotFather is configured with
+          # https://clubpay.justix.uz/miniapp as the Main Mini App URL.
+          export TELEGRAM_MINI_APP_ENABLED="${{ vars.TELEGRAM_MINI_APP_ENABLED || 'false' }}"
           export TELEGRAM_POLLING_ENABLED="true"
 
           docker compose pull api web

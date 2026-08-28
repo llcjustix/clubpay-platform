@@ -47,6 +47,7 @@ type Config struct {
 	ManagerOnlinePayments   bool
 	TelegramBotToken        string
 	TelegramBotUsername     string
+	TelegramMiniAppEnabled   bool
 	TelegramWebhookSecret   string
 	TelegramPollingEnabled  bool
 
@@ -98,6 +99,7 @@ func Load() (Config, error) {
 		ManagerOnlinePayments:   envBool("MANAGER_ONLINE_PAYMENTS_ENABLED", false),
 		TelegramBotToken:        env("TELEGRAM_BOT_TOKEN", ""),
 		TelegramBotUsername:     strings.TrimPrefix(strings.TrimSpace(env("TELEGRAM_BOT_USERNAME", "")), "@"),
+		TelegramMiniAppEnabled:   envBool("TELEGRAM_MINI_APP_ENABLED", false),
 		TelegramWebhookSecret:   env("TELEGRAM_WEBHOOK_SECRET", ""),
 		TelegramPollingEnabled:  envBool("TELEGRAM_POLLING_ENABLED", !strings.EqualFold(appEnv, "production")),
 		VoucherMinMinutes:       envInt("VOUCHER_MIN_MINUTES", 5),

@@ -92,6 +92,13 @@ type PlayerAuthResponse = {
   player?: { id: string; phone: string; first_name?: string; balance_seconds: number };
 };
 
+type TelegramWebApp = {
+  initData: string;
+  initDataUnsafe?: { start_param?: string };
+  ready: () => void;
+  expand: () => void;
+};
+
 type PC = {
   id: string;
   external_pc_id: string;
@@ -325,6 +332,7 @@ function App() {
   const route = useRoute();
   const path = route.pathname;
   if (path.startsWith('/payment')) return <PaymentReturnPage />;
+  if (path.startsWith('/miniapp')) return <MiniAppPage />;
   if (path.startsWith('/qr/')) return <QRPage token={path.split('/').pop() || ''} />;
   return <AuthenticatedApp path={path} />;
 }
@@ -578,7 +586,47 @@ function HomePage(props: WorkspaceProps) {
   );
 }
 
-function QRPage({ token }: { token: string }) {
+function MiniAppPage() {
+  const [auth, setAuth] = useState<PlayerAuthResponse | null>(null);
+  const [launchError, setLaunchError] = useState('');
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    const miniApp = (window as Window & { Telegram?: { WebApp?: TelegramWebApp } }).Telegram?.WebApp;
+    const qrToken = miniApp?.initDataUnsafe?.start_param?.trim() || '';
+    if (!miniApp?.initData || !qrToken) {
+      setLaunchError('Откройте Clubpay по QR-коду в Telegram. Эта страница работает только внутри приложения Telegram.');
+      setLoading(false);
+      return;
+    }
+    miniApp.ready();
+    miniApp.expand();
+    api<PlayerAuthResponse>('/api/player-auth/miniapp', {
+      method: 'POST',
+      body: JSON.stringify({ qr_token: qrToken, init_data: miniApp.initData }),
+    })
+      .then(setAuth)
+      .catch((err) => setLaunchError(String(err.message || err)))
+      .finally(() => setLoading(false));
+  }, []);
+
+  if (loading) return <Centered text="Открываем ваш профиль" />;
+  if (launchError) return <MiniAppLaunchError text={launchError} />;
+  const miniApp = (window as Window & { Telegram?: { WebApp?: TelegramWebApp } }).Telegram?.WebApp;
+  const qrToken = miniApp?.initDataUnsafe?.start_param?.trim() || '';
+  return <QRPage token={qrToken} miniApp initialPlayerAuth={auth} />;
+}
+
+function MiniAppLaunchError({ text }: { text: string }) {
+  return <main className="miniapp-launch-error">
+    <span className="miniapp-mark">Clubpay</span>
+    <h1>Не удалось открыть профиль</h1>
+    <p>{text}</p>
+    <span>Отсканируйте QR-код компьютера ещё раз и выберите «Открыть в Telegram».</span>
+  </main>;
+}
+
+function QRPage({ token, miniApp = false, initialPlayerAuth = null }: { token: string; miniApp?: boolean; initialPlayerAuth?: PlayerAuthResponse | null }) {
   const [data, setData] = useState<QRData | null>(null);
   const [selected, setSelected] = useState('');
   const [paymentProvider, setPaymentProvider] = useState<PaymentProvider>('payme');
@@ -592,7 +640,7 @@ function QRPage({ token }: { token: string }) {
   const [creating, setCreating] = useState(false);
   const [redeeming, setRedeeming] = useState(false);
   const [createdCheckout, setCreatedCheckout] = useState<CheckoutResponse | null>(null);
-  const [playerAuth, setPlayerAuth] = useState<PlayerAuthResponse | null>(null);
+  const [playerAuth, setPlayerAuth] = useState<PlayerAuthResponse | null>(initialPlayerAuth);
   const [startingPlayerAuth, setStartingPlayerAuth] = useState(false);
   const [redeemingBalance, setRedeemingBalance] = useState(false);
   const [error, setError] = useState('');
@@ -613,6 +661,12 @@ function QRPage({ token }: { token: string }) {
   }
 
   useEffect(loadQR, [token]);
+
+  useEffect(() => {
+    if (!initialPlayerAuth) return;
+    setPlayerAuth(initialPlayerAuth);
+    setPaymentEntry('choose');
+  }, [initialPlayerAuth]);
 
   useEffect(() => {
     if (!returnAuthToken) return;
@@ -852,26 +906,26 @@ function QRPage({ token }: { token: string }) {
               <>
                 <div className="qr-entry-copy">
                   <p>Профиль Clubpay</p>
-                  <h2>Подтвердите вход в Telegram</h2>
-                  <span>Откройте бота, поделитесь номером и вернитесь сюда. Пароль не нужен.</span>
+                  <h2>{miniApp ? 'Подтвердите номер один раз' : 'Подтвердите вход в Telegram'}</h2>
+                  <span>{miniApp ? 'Это нужно только для создания профиля и сохранения времени. Затем снова откроется PC.' : 'Откройте бота, поделитесь номером и вернитесь сюда. Пароль не нужен.'}</span>
                 </div>
-                <a className="btn primary qr-entry-primary" href={playerAuth.telegram_link}><Send size={16} /><span>Открыть Telegram</span></a>
+                <a className="btn primary qr-entry-primary" href={playerAuth.telegram_link}><Send size={16} /><span>{miniApp ? 'Подтвердить номер в Telegram' : 'Открыть Telegram'}</span></a>
               </>
             ) : (
               <>
                 <div className="qr-entry-copy">
-                  <p>Clubpay профиль</p>
-                  <h2>Сохраняйте остаток времени</h2>
-                  <span>Войдите через Telegram один раз — остаток после сеанса останется в вашем профиле.</span>
+                  <p>Ваш Clubpay</p>
+                  <h2>Войдите и сохраняйте время</h2>
+                  <span>Один раз подтвердите Telegram — остаток после игры будет храниться в вашем профиле.</span>
                 </div>
                 <Button full disabled={startingPlayerAuth} icon={startingPlayerAuth ? <RefreshCw className="spin" size={16} /> : <Send size={16} />} onClick={startPlayerAuth}>
-                  {startingPlayerAuth ? 'Создаём ссылку' : 'Войти через Telegram'}
+                  {startingPlayerAuth ? 'Открываем Telegram' : 'Открыть мой Clubpay'}
                 </Button>
               </>
             )}
             <button type="button" className="qr-guest-entry" onClick={() => setPaymentEntry('guest')}>
-              <strong>Войти как гость</strong>
-              <span>Без профиля — остаток времени не сохранится</span>
+              <strong>Продолжить без профиля</strong>
+              <span>Остаток времени после сеанса не сохранится</span>
             </button>
           </section>
         ) : <>
@@ -882,23 +936,23 @@ function QRPage({ token }: { token: string }) {
                 <span>Время этого сеанса не сохранится в профиле.</span>
               </div>
               <Button variant="ghost" size="sm" disabled={startingPlayerAuth} icon={startingPlayerAuth ? <RefreshCw className="spin" size={14} /> : <Send size={14} />} onClick={switchGuestToPlayerAuth}>
-                Войти через Telegram
+                Открыть мой Clubpay
               </Button>
             </section>
           )}
 
           {canShowPlayerProfile && hasVerifiedPlayer && playerAuth?.player && <section className="qr-player-card">
             <div className="qr-player-copy">
-              <p>Профиль Clubpay подключён</p>
+              <p>Вы вошли в Clubpay</p>
               <h2>{playerAuth.player.first_name ? `${playerAuth.player.first_name}, ваш баланс` : 'Ваш баланс времени'}</h2>
               <strong>{formatPlayerBalanceDuration(playerBalanceSeconds)}</strong>
               <span>Время сохраняется в этом клубе после завершения сеанса.</span>
             </div>
             {playerBalanceSeconds > 0 ? (
               <Button variant="secondary" disabled={isBusy || redeemingBalance} icon={redeemingBalance ? <RefreshCw className="spin" size={16} /> : <Play size={16} />} onClick={redeemPlayerBalance}>
-                {redeemingBalance ? 'Запускаем сеанс' : `Использовать ${formatPlayerBalanceDuration(playerBalanceSeconds)}`}
+                {redeemingBalance ? 'Запускаем сеанс' : `Начать на ${formatPlayerBalanceDuration(playerBalanceSeconds)}`}
               </Button>
-            ) : <p className="qr-player-empty">Выберите пакет ниже и оплатите его — сеанс начнётся сразу, а остаток сохранится здесь.</p>}
+            ) : <p className="qr-player-empty">На балансе пока нет времени. Выберите пакет ниже: после оплаты сеанс начнётся сразу, а остаток сохранится в профиле.</p>}
           </section>}
 
           {paymentEntry === 'guest' && <section className="qr-voucher-card">
@@ -1969,7 +2023,11 @@ function SettingsPage({ auth, selectedClubID, currentPath, onClubChange, onLogou
     }
     const escape = (value: string) => value.replace(/[&<>'"]/g, (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;' }[char] || char));
     const qrImage = `https://api.qrserver.com/v1/create-qr-code/?size=360x360&margin=10&data=${encodeURIComponent(pc.qr_url)}`;
-    popup.document.write(`<!doctype html><html lang="ru"><head><meta charset="utf-8"><title>QR ${escape(pc.label)}</title><style>body{margin:0;min-height:100vh;display:grid;place-items:center;font-family:Arial,sans-serif;color:#111}.card{width:390px;text-align:center;border:1px solid #ddd;border-radius:20px;padding:32px}.club{font-size:14px;color:#666}.pc{font-size:30px;font-weight:800;margin:8px 0 22px}.qr{width:360px;height:360px}.note{margin:20px 0 0;font-size:15px;line-height:1.45;color:#444}@media print{.card{border:0}}</style></head><body><main class="card"><div class="club">${escape(clubForm?.name || 'ClubPay')}</div><div class="pc">${escape(pc.label)}</div><img class="qr" src="${qrImage}" alt="QR-код оплаты" onload="window.print()"><p class="note">Отсканируйте QR, чтобы оплатить игровое время на этом ПК.</p></main></body></html>`);
+    const opensTelegram = /^https:\/\/t\.me\//i.test(pc.qr_url);
+    const note = opensTelegram
+      ? 'Отсканируйте QR — откроется ваш профиль Clubpay в Telegram.'
+      : 'Отсканируйте QR, чтобы оплатить игровое время на этом ПК.';
+    popup.document.write(`<!doctype html><html lang="ru"><head><meta charset="utf-8"><title>QR ${escape(pc.label)}</title><style>body{margin:0;min-height:100vh;display:grid;place-items:center;font-family:Arial,sans-serif;color:#111}.card{width:390px;text-align:center;border:1px solid #ddd;border-radius:20px;padding:32px}.club{font-size:14px;color:#666}.pc{font-size:30px;font-weight:800;margin:8px 0 22px}.qr{width:360px;height:360px}.note{margin:20px 0 0;font-size:15px;line-height:1.45;color:#444}@media print{.card{border:0}}</style></head><body><main class="card"><div class="club">${escape(clubForm?.name || 'ClubPay')}</div><div class="pc">${escape(pc.label)}</div><img class="qr" src="${qrImage}" alt="QR-код оплаты" onload="window.print()"><p class="note">${note}</p></main></body></html>`);
     popup.document.close();
   }
 

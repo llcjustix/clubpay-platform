@@ -140,6 +140,7 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("POST /api/auth/logout", s.handleLogout)
 	mux.HandleFunc("GET /api/qr/{token}", s.handleQR)
 	mux.HandleFunc("POST /api/player-auth/start", s.handleStartPlayerAuth)
+	mux.HandleFunc("POST /api/player-auth/miniapp", s.handleMiniAppPlayerAuth)
 	mux.HandleFunc("GET /api/player-auth/{token}", s.handlePlayerAuthStatus)
 	mux.HandleFunc("POST /api/player-balance/redeem", s.handleRedeemPlayerBalance)
 	mux.HandleFunc("GET /api/orders/{invoice_id}", s.handleOrder)
@@ -971,7 +972,7 @@ func (s *Server) handleBackofficeCreatePC(w http.ResponseWriter, r *http.Request
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	writeJSON(w, http.StatusCreated, map[string]any{"id": id, "qr_token": token, "qr_url": s.cfg.FrontendBaseURL + "/qr/" + token})
+	writeJSON(w, http.StatusCreated, map[string]any{"id": id, "qr_token": token, "qr_url": s.staticPCQRCodeURL(token)})
 }
 
 func (s *Server) handleBackofficeUpdatePC(w http.ResponseWriter, r *http.Request) {
@@ -1078,7 +1079,7 @@ func (s *Server) handleBackofficeRotatePCQR(w http.ResponseWriter, r *http.Reque
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"qr_token": token, "qr_url": qrURL(s.cfg.FrontendBaseURL, token)})
+	writeJSON(w, http.StatusOK, map[string]any{"qr_token": token, "qr_url": s.staticPCQRCodeURL(token)})
 }
 
 func (s *Server) handleBackofficeDeletePC(w http.ResponseWriter, r *http.Request) {
@@ -2852,7 +2853,7 @@ func (s *Server) handleCoreBootstrap(w http.ResponseWriter, r *http.Request) {
 
 	qrURL := ""
 	if row.QRToken != "" {
-		qrURL = s.cfg.FrontendBaseURL + "/qr/" + row.QRToken
+		qrURL = s.staticPCQRCodeURL(row.QRToken)
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"server_time":    time.Now().UTC().Format(time.RFC3339),
@@ -5460,7 +5461,7 @@ func (s *Server) processTelegramUpdate(ctx context.Context, update telegramUpdat
 			_ = s.sendTelegramPlayerAuthConfirmed(ctx, chatID, returnURL)
 			return map[string]any{"success": true, "status": "auth_verified"}, nil
 		}
-		_ = s.sendTelegramMessageWithMarkup(ctx, chatID, "Чтобы создать профиль Clubpay, поделитесь номером. Он нужен только для входа и сохранения остатка времени.", telegramContactKeyboard())
+		_ = s.sendTelegramMessageWithMarkup(ctx, chatID, "Чтобы сохранить время в вашем профиле Clubpay, подтвердите свой номер одной кнопкой. Повторно делать это не понадобится.", telegramContactKeyboard())
 		return map[string]any{"success": true, "status": "auth_contact_required"}, nil
 	}
 	if phone == "" && startPayload != "" {
@@ -5653,13 +5654,13 @@ func telegramContactKeyboard() map[string]any {
 }
 
 func (s *Server) sendTelegramPlayerAuthConfirmed(ctx context.Context, chatID, returnURL string) error {
-	const text = "Вход в Clubpay подтверждён. Откройте страницу оплаты — ваш профиль уже подключён."
+	const text = "Готово: ваш профиль Clubpay подтверждён. Откройте компьютер, чтобы использовать баланс или выбрать время."
 	if strings.TrimSpace(returnURL) == "" {
 		return s.sendTelegramMessage(ctx, chatID, text)
 	}
 	return s.sendTelegramMessageWithMarkup(ctx, chatID, text, map[string]any{
 		"inline_keyboard": [][]map[string]string{{
-			{"text": "Вернуться к оплате", "url": returnURL},
+			{"text": "Открыть компьютер", "url": returnURL},
 		}},
 	})
 }
@@ -5956,6 +5957,11 @@ type createCheckoutRequest struct {
 
 type startPlayerAuthRequest struct {
 	QRToken string `json:"qr_token"`
+}
+
+type miniAppPlayerAuthRequest struct {
+	QRToken  string `json:"qr_token"`
+	InitData string `json:"init_data"`
 }
 
 type redeemPlayerBalanceRequest struct {
@@ -6729,7 +6735,7 @@ func (s *Server) listPCsWithQR(ctx context.Context, clubID string) ([]map[string
 		}
 		result = append(result, map[string]any{
 			"id": id, "zone_id": zoneID, "zone": zoneName, "external_pc_id": externalID, "number": number,
-			"label": label, "mac_address": macAddress, "status": status, "qr_token": token, "qr_url": qrURL(s.cfg.FrontendBaseURL, token),
+			"label": label, "mac_address": macAddress, "status": status, "qr_token": token, "qr_url": s.staticPCQRCodeURL(token),
 		})
 	}
 	return result, nil
@@ -7008,6 +7014,24 @@ func qrURL(baseURL, token string) string {
 		return ""
 	}
 	return strings.TrimRight(baseURL, "/") + "/qr/" + token
+}
+
+// miniAppURL is a Telegram deep link, not an identity token. The opaque QR
+// token selects a PC only; the API verifies Telegram's signed initData before
+// it reveals a profile or permits a balance redemption.
+func (s *Server) miniAppURL(token string) string {
+	username := strings.TrimPrefix(strings.TrimSpace(s.cfg.TelegramBotUsername), "@")
+	if token == "" || username == "" || !s.cfg.TelegramMiniAppEnabled {
+		return ""
+	}
+	return fmt.Sprintf("https://t.me/%s?startapp=%s", url.PathEscape(username), url.QueryEscape(token))
+}
+
+func (s *Server) staticPCQRCodeURL(token string) string {
+	if miniAppLink := s.miniAppURL(token); miniAppLink != "" {
+		return miniAppLink
+	}
+	return qrURL(s.cfg.FrontendBaseURL, token)
 }
 
 func defaultString(value, fallback string) string {

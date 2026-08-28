@@ -385,4 +385,14 @@ X-Telegram-Bot-Api-Secret-Token: <TELEGRAM_WEBHOOK_SECRET>
 
 `TELEGRAM_BOT_USERNAME` можно указать явно без `@`. Если он пустой, API попробует получить username через Telegram `getMe`.
 
+### Mini App для оплаты по QR
+
+Mini App не требует отдельного мобильного приложения: это текущая мобильная страница Clubpay, открытая внутри Telegram. Для включения короткого пути `QR → профиль → начать игру`:
+
+1. В `@BotFather` откройте нужного бота: **Bot Settings → Configure Mini App → Enable Mini App** и укажите `https://<ваш-frontend>/miniapp`.
+2. На сервере задайте `TELEGRAM_MINI_APP_ENABLED=true` и перезапустите API.
+3. Перепечатайте статические QR-коды в настройках ПК. Новые QR ведут на `t.me/<bot>?startapp=<opaque-qr-token>`; старые наклейки продолжают открывать browser fallback.
+
+Backend проверяет подпись `Telegram.WebApp.initData`, срок её действия и соответствие параметра конкретному QR. QR выбирает только компьютер; профиль игрока определяется по подтверждённому `telegram_chat_id`.
+
 Для локального тестирования можно не поднимать публичный webhook: в development включён `TELEGRAM_POLLING_ENABLED=true`, и API сам забирает `/start` через Telegram `getUpdates`, если у бота не настроен webhook. В production лучше использовать webhook и выключить polling.

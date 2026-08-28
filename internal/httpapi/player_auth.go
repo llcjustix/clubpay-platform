@@ -2,11 +2,15 @@ package httpapi
 
 import (
 	"context"
+	"crypto/hmac"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
+	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -15,12 +19,75 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
-const playerAuthTTL = 10 * time.Minute
+const (
+	playerAuthTTL        = 10 * time.Minute
+	telegramInitDataTTL  = 10 * time.Minute
+)
 
 type playerIdentity struct {
 	ID        string
 	Phone     string
 	FirstName string
+}
+
+// telegramMiniAppUser is trusted only after validateTelegramMiniAppInitData
+// verifies Telegram's HMAC signature. initDataUnsafe in the browser is never
+// used as an identity source.
+type telegramMiniAppUser struct {
+	ID        int64  `json:"id"`
+	FirstName string `json:"first_name"`
+	Username  string `json:"username"`
+}
+
+type telegramMiniAppIdentity struct {
+	User       telegramMiniAppUser
+	StartParam string
+}
+
+func validateTelegramMiniAppInitData(raw, botToken string, now time.Time) (telegramMiniAppIdentity, error) {
+	if strings.TrimSpace(botToken) == "" {
+		return telegramMiniAppIdentity{}, fmt.Errorf("Telegram login is not configured")
+	}
+	values, err := url.ParseQuery(strings.TrimSpace(raw))
+	if err != nil {
+		return telegramMiniAppIdentity{}, fmt.Errorf("invalid Telegram authorization")
+	}
+	receivedHash := values.Get("hash")
+	if receivedHash == "" {
+		return telegramMiniAppIdentity{}, fmt.Errorf("Telegram authorization signature is required")
+	}
+	authDate, err := strconv.ParseInt(values.Get("auth_date"), 10, 64)
+	if err != nil || authDate <= 0 {
+		return telegramMiniAppIdentity{}, fmt.Errorf("Telegram authorization time is required")
+	}
+	authAt := time.Unix(authDate, 0)
+	if now.Sub(authAt) > telegramInitDataTTL || authAt.After(now.Add(time.Minute)) {
+		return telegramMiniAppIdentity{}, fmt.Errorf("Telegram authorization has expired. Reopen Clubpay from the QR code")
+	}
+
+	parts := make([]string, 0, len(values))
+	for key, items := range values {
+		if key == "hash" {
+			continue
+		}
+		for _, item := range items {
+			parts = append(parts, key+"="+item)
+		}
+	}
+	sort.Strings(parts)
+	secret := hmac.New(sha256.New, []byte("WebAppData"))
+	_, _ = secret.Write([]byte(botToken))
+	check := hmac.New(sha256.New, secret.Sum(nil))
+	_, _ = check.Write([]byte(strings.Join(parts, "\n")))
+	if !hmac.Equal([]byte(receivedHash), []byte(fmt.Sprintf("%x", check.Sum(nil)))) {
+		return telegramMiniAppIdentity{}, fmt.Errorf("Telegram authorization signature is invalid")
+	}
+
+	var user telegramMiniAppUser
+	if err := json.Unmarshal([]byte(values.Get("user")), &user); err != nil || user.ID == 0 {
+		return telegramMiniAppIdentity{}, fmt.Errorf("Telegram user is required")
+	}
+	return telegramMiniAppIdentity{User: user, StartParam: strings.TrimSpace(values.Get("start_param"))}, nil
 }
 
 func (s *Server) handleStartPlayerAuth(w http.ResponseWriter, r *http.Request) {
@@ -83,6 +150,104 @@ func (s *Server) handleStartPlayerAuth(w http.ResponseWriter, r *http.Request) {
 		"expires_at":    expiresAt,
 		"status":        "active",
 	})
+}
+
+// handleMiniAppPlayerAuth turns a signed Telegram Mini App launch into the
+// same short-lived, QR-scoped player token used by checkout and balance redeem.
+// The player is identified by Telegram's signed user id, not a browser/device id.
+func (s *Server) handleMiniAppPlayerAuth(w http.ResponseWriter, r *http.Request) {
+	var req miniAppPlayerAuthRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid json")
+		return
+	}
+	if strings.TrimSpace(req.QRToken) == "" || strings.TrimSpace(req.InitData) == "" {
+		writeError(w, http.StatusBadRequest, "qr_token and Telegram authorization are required")
+		return
+	}
+	identity, err := validateTelegramMiniAppInitData(req.InitData, s.cfg.TelegramBotToken, time.Now())
+	if err != nil {
+		writeError(w, http.StatusUnauthorized, err.Error())
+		return
+	}
+	if identity.StartParam == "" || identity.StartParam != strings.TrimSpace(req.QRToken) {
+		writeError(w, http.StatusUnauthorized, "Telegram launch does not match this QR code")
+		return
+	}
+
+	var clubID, pcID string
+	err = s.db.QueryRow(r.Context(), `
+		SELECT q.club_id, q.pc_ref_id
+		FROM qr_codes q
+		JOIN clubs c ON c.id = q.club_id
+		JOIN pc_refs p ON p.id = q.pc_ref_id
+		WHERE q.public_token = $1 AND q.status = 'active'
+		  AND q.type = 'static_pc'
+		  AND c.status = 'active' AND p.status_cache <> 'deleted'
+	`, req.QRToken).Scan(&clubID, &pcID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		writeError(w, http.StatusNotFound, "QR token not found")
+		return
+	}
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	chatID := strconv.FormatInt(identity.User.ID, 10)
+	var player playerIdentity
+	err = s.db.QueryRow(r.Context(), `
+		SELECT id, phone, COALESCE(first_name, '')
+		FROM players
+		WHERE telegram_chat_id = $1 AND status = 'active'
+	`, chatID).Scan(&player.ID, &player.Phone, &player.FirstName)
+	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	authToken := "auth_" + randomHex(18)
+	expiresAt := time.Now().UTC().Add(playerAuthTTL)
+	returnURL := s.miniAppURL(req.QRToken)
+	if returnURL == "" {
+		returnURL = fmt.Sprintf("%s/qr/%s", strings.TrimRight(s.cfg.FrontendBaseURL, "/"), url.PathEscape(req.QRToken))
+	}
+	status := "active"
+	var playerID any
+	if err == nil {
+		status = "verified"
+		playerID = player.ID
+	}
+	_, err = s.db.Exec(r.Context(), `
+		INSERT INTO player_auth_challenges (token_hash, club_id, pc_ref_id, player_id, chat_id, status, return_url, expires_at, started_at, verified_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, now(), CASE WHEN $6 = 'verified' THEN now() ELSE NULL END)
+	`, hashToken(authToken), clubID, pcID, playerID, chatID, status, returnURL, expiresAt)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	result := map[string]any{
+		"auth_token": authToken,
+		"status":     status,
+		"expires_at": expiresAt,
+	}
+	if status == "verified" {
+		balance, balanceErr := s.playerBalanceSeconds(r.Context(), s.db, player.ID, clubID)
+		if balanceErr != nil {
+			writeError(w, http.StatusInternalServerError, balanceErr.Error())
+			return
+		}
+		result["player"] = map[string]any{"id": player.ID, "phone": player.Phone, "first_name": player.FirstName, "balance_seconds": balance}
+	} else {
+		username, usernameErr := s.telegramBotUsername(r.Context())
+		if usernameErr != nil {
+			writeError(w, http.StatusServiceUnavailable, "Telegram login is unavailable")
+			return
+		}
+		result["telegram_link"] = fmt.Sprintf("https://t.me/%s?start=%s", username, url.QueryEscape(authToken))
+	}
+	writeJSON(w, http.StatusOK, result)
 }
 
 func (s *Server) handlePlayerAuthStatus(w http.ResponseWriter, r *http.Request) {
@@ -214,6 +379,7 @@ func (s *Server) claimTelegramPlayerAuthChallenge(ctx context.Context, token, ch
 		UPDATE player_auth_challenges
 		SET chat_id = $2, status = 'awaiting_contact', started_at = now(), updated_at = now()
 		WHERE token_hash = $1 AND status = 'active' AND expires_at > now()
+		  AND (chat_id IS NULL OR chat_id = $2)
 		RETURNING id, COALESCE(return_url, '')
 	`, hashToken(token), chatID).Scan(&challengeID, &storedReturnURL)
 	if errors.Is(err, pgx.ErrNoRows) {
