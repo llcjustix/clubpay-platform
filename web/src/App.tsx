@@ -740,6 +740,7 @@ function QRPage({ token, miniApp = false, initialPlayerAuth = null }: { token: s
   const canStartOrExtend = data ? isPayableStatus(data.pc.status) || (isSessionExtendable && isSessionExtendQR) : false;
   const isExtension = isSessionExtendable && isSessionExtendQR;
   const isStaticBusyQR = isSessionExtendable && !isSessionExtendQR;
+  const isStaticOccupiedQR = data?.pc.status === 'occupied' && !isSessionExtendQR;
   const canShowPlayerProfile = !isSessionExtendQR && !isStaticBusyQR;
   const busyUntilLabel = data?.active_session?.planned_ends_at ? formatTime(data.active_session.planned_ends_at) : '';
   const voucherReadyForAutoApply = Boolean(voucherCode.trim() && voucherCheck?.can_redeem);
@@ -859,7 +860,9 @@ function QRPage({ token, miniApp = false, initialPlayerAuth = null }: { token: s
   const isBusy = !canStartOrExtend;
   const deviceHint = isExtension
     ? 'QR с экрана активной сессии. Оплата или ваучер продлят текущее время.'
-    : isStaticBusyQR
+    : isStaticOccupiedQR
+      ? ''
+      : isStaticBusyQR
       ? `ПК занят${busyUntilLabel ? ` до ${busyUntilLabel}` : ''}. Оплата по наклейке недоступна. Для продления используйте QR на экране сессии.`
       : isBusy
         ? 'Этот компьютер сейчас нельзя оплатить по QR.'
@@ -880,18 +883,23 @@ function QRPage({ token, miniApp = false, initialPlayerAuth = null }: { token: s
             <p className="qr-kicker">{data.club.name}</p>
             <h1>{data.pc.label}</h1>
           </div>
-          <span className={`qr-status ${data.pc.status}`}>{pcStatusLabel(data.pc.status)}</span>
+          {!isStaticOccupiedQR && <span className={`qr-status ${data.pc.status}`}>{pcStatusLabel(data.pc.status)}</span>}
         </header>
 
         <section className="qr-device-card">
           <div>
             <span>Зона</span>
             <strong>{data.zone.name}</strong>
-            <p>{deviceHint}</p>
+            {deviceHint && <p>{deviceHint}</p>}
           </div>
         </section>
 
-        {needsPaymentEntryChoice ? (
+        {isStaticOccupiedQR ? (
+          <section className="qr-occupied-state" aria-live="polite">
+            <p>Этот компьютер сейчас</p>
+            <h2>Занят</h2>
+          </section>
+        ) : needsPaymentEntryChoice ? (
           <section className="qr-entry-card" aria-live="polite">
             {playerAuth?.status === 'expired' ? (
               <>
@@ -946,7 +954,7 @@ function QRPage({ token, miniApp = false, initialPlayerAuth = null }: { token: s
               <p>Вы вошли в Clubpay</p>
               <h2>{playerAuth.player.first_name ? `${playerAuth.player.first_name}, ваш баланс` : 'Ваш баланс времени'}</h2>
               <strong>{formatPlayerBalanceDuration(playerBalanceSeconds)}</strong>
-              <span>Время сохраняется в этом клубе после завершения сеанса.</span>
+              <span>При оплате баланс автоматически прибавится к купленному времени.</span>
             </div>
             {playerBalanceSeconds > 0 ? (
               <Button variant="secondary" disabled={isBusy || redeemingBalance} icon={redeemingBalance ? <RefreshCw className="spin" size={16} /> : <Play size={16} />} onClick={redeemPlayerBalance}>

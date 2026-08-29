@@ -3796,6 +3796,33 @@ func (s *Server) applyPaymentSuccess(ctx context.Context, success paymentSuccess
 		return extensionGrantID, nil
 	}
 
+	// A profile payment starts one continuous session: the time just purchased
+	// plus the player's existing club balance. Keep the purchased order intact
+	// for payment accounting; only the access grant contains the full session.
+	// Session QR links are deliberately excluded: they extend an existing
+	// session and must never silently consume a separate balance.
+	sessionDurationSeconds := order.DurationSeconds
+	profileBalanceSeconds := 0
+	profilePlayerID := ""
+	if order.PlayerID != nil && *order.PlayerID != "" {
+		profilePlayerID = *order.PlayerID
+		err = tx.QueryRow(ctx, `
+			SELECT seconds_balance
+			FROM player_club_balances
+			WHERE player_id = $1 AND club_id = $2
+			FOR UPDATE
+		`, profilePlayerID, order.ClubID).Scan(&profileBalanceSeconds)
+		if errors.Is(err, pgx.ErrNoRows) {
+			profileBalanceSeconds = 0
+		} else if err != nil {
+			return "", err
+		}
+		if profileBalanceSeconds > 0 {
+			sessionDurationSeconds += profileBalanceSeconds
+		}
+	}
+	sessionDurationMinutes := secondsToMinutesCeil(sessionDurationSeconds)
+
 	var grantID string
 	if existingGrantID != "" {
 		grantID = existingGrantID
@@ -3803,7 +3830,7 @@ func (s *Server) applyPaymentSuccess(ctx context.Context, success paymentSuccess
 			UPDATE game_access_grants
 			SET status = 'pending', duration_minutes = $2, duration_seconds = $3, voucher_id = $4, player_id = COALESCE($5::uuid, player_id), last_error = NULL
 			WHERE id = $1
-		`, grantID, order.DurationMinutes, order.DurationSeconds, orderVoucherID, order.PlayerID)
+		`, grantID, sessionDurationMinutes, sessionDurationSeconds, orderVoucherID, order.PlayerID)
 		if err != nil {
 			return "", err
 		}
@@ -3812,7 +3839,7 @@ func (s *Server) applyPaymentSuccess(ctx context.Context, success paymentSuccess
 			INSERT INTO game_access_grants (club_id, pc_ref_id, payment_order_id, voucher_id, player_id, duration_minutes, duration_seconds, status, source)
 			VALUES ($1, $2, $3, $4, $5, $6, $7, 'pending', 'online_payment')
 			RETURNING id
-		`, order.ClubID, order.PCID, order.ID, orderVoucherID, order.PlayerID, order.DurationMinutes, order.DurationSeconds).Scan(&grantID)
+		`, order.ClubID, order.PCID, order.ID, orderVoucherID, order.PlayerID, sessionDurationMinutes, sessionDurationSeconds).Scan(&grantID)
 		if err != nil {
 			return "", err
 		}
@@ -3827,12 +3854,17 @@ func (s *Server) applyPaymentSuccess(ctx context.Context, success paymentSuccess
 			return "", err
 		}
 	}
+	if profileBalanceSeconds > 0 {
+		if err := s.recordPlayerTime(ctx, tx, profilePlayerID, order.ClubID, -profileBalanceSeconds, "session_start", grantID, order.ID, "session-start:"+grantID); err != nil {
+			return "", err
+		}
+	}
 
 	if err := tx.Commit(ctx); err != nil {
 		return "", err
 	}
 
-	extendExpiry := time.Now().UTC().Add(time.Duration(order.DurationSeconds)*time.Second + s.sessionGraceDuration())
+	extendExpiry := time.Now().UTC().Add(time.Duration(sessionDurationSeconds)*time.Second + s.sessionGraceDuration())
 	extendURL, err := s.createSessionExtendURL(ctx, order.ClubID, order.PCID, grantID, extendExpiry)
 	if err != nil {
 		_, _ = s.db.Exec(ctx, `
@@ -3840,6 +3872,9 @@ func (s *Server) applyPaymentSuccess(ctx context.Context, success paymentSuccess
 			SET status = 'start_failed', last_error = $1
 			WHERE id = $2
 		`, err.Error(), grantID)
+		if profileBalanceSeconds > 0 {
+			s.refundPlayerBalance(ctx, profilePlayerID, order.ClubID, profileBalanceSeconds, grantID, err.Error())
+		}
 		return "", err
 	}
 
@@ -3849,8 +3884,8 @@ func (s *Server) applyPaymentSuccess(ctx context.Context, success paymentSuccess
 		ClubID:          order.ClubID,
 		PCID:            order.PCID,
 		PCExternalID:    order.ExternalPCID,
-		DurationSeconds: order.DurationSeconds,
-		DurationMinutes: order.DurationMinutes,
+		DurationSeconds: sessionDurationSeconds,
+		DurationMinutes: sessionDurationMinutes,
 		GraceSeconds:    s.cfg.SessionGraceSeconds,
 		Source:          "online_payment",
 		PaymentOrderID:  order.ID,
@@ -3865,6 +3900,9 @@ func (s *Server) applyPaymentSuccess(ctx context.Context, success paymentSuccess
 			SET status = 'start_failed', last_error = $1
 			WHERE id = $2
 		`, err.Error(), grantID)
+		if profileBalanceSeconds > 0 {
+			s.refundPlayerBalance(ctx, profilePlayerID, order.ClubID, profileBalanceSeconds, grantID, err.Error())
+		}
 		return "", err
 	}
 	coreSessionID := startResult.CoreSessionID
@@ -3876,7 +3914,7 @@ func (s *Server) applyPaymentSuccess(ctx context.Context, success paymentSuccess
 	}
 	plannedEndsAt := startResult.EndsAt
 	if plannedEndsAt == nil {
-		endsAt := time.Now().UTC().Add(time.Duration(order.DurationSeconds) * time.Second)
+		endsAt := time.Now().UTC().Add(time.Duration(sessionDurationSeconds) * time.Second)
 		plannedEndsAt = &endsAt
 	}
 	graceEndsAt := plannedEndsAt.Add(s.sessionGraceDuration())

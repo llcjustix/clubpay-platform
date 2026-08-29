@@ -1643,6 +1643,34 @@ textarea:focus {
   line-height: 1.45;
 }
 
+.qr-occupied-state {
+  display: grid;
+  justify-items: center;
+  gap: 4px;
+  padding: 48px 0 32px;
+  text-align: center;
+}
+
+.qr-occupied-state p,
+.qr-occupied-state h2 {
+  margin: 0;
+}
+
+.qr-occupied-state p {
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.qr-occupied-state h2 {
+  color: var(--warning);
+  font-family: var(--font-mono);
+  font-size: clamp(42px, 15vw, 62px);
+  font-weight: 700;
+  letter-spacing: -.07em;
+  line-height: .95;
+  text-transform: uppercase;
+}
+
 .qr-section-heading {
   display: flex;
   align-items: end;
