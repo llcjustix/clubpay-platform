@@ -8,9 +8,9 @@
 
 | Устройство | Что сделать |
 | --- | --- |
-| Игровой ПК с Windows | Установить `ClubPay-Agent-win-x64.zip` и Steam/игру |
+| Игровой ПК с Windows | Распаковать `ClubPay-Agent-win-x64.zip`, открыть `install-agent.cmd` и поставить Steam/игру |
 | Сервер клуба | `ClubPay-Controller-win-x64.zip`: локальный API, PWA, база, Agent-команды, касса, ваучеры и WoL |
-| Компьютер менеджера | `ClubPay-Manager-win-x64.zip` **и** второй `ClubPay-Controller-win-x64.zip` в режиме `manager` |
+| Компьютер менеджера | Один пакет `ClubPay-Manager-Desktop-win-x64.zip`; его `install-manager.cmd` сам ставит резервный Controller |
 | Телефон игрока | Telegram для Mini App и оплаты |
 
 > В этом клубе уже есть свой Windows-сервер и бездисковые Windows-клиенты. Поэтому Raspberry Pi
@@ -48,52 +48,25 @@ Controller**. Каждый действует 30 минут, подходит р
 
 1. Подключите ПК к сети клуба по **Ethernet**.
 2. Установите Steam и одну тестовую игру.
-3. Скачайте `ClubPay-Agent-win-x64.zip` со страницы [релизов Agent](https://github.com/llcjustix/clubpay-core-agent/releases),
-   распакуйте в `C:\ClubPay\Agent`.
+3. Скачайте `ClubPay-Agent-win-x64.zip` со страницы [релизов Agent](https://github.com/llcjustix/clubpay-core-agent/releases)
+   и распакуйте в любую временную папку.
 4. Wake-on-LAN пока не настраивайте: его проверим отдельным этапом на сервере клуба.
 
 ## 3. Установить Agent Core в бездисковый образ
 
 Agent ставится **один раз в master-образ Windows на сервере клуба**, а не вручную на каждый
-игровой ПК. Нужны только распакованный релиз и конфиг ниже: Git и .NET SDK на ПК клуба не нужны.
+игровой ПК. Git, .NET SDK, CMD-команды и ручное редактирование JSON на ПК клуба не нужны.
 
 ### Если пока тестируется один ПК
 
-Создайте файл `C:\ClubPay\Agent\appsettings.Local.json` и вставьте в него. Замените только
-`<CORE_TOKEN_ПИЛОТА>` на переданный секрет:
+Откройте двойным кликом `install-agent.cmd`. Установщик спросит только:
 
-```json
-{
-  "Agent": {
-    "PcId": "Pilot PC #01",
-    "ClubName": "Pilot — Real Network",
-    "Zone": "Pilot Standard",
-    "VoiceAnnouncementsEnabled": true,
-    "KioskLockdownEnabled": false,
-    "HideWindowsTaskbar": false,
-    "MaintenanceExitEnabled": true
-  },
-  "Controller": {
-    "WebSocketUrl": "wss://api-clubpay.justix.uz/api/core/ws",
-    "BootstrapUrl": "https://api-clubpay.justix.uz/api/core/bootstrap",
-    "FallbackWebSocketUrls": ["ws://<IP_СЕРВЕРА>:8080/api/core/ws", "ws://<IP_МЕНЕДЖЕРА>:8080/api/core/ws"],
-    "FallbackBootstrapUrls": ["http://<IP_СЕРВЕРА>:8080/api/core/bootstrap", "http://<IP_МЕНЕДЖЕРА>:8080/api/core/bootstrap"],
-    "AgentToken": "<CORE_TOKEN_ПИЛОТА>",
-    "ExternalPcId": "pilot-real-network-pc-001"
-  },
-  "Launcher": {
-    "DiscoverSteamGames": true,
-    "SteamLibraryRoots": [],
-    "Apps": []
-  }
-}
-```
+1. `pilot-real-network-pc-001` — ID игрового ПК;
+2. IP-адрес основного Controller на сервере клуба;
+3. `CORE_TOKEN` из защищённого `controller.env` на этом сервере.
 
-Запустите Agent:
-
-```bat
-start "" C:\ClubPay\Agent\ClubPay.Agent.Client.exe
-```
+Он сам создаёт конфиг, регистрирует автозапуск и запускает Agent. Токен нельзя передавать игрокам
+или сохранять в документации/общем чате.
 
 **Проверка:** в админке `Настройки → Компьютеры → Pilot PC #01` статус стал **online**.
 Если нет — остановитесь здесь и проверьте `CORE_TOKEN`, интернет и конфиг.
@@ -125,17 +98,16 @@ start "" C:\ClubPay\Agent\ClubPay.Agent.Client.exe
 
 ## 4. Manager Client и резервный Controller на компьютере менеджера
 
-Скачайте `ClubPay-Manager-win-x64.zip` с той же [страницы релизов Agent](https://github.com/llcjustix/clubpay-core-agent/releases),
-распакуйте, например, в `C:\ClubPay\Manager`, и запустите `ClubPay.Agent.Admin.exe`.
+Скачайте `ClubPay-Manager-Desktop-win-x64.zip` с той же [страницы релизов Agent](https://github.com/llcjustix/clubpay-core-agent/releases),
+распакуйте, например, в `C:\ClubPay\Manager`, и запустите правой кнопкой **от имени администратора**
+`install-manager.cmd`.
 Войдите теми же данными, что и в веб-админке. Внутри EXE доступны те же компьютеры, касса,
 пользователи, настройки и отчёты, потому что это одна production-админка, а не урезанная копия.
 
-Поставьте второй `ClubPay-Controller-win-x64.zip` в `C:\ClubPay\ManagerController`.
-В Web Admin создайте **код для резервного ПК менеджера**, затем запустите
-`install-windows.cmd` от имени администратора и вставьте его. Установщик сам
-назначит режим `manager` и отключит рискованный онлайн-эквайринг. Затем в
-`C:\ClubPay\Manager\appsettings.Local.json` укажите `Manager:LocalControllerUrls`
-с `http://127.0.0.1:8080/admin`.
+В Web Admin заранее создайте **код для резервного ПК менеджера** и вставьте его, когда попросит
+установщик. Он сам поставит вложенный Controller, назначит режим `manager` и отключит рискованный
+онлайн-эквайринг. Второй архив Controller, CMD-команды и `appsettings.Local.json` для первого
+пилота не нужны.
 
 Manager Client сначала использует Cloud, а при его падении сам открывает локальную админку.
 
