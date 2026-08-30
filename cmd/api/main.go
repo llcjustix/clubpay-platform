@@ -37,6 +37,7 @@ func main() {
 	var coreAdapter core.Adapter = core.NewMockAdapter()
 	var wsController *core.WSController
 	var edgeWOLRelay *core.EdgeWOLRelay
+	var wakeHandler core.WakeHandler
 	if strings.EqualFold(cfg.CoreMode, "http") {
 		coreAdapter = core.NewHTTPAdapter(cfg.CoreBaseURL, cfg.CoreToken, time.Duration(cfg.CoreTimeoutMS)*time.Millisecond)
 	} else if strings.EqualFold(cfg.CoreMode, "ws") || strings.EqualFold(cfg.CoreMode, "websocket") {
@@ -48,7 +49,7 @@ func main() {
 	}
 	if wsController != nil && cfg.WOLEnabled {
 		if cfg.NodeMode == "edge" || cfg.NodeMode == "manager" {
-			wsController.SetWakeHandler(func(ctx context.Context, externalPCID string) error {
+			wakeHandler = func(ctx context.Context, externalPCID string) error {
 				var macAddress string
 				err := pool.QueryRow(ctx, `
 					SELECT COALESCE(mac_address, '')
@@ -66,9 +67,9 @@ func main() {
 					return fmt.Errorf("PC %s has no MAC address configured", externalPCID)
 				}
 				return core.SendWakeOnLAN(ctx, macAddress, cfg.WOLBroadcastAddr)
-			}, time.Duration(cfg.WOLWaitSeconds)*time.Second)
+			}
 		} else if edgeWOLRelay != nil {
-			wsController.SetWakeHandler(func(ctx context.Context, externalPCID string) error {
+			wakeHandler = func(ctx context.Context, externalPCID string) error {
 				var clubID, macAddress string
 				err := pool.QueryRow(ctx, `
 					SELECT club_id::text, COALESCE(mac_address, '')
@@ -84,12 +85,18 @@ func main() {
 					return fmt.Errorf("PC %s has no MAC address configured", externalPCID)
 				}
 				return edgeWOLRelay.Wake(ctx, clubID, externalPCID, macAddress)
-			}, time.Duration(cfg.WOLWaitSeconds)*time.Second)
+			}
 		} else {
 			log.Printf("Wake-on-LAN is enabled but EDGE_WOL_TOKEN is not configured; sleeping PCs cannot be awakened")
 		}
 	}
+	if wsController != nil && wakeHandler != nil {
+		wsController.SetWakeHandler(wakeHandler, time.Duration(cfg.WOLWaitSeconds)*time.Second)
+	}
 	server := httpapi.NewServer(cfg, pool, coreAdapter)
+	if wakeHandler != nil {
+		server.SetWakePCHandler(wakeHandler)
+	}
 	if edgeWOLRelay != nil {
 		server.SetEdgeWOLRelay(edgeWOLRelay)
 	}

@@ -34,6 +34,7 @@ type Server struct {
 	db           *pgxpool.Pool
 	core         core.Adapter
 	edgeWOLRelay http.Handler
+	wakePC       core.WakeHandler
 }
 
 type coreEventSubscriber interface {
@@ -137,6 +138,15 @@ func NewServer(cfg config.Config, db *pgxpool.Pool, coreAdapter core.Adapter) *S
 // packet to a sleeping PC from inside the club network.
 func (s *Server) SetEdgeWOLRelay(relay http.Handler) {
 	s.edgeWOLRelay = relay
+}
+
+// SetWakePCHandler exposes the already configured, tightly scoped LAN wake
+// path to manager actions. It is deliberately separate from Adapter.Wake:
+// Adapter.Wake waits for a reconnect in order to continue a paid start-session
+// flow, while an explicit manager wake must return as soon as the magic packet
+// is accepted by the relay.
+func (s *Server) SetWakePCHandler(handler core.WakeHandler) {
+	s.wakePC = handler
 }
 
 func (s *Server) Routes() http.Handler {
@@ -4329,11 +4339,9 @@ func (s *Server) handleAdminPCStatus(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, response)
 }
 
-// handleAdminPCWake deliberately goes through the same Core adapter as a paid
-// session start. In WS mode a sleeping PC is woken through the configured LAN
-// relay and the controller waits for the Agent to reconnect. This keeps the
-// Manager Client and the web back office from gaining a separate, unaudited
-// way to send packets into a club network.
+// handleAdminPCWake uses the same server-owned, authenticated LAN relay as a
+// paid session start. The manager receives an acknowledgement after the magic
+// packet is accepted; the PC appears online later when Agent Core reconnects.
 func (s *Server) handleAdminPCWake(w http.ResponseWriter, r *http.Request) {
 	auth, ok := s.requireAuth(w, r)
 	if !ok {
@@ -4370,7 +4378,11 @@ func (s *Server) handleAdminPCWake(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	if err := s.core.Wake(r.Context(), externalPCID); err != nil {
+	if s.wakePC == nil {
+		writeError(w, http.StatusConflict, "wake-on-LAN is not configured for this club")
+		return
+	}
+	if err := s.wakePC(r.Context(), externalPCID); err != nil {
 		writeError(w, http.StatusConflict, "wake failed: "+err.Error())
 		return
 	}
