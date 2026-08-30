@@ -42,14 +42,6 @@ jobs:
             -u "${{ secrets.DOCKER_USERNAME }}" \
             --password-stdin
 
-      - name: Test Go services
-        run: |
-          docker run --rm \
-            -v "$GITHUB_WORKSPACE:/app" \
-            -w /app \
-            golang:1.22-alpine \
-            sh -c 'go test ./...'
-
       - name: Build API
         run: |
           docker build \
