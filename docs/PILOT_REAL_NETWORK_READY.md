@@ -8,12 +8,13 @@
 | Устройство | Что сделать |
 | --- | --- |
 | Игровой ПК с Windows | Установить ClubPay Agent Core и Steam/игру |
-| Raspberry Pi | Установить WoL-relay, только если нужно будить ПК из сна |
+| Сервер клуба | На текущем этапе ничего не ставить; позже он сможет заменить Pi для Wake-on-LAN |
 | Ноутбук администратора | Ничего не ставить — открыть [админку ClubPay](https://clubpay.justix.uz/admin) в Chrome/Edge |
 | Телефон игрока | Telegram для Mini App и оплаты |
 
-> Pi **не** хранит платежи, профили или QR. Он только отправляет в локальную сеть команду
-> Wake-on-LAN. Без Pi все остальные сценарии работают; не будет только запуска спящего ПК.
+> В этом клубе уже есть свой сервер и бездисковые Windows-клиенты. Поэтому **Pi сейчас не нужна**.
+> Профиль, QR, оплата, Mini App и Agent работают через облако. Пока не подключён локальный WoL-relay,
+> не проверяем только запуск ПК из сна.
 
 ## Данные пилота
 
@@ -23,12 +24,10 @@
 | Зона | `Pilot Standard` |
 | Игровой ПК | `Pilot PC #01` |
 | ID для Agent | `pilot-real-network-pc-001` |
-| ID клуба для Pi | `564ef225-6cdb-4bf9-a362-960f942b3c4d` |
+| ID клуба | `564ef225-6cdb-4bf9-a362-960f942b3c4d` |
 
-Для Agent и Pi понадобятся два разных секрета, которые передаются отдельно в защищённом канале:
-
-- `CORE_TOKEN` — только для игрового ПК;
-- `EDGE_WOL_TOKEN` — только для Raspberry Pi.
+Сейчас нужен только `CORE_TOKEN` для Agent. `EDGE_WOL_TOKEN` потребуется позднее, если будем
+подключать Wake-on-LAN relay на сервере клуба.
 
 Не отправляйте их в общий чат, Git или скриншоты.
 
@@ -38,18 +37,20 @@
 2. Установите Steam и одну тестовую игру.
 3. Установите [Git for Windows](https://git-scm.com/install/windows) и
    [SDK .NET 10 для Windows x64](https://dotnet.microsoft.com/en-us/download/dotnet/10.0).
-4. Для проверки Wake-on-LAN включите WoL / `Power on by PCI-E` в BIOS. В Windows разрешите
-   сетевой карте пробуждение по magic packet и отключите Fast Startup.
+4. Wake-on-LAN пока не настраивайте: его проверим отдельным этапом на сервере клуба.
 
-## 2. Установить Agent Core
+## 2. Установить Agent Core в бездисковый образ
 
-Откройте обычный `cmd.exe` на игровом ПК и вставьте:
+Agent ставится **один раз в master-образ Windows на сервере клуба**, а не вручную на каждый
+игровой ПК. В консоли этого образа выполните:
 
 ```bat
 git clone https://github.com/llcjustix/clubpay-core-agent.git C:\ClubPay\source
 cd /d C:\ClubPay\source
 dotnet publish .\src\ClubPay.Agent.Client\ClubPay.Agent.Client.csproj -c Release -r win-x64 --self-contained true -o C:\ClubPay\Agent
 ```
+
+### Если пока тестируется один ПК
 
 Создайте файл `C:\ClubPay\Agent\appsettings.Local.json` и вставьте в него. Замените только
 `<CORE_TOKEN_ПИЛОТА>` на переданный секрет:
@@ -88,37 +89,37 @@ start "" C:\ClubPay\Agent\ClubPay.Agent.Client.exe
 **Проверка:** в админке `Настройки → Компьютеры → Pilot PC #01` статус стал **online**.
 Если нет — остановитесь здесь и проверьте `CORE_TOKEN`, интернет и конфиг.
 
-## 3. Подключить Raspberry Pi — только для Wake-on-LAN
+### Когда подключаете несколько бездисковых ПК
 
-Пропустите этот раздел, если не тестируете запуск ПК из сна.
+Каждому Windows-клиенту сервер должен выдавать **уникальное имя** — например `CP001`, `CP002`.
+В админке ClubPay для соответствующих ПК укажите такие же `Core external ID`, но маленькими
+буквами: `cp001`, `cp002`.
 
-Pi должна быть подключена к **той же сети клуба по Ethernet**, что и игровой ПК. На Pi должны
-быть установлены Docker Engine и Docker Compose.
+В общем `appsettings.Local.json` образа замените поля идентификации на:
 
-В терминале Pi выполните:
-
-```bash
-sudo git clone https://github.com/llcjustix/clubpay-platform.git /opt/clubpay-platform
-cd /opt/clubpay-platform
-sudo install -d -m 700 /etc/clubpay
-sudo cp deploy/pi/edge-wol.env.example /etc/clubpay/edge-wol.env
-sudo nano /etc/clubpay/edge-wol.env
+```json
+{
+  "Agent": {
+    "PcId": "PC {MACHINE_NAME}",
+    "DataDirectory": "C:\\ProgramData\\ClubPay\\Agent\\state\\{MACHINE_NAME_LOWER}"
+  },
+  "Controller": {
+    "ExternalPcId": "{MACHINE_NAME_LOWER}",
+    "AgentToken": "<CORE_TOKEN_ПИЛОТА>"
+  }
+}
 ```
 
-В открытом файле замените **только** значение `EDGE_WOL_TOKEN` на секрет, переданный для Pi.
-Сохранить в `nano`: `Ctrl+O` → Enter → `Ctrl+X`.
+Так один образ не смешивает сессии: каждый Agent использует имя своего Windows-клиента и отдельную
+папку состояния. Если сервер не выдаёт клиентам уникальные имена или отдельную writable-папку,
+многопользовательский запуск пока не включаем.
 
-Запустите relay:
+## 3. Wake-on-LAN — не делать в текущем выезде
 
-```bash
-sudo docker compose -f deploy/pi/docker-compose.edge-wol.yml up -d --build
-sudo docker compose -f deploy/pi/docker-compose.edge-wol.yml logs -f edge-wol
-```
-
-**Проверка:** в логе есть `connected to ClubPay Cloud`.
-
-В админке откройте `Pilot PC #01 → Изменить` и укажите **проводной MAC-адрес** игрового ПК.
-Без него Pi не сможет разбудить компьютер.
+У клуба уже есть свой сервер, поэтому Raspberry Pi не покупаем и не настраиваем. В этом выезде
+ПК запускаем включённым через Agent. После базового запуска отдельно согласуем с их инженером
+ОС сервера, схему сети и способ запуска relay на этом сервере; только после этого включим тест
+пробуждения из сна.
 
 ## 4. Пройти короткий тест
 
@@ -131,15 +132,6 @@ sudo docker compose -f deploy/pi/docker-compose.edge-wol.yml logs -f edge-wol
    к той же сессии.
 7. Завершите сессию. Для авторизованного игрока остаток сохраняется в профиль, а бот присылает
    сообщение с оставшимся временем.
-
-### Проверка пробуждения из сна
-
-Только если установлен Pi relay:
-
-1. Убедитесь, что Agent был online, затем переведите игровой ПК в сон.
-2. В админке ПК должен стать `sleeping`, не `offline`.
-3. Запустите сессию обычным Mini App-флоу.
-4. Pi будит ПК, Agent переподключается, затем сессия стартует.
 
 ## 5. Kiosk включать последним
 
@@ -158,8 +150,7 @@ ClubPay.Agent.Client.exe --setup-kiosk=kiosk:ПАРОЛЬ_ПОЛЬЗОВАТЕЛ
 | Симптом | Сначала проверить |
 | --- | --- |
 | ПК offline | Запущен ли Agent, правильны ли `CORE_TOKEN` и `ExternalPcId` |
-| Pi не подключается | Интернет Pi и точность `EDGE_WOL_TOKEN` |
-| ПК не просыпается | Pi и ПК в одной LAN, MAC проводной карты, BIOS/Windows WoL |
+| Несколько ПК видны как один | Уникальны ли имена Windows и `ExternalPcId`, используется ли шаблон в конфиге |
 | Не открывается Mini App | Напечатан ли текущий QR из админки, установлен ли Telegram |
 
 Полный offline-режим, Captive Portal и работа при падении облака в этот пилот не входят.
