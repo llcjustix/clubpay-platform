@@ -67,7 +67,7 @@ func main() {
 	}
 	defer pool.Close()
 
-	if err := db.RunMigrations(ctx, pool, resolveMigrationsDir()); err != nil {
+	if err := db.RunMigrations(ctx, pool, resolveMigrationsDir(*configPath)); err != nil {
 		log.Fatalf("run migrations: %v", err)
 	}
 
@@ -181,9 +181,9 @@ func defaultControllerConfigPath() string {
 	return filepath.Join(filepath.Dir(executable), "controller.env")
 }
 
-func resolveMigrationsDir() string {
+func resolveMigrationsDir(configPath string) string {
 	if configured := strings.TrimSpace(os.Getenv("MIGRATIONS_DIR")); configured != "" {
-		return configured
+		return resolvePathFromConfig(configured, configPath)
 	}
 	if executable, err := os.Executable(); err == nil {
 		candidate := filepath.Join(filepath.Dir(executable), "migrations")
