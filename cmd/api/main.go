@@ -401,6 +401,10 @@ func startEmbeddedDatabase(cfg config.Config) (*embeddedpostgres.EmbeddedPostgre
 		return nil, fmt.Errorf("create local database runtime folder: %w", err)
 	}
 	postgres := embeddedpostgres.NewDatabase(embeddedpostgres.DefaultConfig().
+		// PostgreSQL 18's Windows archive crashes during initdb on some Windows
+		// Server/VM images (0xC0000005). Pin the locally embedded runtime to the
+		// broadly compatible 16.x line instead of following the library default.
+		Version(embeddedpostgres.V16).
 		Username(parsed.User.Username()).
 		Password(password).
 		Database(databaseName).
