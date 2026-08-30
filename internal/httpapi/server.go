@@ -177,6 +177,7 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("POST /api/edge/events", s.handleEdgeEvents)
 	mux.HandleFunc("GET /api/admin/catalog", s.handleAdminCatalog)
 	mux.HandleFunc("GET /api/admin/pcs", s.handleAdminPCs)
+	mux.HandleFunc("POST /api/admin/pcs/{pc_id}/wake", s.handleAdminPCWake)
 	mux.HandleFunc("POST /api/admin/pcs/{pc_id}/status", s.handleAdminPCStatus)
 	mux.HandleFunc("GET /api/admin/orders", s.handleAdminOrders)
 	mux.HandleFunc("GET /api/admin/grants", s.handleAdminGrants)
@@ -4326,6 +4327,59 @@ func (s *Server) handleAdminPCStatus(w http.ResponseWriter, r *http.Request) {
 		response["core_warning"] = coreWarning
 	}
 	writeJSON(w, http.StatusOK, response)
+}
+
+// handleAdminPCWake deliberately goes through the same Core adapter as a paid
+// session start. In WS mode a sleeping PC is woken through the configured LAN
+// relay and the controller waits for the Agent to reconnect. This keeps the
+// Manager Client and the web back office from gaining a separate, unaudited
+// way to send packets into a club network.
+func (s *Server) handleAdminPCWake(w http.ResponseWriter, r *http.Request) {
+	auth, ok := s.requireAuth(w, r)
+	if !ok {
+		return
+	}
+	pcID := strings.TrimSpace(r.PathValue("pc_id"))
+	if pcID == "" {
+		writeError(w, http.StatusBadRequest, "pc_id is required")
+		return
+	}
+	clubID, err := s.clubIDForEntity(r.Context(), "pc_refs", pcID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		writeError(w, http.StatusNotFound, "pc not found")
+		return
+	}
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if _, ok := s.requireClubRole(w, r, auth, clubID, "owner", "manager", "admin"); !ok {
+		return
+	}
+	var externalPCID string
+	err = s.db.QueryRow(r.Context(), `
+		SELECT external_pc_id
+		FROM pc_refs
+		WHERE id = $1 AND status_cache <> 'deleted'
+	`, pcID).Scan(&externalPCID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		writeError(w, http.StatusNotFound, "pc not found")
+		return
+	}
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if err := s.core.Wake(r.Context(), externalPCID); err != nil {
+		writeError(w, http.StatusConflict, "wake failed: "+err.Error())
+		return
+	}
+	metadata, _ := json.Marshal(map[string]any{"external_pc_id": externalPCID})
+	_, _ = s.db.Exec(r.Context(), `
+		INSERT INTO audit_logs (club_id, action, entity_type, entity_id, metadata)
+		VALUES ($1, 'admin_pc_wake', 'pc_ref', $2, $3)
+	`, clubID, pcID, metadata)
+	writeJSON(w, http.StatusOK, map[string]any{"success": true, "pc_id": pcID, "status": "wake_requested"})
 }
 
 func (s *Server) handleAdminOrders(w http.ResponseWriter, r *http.Request) {

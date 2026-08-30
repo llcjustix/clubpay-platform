@@ -1209,6 +1209,12 @@ function AdminPage({ auth, selectedClubID, currentPath, onClubChange, onLogout }
     refresh();
   }
 
+  async function wakePC(pcID: string) {
+    await api(`/api/admin/pcs/${pcID}/wake`, { method: 'POST' });
+    setMessage('Команда включения отправлена. ПК появится в зале после запуска Agent Core.');
+    refresh();
+  }
+
   async function endGrant(grant: Grant, phone = '', recipientConsent = false) {
     setTelegramPrompt(null);
     const result = await api<{ voucher?: { code: string; minutes_left: number; seconds_left?: number }; voucher_delivery?: VoucherDelivery }>(`/api/admin/grants/${grant.id}/end`, {
@@ -1468,7 +1474,9 @@ function AdminPage({ auth, selectedClubID, currentPath, onClubChange, onLogout }
                   <td><span className={`remaining ${pc.status === 'occupied' ? 'active' : ''}`}>{pc.status === 'occupied' ? formatRemainingTime(remainingSeconds) : '-'}</span></td>
                   <td>
                     <div className="table-actions">
-                      {pc.status === 'occupied' && activeGrant ? (
+                      {pc.status === 'sleeping' ? (
+                        <Button size="sm" variant="success" icon={<Power size={14} />} onClick={() => wakePC(pc.id)}>Включить</Button>
+                      ) : pc.status === 'occupied' && activeGrant ? (
                         <Button size="sm" variant="secondary" icon={<Power size={14} />} onClick={() => openEndSession(activeGrant)}>Завершить</Button>
                       ) : (
                         <Button size="sm" variant={pc.status === 'maintenance' ? 'secondary' : 'danger'} icon={<Wrench size={14} />} onClick={() => setPCStatus(pc.id, pc.status === 'maintenance' ? 'available' : 'maintenance')}>
@@ -1495,7 +1503,9 @@ function AdminPage({ auth, selectedClubID, currentPath, onClubChange, onLogout }
               </button>
               {selectedPCID === pc.id && (
                 <div className="mobile-pc-actions">
-                  {pc.status === 'occupied' && activeGrant ? (
+                  {pc.status === 'sleeping' ? (
+                    <Button size="sm" variant="success" icon={<Power size={14} />} onClick={() => wakePC(pc.id)}>Включить компьютер</Button>
+                  ) : pc.status === 'occupied' && activeGrant ? (
                     <Button size="sm" variant="secondary" icon={<Power size={14} />} onClick={() => openEndSession(activeGrant)}>Завершить сессию</Button>
                   ) : (
                     <Button size="sm" variant={pc.status === 'maintenance' ? 'secondary' : 'danger'} icon={<Wrench size={14} />} onClick={() => setPCStatus(pc.id, pc.status === 'maintenance' ? 'available' : 'maintenance')}>
