@@ -30,9 +30,10 @@ import (
 )
 
 type Server struct {
-	cfg  config.Config
-	db   *pgxpool.Pool
-	core core.Adapter
+	cfg          config.Config
+	db           *pgxpool.Pool
+	core         core.Adapter
+	edgeWOLRelay http.Handler
 }
 
 type coreEventSubscriber interface {
@@ -131,6 +132,13 @@ func NewServer(cfg config.Config, db *pgxpool.Pool, coreAdapter core.Adapter) *S
 	return server
 }
 
+// SetEdgeWOLRelay exposes a narrowly scoped, outbound-connected LAN relay.
+// Agents still talk directly to Cloud; the relay is used only to send a magic
+// packet to a sleeping PC from inside the club network.
+func (s *Server) SetEdgeWOLRelay(relay http.Handler) {
+	s.edgeWOLRelay = relay
+}
+
 func (s *Server) Routes() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /api/health", s.handleHealth)
@@ -161,6 +169,9 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("POST /api/core/agent/session/end", s.handleAgentEndSession)
 	if coreWS, ok := s.core.(http.Handler); ok {
 		mux.Handle("GET /api/core/ws", coreWS)
+	}
+	if s.edgeWOLRelay != nil {
+		mux.Handle("GET /api/edge/wol/ws", s.edgeWOLRelay)
 	}
 	mux.HandleFunc("GET /api/edge/snapshot", s.handleEdgeSnapshot)
 	mux.HandleFunc("POST /api/edge/events", s.handleEdgeEvents)

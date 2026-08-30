@@ -41,6 +41,7 @@ type Config struct {
 	EdgeNodeID              string
 	EdgeClubID              string
 	EdgeSyncToken           string
+	EdgeWOLToken            string
 	EdgeSyncIntervalSeconds int
 	ManagerNodeID           string
 	ManagerClubID           string
@@ -93,6 +94,7 @@ func Load() (Config, error) {
 		EdgeNodeID:              env("EDGE_NODE_ID", ""),
 		EdgeClubID:              env("EDGE_CLUB_ID", ""),
 		EdgeSyncToken:           env("EDGE_SYNC_TOKEN", ""),
+		EdgeWOLToken:            env("EDGE_WOL_TOKEN", ""),
 		EdgeSyncIntervalSeconds: envInt("EDGE_SYNC_INTERVAL_SECONDS", 15),
 		ManagerNodeID:           env("MANAGER_NODE_ID", ""),
 		ManagerClubID:           env("MANAGER_CLUB_ID", ""),

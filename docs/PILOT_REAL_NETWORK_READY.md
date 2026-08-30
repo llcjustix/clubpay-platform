@@ -3,9 +3,8 @@
 Инструкция для запуска **одного реального игрового ПК** в уже созданном production-пилоте.
 
 > Статус на 30 августа 2026: рабочий пилот состоит из облачного ClubPay, Telegram Mini App и
-> Agent Core на игровом ПК. Локальный edge-узел на Raspberry Pi не является готовым к установке
-> компонентом: не ставьте его по этой инструкции и не обещайте Wake-on-LAN в первом выезде.
-> Почему и что для этого нужно — в разделе 5.
+> Agent Core на игровом ПК. Для Wake-on-LAN в пилоте используется отдельный Raspberry Pi relay:
+> он только будит спящий ПК и не подменяет облако, Mini App или оплату.
 
 ## 1. Что именно устанавливается
 
@@ -14,7 +13,7 @@
 | Игровой ПК с Windows | **ClubPay Agent Core** | Сборка self-contained `.exe` из [репозитория Agent](https://github.com/llcjustix/clubpay-core-agent) | Обязательно |
 | Админский ПК | Chrome или Edge и доступ к [веб-админке](https://clubpay.justix.uz/admin) | Ничего скачивать и клонировать не нужно | Обязательно |
 | Телефон игрока | Telegram | Обычное приложение Telegram | Обязательно для профильного сценария |
-| Raspberry Pi | Пока ничего для ClubPay | Не часть текущего выезда | **Не устанавливать** |
+| Raspberry Pi | ClubPay edge WoL relay | Сборка Docker-образа из репозитория платформы | Нужен только для Wake-on-LAN |
 
 У ClubPay сейчас нет отдельного «Agent для ПК администратора». Это не недочёт установки:
 администратор управляет клубом через облачную веб-админку. Браузер не заменяет локальный
@@ -66,8 +65,7 @@ Controller, но локальный Controller пока не входит в г�
 - Для реального списания — production-ключи Click/Payme. Без них проверяются наличная сессия и
   тестовый провайдер; публичный production QR не должен оставаться с включённой mock-оплатой.
 
-Для будущего WoL также заранее зафиксируйте MAC **проводной** сетевой карты ПК, но в первый
-пилот WoL не включаем.
+Для WoL также заранее зафиксируйте MAC **проводной** сетевой карты ПК.
 
 ## 4. Установка на игровом Windows-ПК
 
@@ -77,8 +75,8 @@ Controller, но локальный Controller пока не входит в г�
 2. Установить [SDK .NET 10 для Windows x64](https://dotnet.microsoft.com/en-us/download/dotnet/10.0).
    Нужен именно **SDK**, а не только Runtime: он используется один раз для сборки.
 3. Установить Steam и игру. Agent запускает только уже локально установленные приложения.
-4. Для будущего WoL в BIOS включить Wake-on-LAN / Power on by PCI-E, а в Windows разрешить
-   сетевой карте пробуждение по magic packet. Это не проверка первого cloud-пилота.
+4. Для WoL в BIOS включить Wake-on-LAN / Power on by PCI-E, а в Windows разрешить сетевой карте
+   пробуждение по magic packet. Отключите Windows Fast Startup.
 
 ### 4.2 Собрать Agent из Git
 
@@ -142,31 +140,37 @@ ClubPay.Agent.Client.exe --setup-kiosk=kiosk:ПАРОЛЬ_ПОЛЬЗОВАТЕЛ
 
 Затем перезагрузите ПК. Не применяйте kiosk-конфигурацию на админском компьютере.
 
-## 5. Raspberry Pi: что есть и чего пока нет
+## 5. Raspberry Pi: установка relay для Wake-on-LAN
 
-В репозитории платформы есть код edge-режима (`NODE_MODE=edge`) и Wake-on-LAN. Но это **не**
-готовый контроллер «скачал бинарник и запустил»:
+Pi нужен только для отправки WoL magic packet из сети клуба. Игровой Agent, QR, Telegram Mini App,
+оплата и веб-админка **остаются в облаке** — игрок проходит обычный флоу, ничего не меняется.
 
-- нет опубликованного ARM-образа/релиза и проверенного install-скрипта;
-- текущий `docker-compose.yml` — конфигурация облачного deployment, а не безопасная установка Pi;
-- пустую локальную БД Pi нельзя просто запустить и синхронизировать с production без отдельной
-  процедуры первичной загрузки и проверки конфликтов;
-- для WoL Agent, QR-страница и Pi должны быть согласованно переведены на локальный узел;
-- Mini App и реальные callbacks требуют отдельной схемы HTTPS/failover. На локальный IP Pi их
-  переносить нельзя.
+1. Запишите [Raspberry Pi OS 64-bit](https://www.raspberrypi.com/software/) на Pi 4/5, подключите
+   Pi к LAN клуба по Ethernet и выдайте ему постоянный DHCP lease.
+2. Установите Docker Engine и Compose по [официальной инструкции Docker](https://docs.docker.com/engine/install/).
+3. В GitHub репозитория добавьте secret `EDGE_WOL_TOKEN` (случайная длинная строка) и variable
+   `WOL_ENABLED=true`. Этот токен нужен одновременно облаку и Pi; не используйте `CORE_TOKEN`.
+4. На Pi выполните:
 
-Поэтому **на Pi сейчас не нужно устанавливать ни Git, ни Docker, ни ClubPay** для реального
-пилота. Raspberry Pi с [Raspberry Pi OS 64-bit](https://www.raspberrypi.com/software/) и
-[Docker Engine](https://docs.docker.com/engine/install/) понадобится на следующем этапе, когда
-будут готовы:
+    git clone https://github.com/llcjustix/clubpay-platform.git /opt/clubpay-platform
+    cd /opt/clubpay-platform
+    sudo install -d -m 700 /etc/clubpay
+    sudo cp deploy/pi/edge-wol.env.example /etc/clubpay/edge-wol.env
+    sudo nano /etc/clubpay/edge-wol.env
+    sudo docker compose -f deploy/pi/docker-compose.edge-wol.yml up -d --build
 
-1. ARM64 edge compose/образ и команда запуска из Git;
-2. безопасная первичная синхронизация cloud → Pi;
-3. LAN-адреса, DNS/HTTPS и маршрут QR для edge;
-4. отдельный тест с реальным Pi, Agent и WoL.
+5. В `/etc/clubpay/edge-wol.env` заполните только `EDGE_WOL_TOKEN` тем же значением из GitHub.
+   Остальные значения уже содержат endpoint и ID pilot-клуба.
+6. Проверьте:
 
-До этого нельзя отмечать Wake-on-LAN и автономную работу клуба как пройденные требования
-пилота. ПК для теста должен быть включён и online.
+    cd /opt/clubpay-platform
+    sudo docker compose -f deploy/pi/docker-compose.edge-wol.yml logs -f edge-wol
+
+В логе должна быть строка о подключении Pi к ClubPay Cloud. Подробности и команда обновления:
+[deploy/pi/README.md](../deploy/pi/README.md).
+
+Это **не** полноценный offline edge-узел. Автономная работа без облака, локальная QR-страница,
+Captive Portal и failover Click/Payme — следующий отдельный этап; этот relay их не имитирует.
 
 ## 6. Проверка cloud-пилота
 
@@ -207,6 +211,5 @@ ClubPay.Agent.Client.exe --setup-kiosk=kiosk:ПАРОЛЬ_ПОЛЬЗОВАТЕЛ
 - Steam/игра запускаются из Agent;
 - администратор управляет всем через веб-админку.
 
-Не включать в акт первого пилота: Raspberry Pi, Wake-on-LAN, автономную работу без облака,
-Captive Portal и failover реальных Click/Payme callbacks. Это следующий отдельный этап, а не
-неустановленный «бинарник» из текущего проекта.
+Не включать в акт первого пилота: автономную работу без облака, Captive Portal и failover реальных
+Click/Payme callbacks. Это следующий отдельный этап.

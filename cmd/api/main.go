@@ -36,34 +36,63 @@ func main() {
 
 	var coreAdapter core.Adapter = core.NewMockAdapter()
 	var wsController *core.WSController
+	var edgeWOLRelay *core.EdgeWOLRelay
 	if strings.EqualFold(cfg.CoreMode, "http") {
 		coreAdapter = core.NewHTTPAdapter(cfg.CoreBaseURL, cfg.CoreToken, time.Duration(cfg.CoreTimeoutMS)*time.Millisecond)
 	} else if strings.EqualFold(cfg.CoreMode, "ws") || strings.EqualFold(cfg.CoreMode, "websocket") {
 		wsController = core.NewWSController(cfg.CoreToken, time.Duration(cfg.CoreTimeoutMS)*time.Millisecond)
 		coreAdapter = wsController
 	}
-	if wsController != nil && cfg.WOLEnabled && (cfg.NodeMode == "edge" || cfg.NodeMode == "manager") {
-		wsController.SetWakeHandler(func(ctx context.Context, externalPCID string) error {
-			var macAddress string
-			err := pool.QueryRow(ctx, `
-				SELECT COALESCE(mac_address, '')
-				FROM pc_refs
-				WHERE external_pc_id = $1
-				  AND status_cache <> 'deleted'
-				  AND (NULLIF($2, '')::uuid IS NULL OR club_id = NULLIF($2, '')::uuid)
-				ORDER BY created_at DESC
-				LIMIT 1
-			`, externalPCID, cfg.EdgeClubID).Scan(&macAddress)
-			if err != nil {
-				return fmt.Errorf("lookup PC MAC: %w", err)
-			}
-			if strings.TrimSpace(macAddress) == "" {
-				return fmt.Errorf("PC %s has no MAC address configured", externalPCID)
-			}
-			return core.SendWakeOnLAN(ctx, macAddress, cfg.WOLBroadcastAddr)
-		}, time.Duration(cfg.WOLWaitSeconds)*time.Second)
+	if strings.EqualFold(cfg.NodeMode, "cloud") && strings.TrimSpace(cfg.EdgeWOLToken) != "" {
+		edgeWOLRelay = core.NewEdgeWOLRelay(cfg.EdgeWOLToken, time.Duration(cfg.CoreTimeoutMS)*time.Millisecond)
+	}
+	if wsController != nil && cfg.WOLEnabled {
+		if cfg.NodeMode == "edge" || cfg.NodeMode == "manager" {
+			wsController.SetWakeHandler(func(ctx context.Context, externalPCID string) error {
+				var macAddress string
+				err := pool.QueryRow(ctx, `
+					SELECT COALESCE(mac_address, '')
+					FROM pc_refs
+					WHERE external_pc_id = $1
+					  AND status_cache <> 'deleted'
+					  AND (NULLIF($2, '')::uuid IS NULL OR club_id = NULLIF($2, '')::uuid)
+					ORDER BY created_at DESC
+					LIMIT 1
+				`, externalPCID, cfg.EdgeClubID).Scan(&macAddress)
+				if err != nil {
+					return fmt.Errorf("lookup PC MAC: %w", err)
+				}
+				if strings.TrimSpace(macAddress) == "" {
+					return fmt.Errorf("PC %s has no MAC address configured", externalPCID)
+				}
+				return core.SendWakeOnLAN(ctx, macAddress, cfg.WOLBroadcastAddr)
+			}, time.Duration(cfg.WOLWaitSeconds)*time.Second)
+		} else if edgeWOLRelay != nil {
+			wsController.SetWakeHandler(func(ctx context.Context, externalPCID string) error {
+				var clubID, macAddress string
+				err := pool.QueryRow(ctx, `
+					SELECT club_id::text, COALESCE(mac_address, '')
+					FROM pc_refs
+					WHERE external_pc_id = $1 AND status_cache <> 'deleted'
+					ORDER BY created_at DESC
+					LIMIT 1
+				`, externalPCID).Scan(&clubID, &macAddress)
+				if err != nil {
+					return fmt.Errorf("lookup PC MAC: %w", err)
+				}
+				if strings.TrimSpace(macAddress) == "" {
+					return fmt.Errorf("PC %s has no MAC address configured", externalPCID)
+				}
+				return edgeWOLRelay.Wake(ctx, clubID, externalPCID, macAddress)
+			}, time.Duration(cfg.WOLWaitSeconds)*time.Second)
+		} else {
+			log.Printf("Wake-on-LAN is enabled but EDGE_WOL_TOKEN is not configured; sleeping PCs cannot be awakened")
+		}
 	}
 	server := httpapi.NewServer(cfg, pool, coreAdapter)
+	if edgeWOLRelay != nil {
+		server.SetEdgeWOLRelay(edgeWOLRelay)
+	}
 	syncCtx, syncCancel := context.WithCancel(context.Background())
 	defer syncCancel()
 	go server.RunEdgeSync(syncCtx)

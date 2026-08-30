@@ -1,0 +1,9 @@
+services:
+  edge-wol:
+    build:
+      context: ../..
+      dockerfile: deploy/pi/Dockerfile.edge-wol
+    env_file:
+      - ${EDGE_WOL_ENV_FILE:-/etc/clubpay/edge-wol.env}
+    network_mode: host
+    restart: unless-stopped
