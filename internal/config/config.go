@@ -14,6 +14,7 @@ type Config struct {
 	DatabaseURL     string
 	PublicBaseURL   string
 	FrontendBaseURL string
+	WebDir          string
 	AdminAPIToken   string
 	CloudBaseURL    string
 
@@ -70,6 +71,7 @@ func Load() (Config, error) {
 		DatabaseURL:             env("DATABASE_URL", "postgres://clubpay:clubpay@localhost:5432/clubpay?sslmode=disable"),
 		PublicBaseURL:           strings.TrimRight(env("PUBLIC_BASE_URL", "http://localhost:8080"), "/"),
 		FrontendBaseURL:         strings.TrimRight(env("FRONTEND_BASE_URL", "http://localhost:5173"), "/"),
+		WebDir:                  strings.TrimSpace(env("WEB_DIR", "")),
 		AdminAPIToken:           env("ADMIN_API_TOKEN", ""),
 		CloudBaseURL:            strings.TrimRight(env("CLOUD_BASE_URL", ""), "/"),
 		DefaultPaymentProvider:  strings.ToLower(env("DEFAULT_PAYMENT_PROVIDER", "mock")),

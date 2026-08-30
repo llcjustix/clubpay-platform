@@ -34,7 +34,8 @@ import '@fontsource-variable/geist';
 import '@fontsource-variable/geist-mono';
 import './styles.css';
 
-const API_BASE = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8080';
+const runtimeApiBase = (window as Window & { __CLUBPAY_API_BASE__?: string }).__CLUBPAY_API_BASE__;
+const API_BASE = runtimeApiBase || import.meta.env.VITE_API_BASE_URL || 'http://localhost:8080';
 const ADMIN_REFRESH_MS = 2000;
 const OWNER_REFRESH_MS = 5000;
 const TOKEN_KEY = 'clubpay_token';

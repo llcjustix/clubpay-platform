@@ -2,11 +2,16 @@ package main
 
 import (
 	"context"
+	"errors"
+	"flag"
 	"fmt"
 	"log"
 	"net/http"
 	"os"
 	"os/signal"
+	"os/exec"
+	"path/filepath"
+	"runtime"
 	"strings"
 	"syscall"
 	"time"
@@ -14,23 +19,55 @@ import (
 	"clubpay/internal/config"
 	"clubpay/internal/core"
 	"clubpay/internal/db"
+	"clubpay/internal/envfile"
 	"clubpay/internal/httpapi"
+
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 func main() {
+	configPath := flag.String("config", defaultControllerConfigPath(), "path to controller.env")
+	install := flag.Bool("install", false, "install Controller Node as a Windows startup task")
+	uninstall := flag.Bool("uninstall", false, "remove the Controller Node Windows startup task")
+	flag.Parse()
+	if *install && *uninstall {
+		log.Fatal("use either --install or --uninstall")
+	}
+	if *uninstall {
+		if err := uninstallWindowsControllerTask(); err != nil {
+			log.Fatal(err)
+		}
+		return
+	}
+	if err := envfile.LoadIntoEnvironment(*configPath); err != nil {
+		log.Fatalf("load controller config: %v", err)
+	}
 	cfg, err := config.Load()
 	if err != nil {
 		log.Fatalf("load config: %v", err)
 	}
+	if cfg.WebDir != "" {
+		cfg.WebDir = resolvePathFromConfig(cfg.WebDir, *configPath)
+	}
+	if *install {
+		if err := validateControllerNodeConfig(cfg); err != nil {
+			log.Fatal(err)
+		}
+		if err := installWindowsControllerTask(*configPath); err != nil {
+			log.Fatal(err)
+		}
+		log.Printf("ClubPay Controller Node will start automatically with Windows")
+		return
+	}
 
 	ctx := context.Background()
-	pool, err := db.Connect(ctx, cfg.DatabaseURL)
+	pool, err := connectDatabaseWithRetry(ctx, cfg.DatabaseURL, 90*time.Second)
 	if err != nil {
 		log.Fatalf("connect database: %v", err)
 	}
 	defer pool.Close()
 
-	if err := db.RunMigrations(ctx, pool, "migrations"); err != nil {
+	if err := db.RunMigrations(ctx, pool, resolveMigrationsDir()); err != nil {
 		log.Fatalf("run migrations: %v", err)
 	}
 
@@ -134,4 +171,100 @@ func main() {
 	if err := httpServer.Shutdown(shutdownCtx); err != nil {
 		log.Printf("shutdown error: %v", err)
 	}
+}
+
+func defaultControllerConfigPath() string {
+	executable, err := os.Executable()
+	if err != nil {
+		return "controller.env"
+	}
+	return filepath.Join(filepath.Dir(executable), "controller.env")
+}
+
+func resolveMigrationsDir() string {
+	if configured := strings.TrimSpace(os.Getenv("MIGRATIONS_DIR")); configured != "" {
+		return configured
+	}
+	if executable, err := os.Executable(); err == nil {
+		candidate := filepath.Join(filepath.Dir(executable), "migrations")
+		if info, statErr := os.Stat(candidate); statErr == nil && info.IsDir() {
+			return candidate
+		}
+	}
+	return "migrations"
+}
+
+func resolvePathFromConfig(value, configPath string) string {
+	if filepath.IsAbs(value) {
+		return value
+	}
+	if absoluteConfigPath, err := filepath.Abs(configPath); err == nil {
+		return filepath.Join(filepath.Dir(absoluteConfigPath), value)
+	}
+	return value
+}
+
+func validateControllerNodeConfig(cfg config.Config) error {
+	if !strings.EqualFold(cfg.NodeMode, "edge") && !strings.EqualFold(cfg.NodeMode, "manager") {
+		return errors.New("NODE_MODE must be edge or manager for a local Controller Node")
+	}
+	if strings.TrimSpace(cfg.EdgeClubID) == "" {
+		return errors.New("EDGE_CLUB_ID (or MANAGER_CLUB_ID) is required")
+	}
+	if strings.TrimSpace(cfg.CloudBaseURL) == "" {
+		return errors.New("CLOUD_BASE_URL is required for initial synchronization")
+	}
+	if strings.TrimSpace(cfg.EdgeSyncToken) == "" {
+		return errors.New("EDGE_SYNC_TOKEN is required for initial synchronization")
+	}
+	if strings.TrimSpace(cfg.WebDir) == "" {
+		return errors.New("WEB_DIR is required; it must point to the packaged PWA folder")
+	}
+	return nil
+}
+
+func installWindowsControllerTask(configPath string) error {
+	if runtime.GOOS != "windows" {
+		return errors.New("--install is available only on Windows; use systemd on Linux")
+	}
+	executable, err := os.Executable()
+	if err != nil {
+		return fmt.Errorf("locate executable: %w", err)
+	}
+	configPath, err = filepath.Abs(configPath)
+	if err != nil {
+		return fmt.Errorf("resolve config path: %w", err)
+	}
+	command := fmt.Sprintf("\"%s\" --config \"%s\"", executable, configPath)
+	result, err := exec.Command("schtasks.exe", "/Create", "/TN", "ClubPay Controller Node", "/SC", "ONSTART", "/RU", "SYSTEM", "/RL", "HIGHEST", "/TR", command, "/F").CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("create Windows startup task: %w: %s", err, strings.TrimSpace(string(result)))
+	}
+	return nil
+}
+
+func uninstallWindowsControllerTask() error {
+	if runtime.GOOS != "windows" {
+		return errors.New("--uninstall is available only on Windows")
+	}
+	result, err := exec.Command("schtasks.exe", "/Delete", "/TN", "ClubPay Controller Node", "/F").CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("remove Windows startup task: %w: %s", err, strings.TrimSpace(string(result)))
+	}
+	return nil
+}
+
+func connectDatabaseWithRetry(ctx context.Context, databaseURL string, timeout time.Duration) (*pgxpool.Pool, error) {
+	deadline := time.Now().Add(timeout)
+	var lastErr error
+	for time.Now().Before(deadline) {
+		pool, err := db.Connect(ctx, databaseURL)
+		if err == nil {
+			return pool, nil
+		}
+		lastErr = err
+		log.Printf("waiting for local PostgreSQL: %v", err)
+		time.Sleep(2 * time.Second)
+	}
+	return nil, fmt.Errorf("connect database after %s: %w", timeout, lastErr)
 }

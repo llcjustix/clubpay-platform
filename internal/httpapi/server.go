@@ -16,6 +16,9 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"os"
+	"path"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -219,7 +222,32 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("POST /api/backoffice/clubs/{club_id}/users", s.handleBackofficeCreateUser)
 	mux.HandleFunc("POST /api/backoffice/users/{user_id}/clubs/{club_id}", s.handleBackofficeUpdateUserRole)
 	mux.HandleFunc("DELETE /api/backoffice/users/{user_id}/clubs/{club_id}", s.handleBackofficeDeleteUserRole)
+	if strings.TrimSpace(s.cfg.WebDir) != "" {
+		mux.Handle("/", s.localWebHandler())
+	}
 	return withCORS(mux)
+}
+
+// localWebHandler lets a Controller Node serve the exact same PWA locally.
+// API routes are registered above it; all other routes fall back to index.html
+// so /admin and a QR navigation keep working after a browser reload.
+func (s *Server) localWebHandler() http.Handler {
+	root := filepath.Clean(s.cfg.WebDir)
+	index := filepath.Join(root, "index.html")
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		relative := strings.TrimPrefix(path.Clean("/"+r.URL.Path), "/")
+		filePath := filepath.Join(root, relative)
+		if relative == "" || (filePath != root && !strings.HasPrefix(filePath, root+string(os.PathSeparator))) {
+			http.ServeFile(w, r, index)
+			return
+		}
+		info, err := os.Stat(filePath)
+		if err != nil || info.IsDir() {
+			http.ServeFile(w, r, index)
+			return
+		}
+		http.ServeFile(w, r, filePath)
+	})
 }
 
 func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
@@ -2997,6 +3025,28 @@ func (s *Server) RunEdgeSync(ctx context.Context) {
 func (s *Server) syncEdgeOnce(ctx context.Context) error {
 	nodeID := s.edgeNodeID()
 	clubID := strings.TrimSpace(s.cfg.EdgeClubID)
+	// A brand new Controller has an empty database. Pull before the first push:
+	// pushing first would either fail (no club) or risk making an empty node look
+	// authoritative. Once the initial snapshot is present, regular outbox-style
+	// push/pull reconciliation is safe and idempotent.
+	var localClubExists bool
+	if err := s.db.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM clubs WHERE id = $1)`, clubID).Scan(&localClubExists); err != nil {
+		return err
+	}
+	if !localClubExists {
+		pullID, _ := s.startEdgeSyncRun(ctx, nodeID, clubID, "initial_pull")
+		var pulled map[string]any
+		if err := s.getCloudJSON(ctx, "/api/edge/snapshot?club_id="+url.QueryEscape(clubID), &pulled); err != nil {
+			s.finishEdgeSyncRun(ctx, pullID, "failed", "", err)
+			return err
+		}
+		if err := s.applyEdgeSnapshotData(ctx, clubID, pulled); err != nil {
+			s.finishEdgeSyncRun(ctx, pullID, "failed", "", err)
+			return err
+		}
+		s.finishEdgeSyncRun(ctx, pullID, "success", "", nil)
+		return nil
+	}
 	runID, _ := s.startEdgeSyncRun(ctx, nodeID, clubID, "push")
 	snapshot, err := s.edgeSnapshotData(ctx, clubID, true)
 	if err != nil {

@@ -1,20 +1,21 @@
-# ClubPay: быстрый запуск пилота в реальном клубе
+# ClubPay: пилот в реальном клубе с локальным резервом
 
 Эта инструкция — для **одного игрового ПК** `Pilot PC #01`. Пилот уже создан в production:
-не создавайте вручную клуб, зону, тарифы или новый ПК.
+не создавайте вручную клуб, зону, тарифы или новый ПК. Перед реальным запуском ставятся две
+локальные Controller-ноды: основная на сервере клуба и резервная на ПК менеджера.
 
 ## Что ставить и куда
 
 | Устройство | Что сделать |
 | --- | --- |
 | Игровой ПК с Windows | Установить `ClubPay-Agent-win-x64.zip` и Steam/игру |
-| Сервер клуба | Ничего для базового пилота; `clubpay-edge-wol-windows-amd64.zip` нужен только для включения спящих ПК |
-| Компьютер менеджера | Установить `ClubPay-Manager-win-x64.zip`: это EXE с настоящей админкой ClubPay |
+| Сервер клуба | `ClubPay-Controller-win-x64.zip`: локальный API, PWA, база, Agent-команды, касса, ваучеры и WoL |
+| Компьютер менеджера | `ClubPay-Manager-win-x64.zip` **и** второй `ClubPay-Controller-win-x64.zip` в режиме `manager` |
 | Телефон игрока | Telegram для Mini App и оплаты |
 
-> В этом клубе уже есть свой сервер и бездисковые Windows-клиенты. Поэтому **Pi сейчас не нужна**.
-> Профиль, QR, оплата, Mini App и Agent работают через облако. Пока не подключён локальный WoL-relay,
-> не проверяем только запуск ПК из сна.
+> В этом клубе уже есть свой Windows-сервер и бездисковые Windows-клиенты. Поэтому Raspberry Pi
+> сейчас не нужна: Windows Server выполняет ту же роль Controller Node. Cloud — основной источник,
+> но при его недоступности зал продолжает работать через сервер клуба, затем через ПК менеджера.
 
 ## Данные пилота
 
@@ -26,12 +27,25 @@
 | ID для Agent | `pilot-real-network-pc-001` |
 | ID клуба | `564ef225-6cdb-4bf9-a362-960f942b3c4d` |
 
-Сейчас нужен только `CORE_TOKEN` для Agent. `EDGE_WOL_TOKEN` потребуется позднее, если будем
-подключать Wake-on-LAN relay на сервере клуба.
+Нужны `CORE_TOKEN`, `EDGE_SYNC_TOKEN` и UUID клуба. Их выдаёт Cloud deployment; в документ,
+Git и общий чат их не помещаем.
 
 Не отправляйте их в общий чат, Git или скриншоты.
 
-## 1. Подготовить игровой ПК
+## 1. Поставить основной Controller на сервер клуба
+
+1. Скачайте `ClubPay-Controller-win-x64.zip` со [страницы релизов Platform](https://github.com/llcjustix/clubpay-platform/releases),
+   распакуйте в `C:\ClubPay\Controller`.
+2. Один раз установите и запустите Docker Desktop на сервере.
+3. Скопируйте `controller.env.example` в `controller.env`. Вставьте полученные секреты и LAN-IP
+   сервера; оставьте `NODE_MODE=edge`.
+4. Запустите `install-windows.cmd` **от имени администратора**.
+5. Откройте `http://localhost:8080/api/node/status`. Ответ должен содержать
+   `local_authority: true` и `node_mode: edge`.
+
+Это сервис полного локального управления, а не один Wake-on-LAN relay.
+
+## 2. Подготовить игровой ПК
 
 1. Подключите ПК к сети клуба по **Ethernet**.
 2. Установите Steam и одну тестовую игру.
@@ -39,7 +53,7 @@
    распакуйте в `C:\ClubPay\Agent`.
 4. Wake-on-LAN пока не настраивайте: его проверим отдельным этапом на сервере клуба.
 
-## 2. Установить Agent Core в бездисковый образ
+## 3. Установить Agent Core в бездисковый образ
 
 Agent ставится **один раз в master-образ Windows на сервере клуба**, а не вручную на каждый
 игровой ПК. Нужны только распакованный релиз и конфиг ниже: Git и .NET SDK на ПК клуба не нужны.
@@ -63,6 +77,8 @@ Agent ставится **один раз в master-образ Windows на се�
   "Controller": {
     "WebSocketUrl": "wss://api-clubpay.justix.uz/api/core/ws",
     "BootstrapUrl": "https://api-clubpay.justix.uz/api/core/bootstrap",
+    "FallbackWebSocketUrls": ["ws://<IP_СЕРВЕРА>:8080/api/core/ws", "ws://<IP_МЕНЕДЖЕРА>:8080/api/core/ws"],
+    "FallbackBootstrapUrls": ["http://<IP_СЕРВЕРА>:8080/api/core/bootstrap", "http://<IP_МЕНЕДЖЕРА>:8080/api/core/bootstrap"],
     "AgentToken": "<CORE_TOKEN_ПИЛОТА>",
     "ExternalPcId": "pilot-real-network-pc-001"
   },
@@ -108,24 +124,28 @@ start "" C:\ClubPay\Agent\ClubPay.Agent.Client.exe
 папку состояния. Если сервер не выдаёт клиентам уникальные имена или отдельную writable-папку,
 многопользовательский запуск пока не включаем.
 
-## 3. Manager Client на компьютере менеджера
+## 4. Manager Client и резервный Controller на компьютере менеджера
 
 Скачайте `ClubPay-Manager-win-x64.zip` с той же [страницы релизов Agent](https://github.com/llcjustix/clubpay-core-agent/releases),
 распакуйте, например, в `C:\ClubPay\Manager`, и запустите `ClubPay.Agent.Admin.exe`.
 Войдите теми же данными, что и в веб-админке. Внутри EXE доступны те же компьютеры, касса,
 пользователи, настройки и отчёты, потому что это одна production-админка, а не урезанная копия.
 
-Для VM-проверки: запустите EXE, войдите, убедитесь, что виден `Pilot PC #01`, переключите ему
-статус «Ремонт» и верните обратно. Это не затрагивает Windows игрового ПК.
+Поставьте второй `ClubPay-Controller-win-x64.zip` в `C:\ClubPay\ManagerController` по шагам
+основного Controller, но в `controller.env` укажите `NODE_MODE=manager`,
+`MANAGER_NODE_ID=manager-pc-1`, `MANAGER_CLUB_ID=<UUID_КЛУБА>` и
+`MANAGER_ONLINE_PAYMENTS_ENABLED=false`. Затем в `C:\ClubPay\Manager\appsettings.Local.json`
+укажите `Manager:LocalControllerUrls` с `http://127.0.0.1:8080/admin`.
 
-## 4. Wake-on-LAN — не делать в текущем выезде
+Manager Client сначала использует Cloud, а при его падении сам открывает локальную админку.
 
-У клуба уже есть свой сервер, поэтому Raspberry Pi не покупаем и не настраиваем. В этом выезде
-ПК запускаем включённым через Agent. После базового запуска отдельно согласуем с их инженером
-ОС сервера, схему сети и способ запуска relay на этом сервере; только после этого включим тест
-пробуждения из сна.
+## 5. Wake-on-LAN — часть Controller, не отдельная установка
 
-## 5. Пройти короткий тест
+У клуба уже есть свой сервер, поэтому Raspberry Pi не покупаем и не настраиваем. В `controller.env`
+укажите корректный broadcast-адрес сети, заполните MAC-адреса ПК в админке и проверьте кнопку
+**Включить** на одном спящем ПК. Всё это выполняет Controller на сервере клуба.
+
+## 6. Пройти короткий тест
 
 1. В админке распечатайте текущий QR для `Pilot PC #01` и разместите его у ПК.
 2. Отсканируйте QR телефоном: должен открыться ClubPay Mini App в Telegram с правильными ПК и зоной.
@@ -137,7 +157,18 @@ start "" C:\ClubPay\Agent\ClubPay.Agent.Client.exe
 7. Завершите сессию. Для авторизованного игрока остаток сохраняется в профиль, а бот присылает
    сообщение с оставшимся временем.
 
-## 6. Kiosk включать последним
+## 7. Проверить переключение без Cloud
+
+1. Убедитесь, что основной Controller уже сделал первый sync (в `/api/node/status` указан клуб).
+2. На одном Agent временно закройте доступ к `api-clubpay.justix.uz`, не отключая LAN.
+3. Agent должен подключиться к URL сервера клуба из `FallbackWebSocketUrls`; QR bootstrap также
+   берётся с локальной ноды.
+4. Откройте Manager Client: он должен показать «Локальный Controller».
+5. Проверьте кассовую сессию или ваучер. Не делайте карточный платёж в этом тесте, пока отдельно
+   не согласованы и не проверены merchant secrets на основном Controller.
+6. Верните Cloud: синхронизация должна возобновиться автоматически.
+
+## 8. Kiosk включать последним
 
 Включайте kiosk-режим только когда все шаги выше прошли. Создайте отдельного Windows-пользователя
 `kiosk`, затем от имени администратора выполните:
@@ -155,6 +186,9 @@ ClubPay.Agent.Client.exe --setup-kiosk=kiosk:ПАРОЛЬ_ПОЛЬЗОВАТЕЛ
 | --- | --- |
 | ПК offline | Запущен ли Agent, правильны ли `CORE_TOKEN` и `ExternalPcId` |
 | Несколько ПК видны как один | Уникальны ли имена Windows и `ExternalPcId`, используется ли шаблон в конфиге |
+| Не открывается локальная панель | Работает ли `ClubPay Controller Node`, Docker и `http://localhost:8080/api/node/status` |
 | Не открывается Mini App | Напечатан ли текущий QR из админки, установлен ли Telegram |
 
-Полный offline-режим, Captive Portal и работа при падении облака в этот пилот не входят.
+При полной потере Cloud Telegram Mini App не может подменить свой BotFather HTTPS-адрес на
+локальный IP. Поэтому локальный Controller сохраняет кассу/ваучеры/сессии, а профильный Telegram
+вход работает, когда Telegram и public Mini App доступны.
