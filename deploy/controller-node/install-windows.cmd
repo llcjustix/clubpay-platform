@@ -10,8 +10,34 @@ if not "%errorlevel%"=="0" (
 )
 
 if exist "controller.env" (
-  echo This Controller is already configured.
-  echo Open http://localhost:8080/api/node/status to check it.
+  schtasks.exe /Query /TN "ClubPay Controller Node" >nul 2>&1
+  if not errorlevel 1 (
+    echo This Controller is already configured.
+    echo Open http://localhost:8080/api/node/status to check it.
+    pause
+    exit /b 0
+  )
+
+  rem A previous setup may have reached the config step but failed before it
+  rem registered the startup task (for example while preparing PostgreSQL).
+  echo Existing Controller configuration found, but the startup task is missing.
+  echo Repairing the Windows startup task...
+  ClubPay.Controller.exe --install --config "controller.env"
+  if errorlevel 1 (
+    echo.
+    echo Repair did not finish. Start ClubPay.Controller.exe manually to see the error.
+    pause
+    exit /b 1
+  )
+  schtasks.exe /Run /TN "ClubPay Controller Node"
+  if errorlevel 1 (
+    echo.
+    echo The startup task was created but could not be started.
+    pause
+    exit /b 1
+  )
+  echo.
+  echo Ready. Open http://localhost:8080/api/node/status to check it.
   pause
   exit /b 0
 )

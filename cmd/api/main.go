@@ -324,19 +324,26 @@ func setupControllerNode(configPath, activationCode, activationURL, nodeName str
 		"SESSION_GRACE_SECONDS=180",
 		"",
 	}, "\n")
-	if err := os.WriteFile(absoluteConfigPath, []byte(configContents), 0o600); err != nil {
-		return fmt.Errorf("save controller config: %w", err)
+	pendingConfigPath := absoluteConfigPath + ".pending"
+	if err := os.WriteFile(pendingConfigPath, []byte(configContents), 0o600); err != nil {
+		return fmt.Errorf("save pending controller config: %w", err)
 	}
-	if err := envfile.LoadIntoEnvironment(absoluteConfigPath); err != nil {
+	setupFinished := false
+	defer func() {
+		if !setupFinished {
+			_ = os.Remove(pendingConfigPath)
+		}
+	}()
+	if err := envfile.LoadIntoEnvironment(pendingConfigPath); err != nil {
 		return fmt.Errorf("load generated config: %w", err)
 	}
 	cfg, err := config.Load()
 	if err != nil {
 		return fmt.Errorf("read generated config: %w", err)
 	}
-	cfg.WebDir = resolvePathFromConfig(cfg.WebDir, absoluteConfigPath)
-	cfg.LocalDatabaseDataDir = resolvePathFromConfig(cfg.LocalDatabaseDataDir, absoluteConfigPath)
-	cfg.LocalDatabaseRuntimeDir = resolvePathFromConfig(cfg.LocalDatabaseRuntimeDir, absoluteConfigPath)
+	cfg.WebDir = resolvePathFromConfig(cfg.WebDir, pendingConfigPath)
+	cfg.LocalDatabaseDataDir = resolvePathFromConfig(cfg.LocalDatabaseDataDir, pendingConfigPath)
+	cfg.LocalDatabaseRuntimeDir = resolvePathFromConfig(cfg.LocalDatabaseRuntimeDir, pendingConfigPath)
 	localDatabase, err := startEmbeddedDatabase(cfg)
 	if err != nil {
 		return fmt.Errorf("prepare bundled local database: %w", err)
@@ -344,6 +351,10 @@ func setupControllerNode(configPath, activationCode, activationURL, nodeName str
 	if err := localDatabase.Stop(); err != nil {
 		return fmt.Errorf("finish local database setup: %w", err)
 	}
+	if err := os.Rename(pendingConfigPath, absoluteConfigPath); err != nil {
+		return fmt.Errorf("activate controller config: %w", err)
+	}
+	setupFinished = true
 	if runtime.GOOS == "windows" {
 		if err := installWindowsControllerTask(absoluteConfigPath); err != nil {
 			return err
