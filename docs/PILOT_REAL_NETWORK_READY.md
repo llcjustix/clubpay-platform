@@ -27,19 +27,18 @@
 | ID для Agent | `pilot-real-network-pc-001` |
 | ID клуба | `564ef225-6cdb-4bf9-a362-960f942b3c4d` |
 
-Нужны `CORE_TOKEN`, `EDGE_SYNC_TOKEN` и UUID клуба. Их выдаёт Cloud deployment; в документ,
-Git и общий чат их не помещаем.
-
-Не отправляйте их в общий чат, Git или скриншоты.
+Коды установки создаются в Web Admin: **Настройки → Клуб → Локальный
+Controller**. Каждый действует 30 минут, подходит ровно для одной ноды и не
+даёт вручную доступ к токенам клуба.
 
 ## 1. Поставить основной Controller на сервер клуба
 
 1. Скачайте `ClubPay-Controller-win-x64.zip` со [страницы релизов Platform](https://github.com/llcjustix/clubpay-platform/releases),
    распакуйте в `C:\ClubPay\Controller`.
-2. Один раз установите и запустите Docker Desktop на сервере.
-3. Скопируйте `controller.env.example` в `controller.env`. Вставьте полученные секреты и LAN-IP
-   сервера; оставьте `NODE_MODE=edge`.
-4. Запустите `install-windows.cmd` **от имени администратора**.
+2. В Web Admin создайте код **для основного сервера / Raspberry Pi**.
+3. Запустите `install-windows.cmd` **от имени администратора** и вставьте код.
+   Установщик сам создаст конфиг, встроенную PostgreSQL и Windows-сервис;
+   Docker, отдельная база и ручная вставка токенов не нужны.
 5. Откройте `http://localhost:8080/api/node/status`. Ответ должен содержать
    `local_authority: true` и `node_mode: edge`.
 
@@ -131,11 +130,12 @@ start "" C:\ClubPay\Agent\ClubPay.Agent.Client.exe
 Войдите теми же данными, что и в веб-админке. Внутри EXE доступны те же компьютеры, касса,
 пользователи, настройки и отчёты, потому что это одна production-админка, а не урезанная копия.
 
-Поставьте второй `ClubPay-Controller-win-x64.zip` в `C:\ClubPay\ManagerController` по шагам
-основного Controller, но в `controller.env` укажите `NODE_MODE=manager`,
-`MANAGER_NODE_ID=manager-pc-1`, `MANAGER_CLUB_ID=<UUID_КЛУБА>` и
-`MANAGER_ONLINE_PAYMENTS_ENABLED=false`. Затем в `C:\ClubPay\Manager\appsettings.Local.json`
-укажите `Manager:LocalControllerUrls` с `http://127.0.0.1:8080/admin`.
+Поставьте второй `ClubPay-Controller-win-x64.zip` в `C:\ClubPay\ManagerController`.
+В Web Admin создайте **код для резервного ПК менеджера**, затем запустите
+`install-windows.cmd` от имени администратора и вставьте его. Установщик сам
+назначит режим `manager` и отключит рискованный онлайн-эквайринг. Затем в
+`C:\ClubPay\Manager\appsettings.Local.json` укажите `Manager:LocalControllerUrls`
+с `http://127.0.0.1:8080/admin`.
 
 Manager Client сначала использует Cloud, а при его падении сам открывает локальную админку.
 
@@ -186,7 +186,7 @@ ClubPay.Agent.Client.exe --setup-kiosk=kiosk:ПАРОЛЬ_ПОЛЬЗОВАТЕЛ
 | --- | --- |
 | ПК offline | Запущен ли Agent, правильны ли `CORE_TOKEN` и `ExternalPcId` |
 | Несколько ПК видны как один | Уникальны ли имена Windows и `ExternalPcId`, используется ли шаблон в конфиге |
-| Не открывается локальная панель | Работает ли `ClubPay Controller Node`, Docker и `http://localhost:8080/api/node/status` |
+| Не открывается локальная панель | Работает ли `ClubPay Controller Node` и `http://localhost:8080/api/node/status` |
 | Не открывается Mini App | Напечатан ли текущий QR из админки, установлен ли Telegram |
 
 При полной потере Cloud Telegram Mini App не может подменить свой BotFather HTTPS-адрес на

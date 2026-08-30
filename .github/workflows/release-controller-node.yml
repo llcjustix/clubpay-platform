@@ -33,7 +33,6 @@ jobs:
           mkdir -p dist/windows/ClubPay-Controller/web dist/windows/ClubPay-Controller/migrations
           GOOS=windows GOARCH=amd64 CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o dist/windows/ClubPay-Controller/ClubPay.Controller.exe ./cmd/api
           cp deploy/controller-node/controller.env.example dist/windows/ClubPay-Controller/
-          cp deploy/controller-node/postgres-compose.yml dist/windows/ClubPay-Controller/
           cp deploy/controller-node/install-windows.cmd dist/windows/ClubPay-Controller/
           cp deploy/controller-node/README.md dist/windows/ClubPay-Controller/
           cp migrations/*.sql dist/windows/ClubPay-Controller/migrations/
@@ -44,7 +43,6 @@ jobs:
           mkdir -p dist/linux-arm64/clubpay-controller/web dist/linux-arm64/clubpay-controller/migrations
           GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o dist/linux-arm64/clubpay-controller/clubpay-controller ./cmd/api
           cp deploy/controller-node/controller.env.example dist/linux-arm64/clubpay-controller/
-          cp deploy/controller-node/postgres-compose.yml dist/linux-arm64/clubpay-controller/
           cp deploy/controller-node/install-linux.sh dist/linux-arm64/clubpay-controller/
           cp deploy/controller-node/README.md dist/linux-arm64/clubpay-controller/
           chmod +x dist/linux-arm64/clubpay-controller/install-linux.sh

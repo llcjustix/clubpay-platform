@@ -377,6 +377,17 @@ textarea:focus {
   background: transparent;
 }
 
+.readonly-token {
+  padding: 12px 14px;
+  border: 1px dashed var(--divider-strong);
+  border-radius: 10px;
+  background: var(--surface-raised);
+  color: var(--text);
+  font: 700 16px/1.4 var(--font-mono);
+  letter-spacing: .06em;
+  word-break: break-all;
+}
+
 /* Login */
 .auth-shell {
   min-height: 100dvh;

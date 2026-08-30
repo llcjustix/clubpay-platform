@@ -1,25 +1,39 @@
 @echo off
-setlocal
+setlocal EnableExtensions
 cd /d "%~dp0"
 
-if not exist "controller.env" (
-  copy /Y "controller.env.example" "controller.env" >nul
-  echo.
-  echo Edit controller.env first: replace every CHANGE_ME value and set this node's LAN IP.
-  notepad "controller.env"
-  pause
+rem Reopen once with admin rights: setup registers a Windows startup service.
+net session >nul 2>&1
+if not "%errorlevel%"=="0" (
+  powershell -NoProfile -ExecutionPolicy Bypass -Command "Start-Process -FilePath '%~f0' -Verb RunAs"
+  exit /b
 )
 
-docker compose --env-file controller.env -f postgres-compose.yml up -d
-if errorlevel 1 (
-  echo PostgreSQL did not start. Install Docker Desktop and start it, then run this file again.
+if exist "controller.env" (
+  echo This Controller is already configured.
+  echo Open http://localhost:8080/api/node/status to check it.
+  pause
+  exit /b 0
+)
+
+echo.
+echo ClubPay Controller Node setup
+echo Generate a one-time activation code in ClubPay Web Admin first.
+set /p ACTIVATION_CODE=Paste activation code:
+if "%ACTIVATION_CODE%"=="" (
+  echo Activation code is required.
+  pause
   exit /b 1
 )
 
-ClubPay.Controller.exe --config "%~dp0controller.env" --install
-if errorlevel 1 exit /b 1
+ClubPay.Controller.exe --setup --activation-code "%ACTIVATION_CODE%"
+if errorlevel 1 (
+  echo.
+  echo Setup did not finish. The activation code is valid for 30 minutes and can be used only once.
+  pause
+  exit /b 1
+)
 
-schtasks /Run /TN "ClubPay Controller Node"
 echo.
-echo Controller installed. Open http://localhost:8080/api/node/status to verify it.
+echo Ready. This Controller now starts automatically with Windows.
 pause

@@ -15,6 +15,9 @@ type Config struct {
 	PublicBaseURL   string
 	FrontendBaseURL string
 	WebDir          string
+	LocalDatabaseMode string
+	LocalDatabaseDataDir string
+	LocalDatabaseRuntimeDir string
 	AdminAPIToken   string
 	CloudBaseURL    string
 
@@ -72,6 +75,9 @@ func Load() (Config, error) {
 		PublicBaseURL:           strings.TrimRight(env("PUBLIC_BASE_URL", "http://localhost:8080"), "/"),
 		FrontendBaseURL:         strings.TrimRight(env("FRONTEND_BASE_URL", "http://localhost:5173"), "/"),
 		WebDir:                  strings.TrimSpace(env("WEB_DIR", "")),
+		LocalDatabaseMode:       strings.ToLower(strings.TrimSpace(env("LOCAL_DATABASE_MODE", "external"))),
+		LocalDatabaseDataDir:    strings.TrimSpace(env("LOCAL_DATABASE_DATA_DIR", "data/postgres")),
+		LocalDatabaseRuntimeDir: strings.TrimSpace(env("LOCAL_DATABASE_RUNTIME_DIR", "runtime/postgres")),
 		AdminAPIToken:           env("ADMIN_API_TOKEN", ""),
 		CloudBaseURL:            strings.TrimRight(env("CLOUD_BASE_URL", ""), "/"),
 		DefaultPaymentProvider:  strings.ToLower(env("DEFAULT_PAYMENT_PROVIDER", "mock")),

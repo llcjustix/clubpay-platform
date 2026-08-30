@@ -203,6 +203,10 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("POST /api/telegram/webhook", s.handleTelegramWebhook)
 	mux.HandleFunc("GET /api/backoffice/clubs", s.handleBackofficeClubs)
 	mux.HandleFunc("POST /api/backoffice/clubs", s.handleBackofficeCreateClub)
+	mux.HandleFunc("POST /api/backoffice/clubs/{club_id}/controller-activations", s.handleCreateControllerActivation)
+	// This endpoint intentionally has no normal user session: its input is a
+	// short-lived, one-time enrollment secret created by a club owner.
+	mux.HandleFunc("POST /api/controller/activate", s.handleControllerActivation)
 	mux.HandleFunc("GET /api/backoffice/networks", s.handleBackofficeNetworks)
 	mux.HandleFunc("POST /api/backoffice/networks", s.handleBackofficeCreateNetwork)
 	mux.HandleFunc("POST /api/backoffice/networks/{network_id}", s.handleBackofficeUpdateNetwork)
@@ -537,6 +541,121 @@ func (s *Server) handleBackofficeCreateClub(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	writeJSON(w, http.StatusCreated, map[string]any{"id": id})
+}
+
+func (s *Server) handleCreateControllerActivation(w http.ResponseWriter, r *http.Request) {
+	auth, ok := s.requireAuth(w, r)
+	if !ok {
+		return
+	}
+	clubID := strings.TrimSpace(r.PathValue("club_id"))
+	if _, ok := s.requireClubRole(w, r, auth, clubID, "owner", "manager"); !ok {
+		return
+	}
+	var req controllerActivationRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid json")
+		return
+	}
+	nodeMode := strings.ToLower(strings.TrimSpace(req.NodeMode))
+	if nodeMode == "" {
+		nodeMode = "edge"
+	}
+	if nodeMode != "edge" && nodeMode != "manager" {
+		writeError(w, http.StatusBadRequest, "node_mode must be edge or manager")
+		return
+	}
+	code := "CP-" + strings.ToUpper(randomHex(3)) + "-" + strings.ToUpper(randomHex(3)) + "-" + strings.ToUpper(randomHex(3))
+	expiresAt := time.Now().UTC().Add(30 * time.Minute)
+	var createdBy any
+	if strings.TrimSpace(auth.UserID) != "" {
+		createdBy = auth.UserID
+	}
+	_, err := s.db.Exec(r.Context(), `
+		INSERT INTO controller_activation_codes (club_id, code_hash, node_mode, expires_at, created_by)
+		VALUES ($1, $2, $3, $4, $5)
+	`, clubID, hashToken(code), nodeMode, expiresAt, createdBy)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusCreated, map[string]any{
+		"activation_code": code,
+		"node_mode":       nodeMode,
+		"expires_at":      expiresAt.Format(time.RFC3339),
+	})
+}
+
+func (s *Server) handleControllerActivation(w http.ResponseWriter, r *http.Request) {
+	if !strings.EqualFold(s.cfg.NodeMode, "cloud") {
+		writeError(w, http.StatusNotFound, "controller enrollment is available only on ClubPay cloud")
+		return
+	}
+	var req controllerEnrollmentRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid json")
+		return
+	}
+	code := strings.TrimSpace(req.Code)
+	nodeID := sanitizeNodeID(req.NodeID)
+	if code == "" || nodeID == "" {
+		writeError(w, http.StatusBadRequest, "code and node_id are required")
+		return
+	}
+	tx, err := s.db.Begin(r.Context())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	defer tx.Rollback(r.Context())
+	var clubID, nodeMode string
+	err = tx.QueryRow(r.Context(), `
+		SELECT club_id::text, node_mode
+		FROM controller_activation_codes
+		WHERE code_hash = $1 AND consumed_at IS NULL AND expires_at > now()
+		FOR UPDATE
+	`, hashToken(code)).Scan(&clubID, &nodeMode)
+	if errors.Is(err, pgx.ErrNoRows) {
+		writeError(w, http.StatusUnauthorized, "activation code is invalid or expired")
+		return
+	}
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	syncToken := "edge_" + randomHex(32)
+	_, err = tx.Exec(r.Context(), `
+		INSERT INTO controller_nodes (club_id, node_id, node_name, node_mode, sync_token_hash)
+		VALUES ($1, $2, $3, $4, $5)
+		ON CONFLICT (node_id) DO UPDATE
+		SET club_id = EXCLUDED.club_id, node_name = EXCLUDED.node_name, node_mode = EXCLUDED.node_mode,
+			sync_token_hash = EXCLUDED.sync_token_hash, status = 'active', last_activated_at = now()
+	`, clubID, nodeID, strings.TrimSpace(req.NodeName), nodeMode, hashToken(syncToken))
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	_, err = tx.Exec(r.Context(), `
+		UPDATE controller_activation_codes
+		SET consumed_at = now(), consumed_node_id = $2
+		WHERE code_hash = $1
+	`, hashToken(code), nodeID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if err := tx.Commit(r.Context()); err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"node_mode":      nodeMode,
+		"club_id":        clubID,
+		"node_id":        nodeID,
+		"sync_token":     syncToken,
+		"cloud_base_url": s.cfg.PublicBaseURL,
+		"core_token":     s.cfg.CoreToken,
+	})
 }
 
 func (s *Server) handleBackofficeClubSettings(w http.ResponseWriter, r *http.Request) {
@@ -2924,12 +3043,17 @@ func (s *Server) handleCoreBootstrap(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleEdgeSnapshot(w http.ResponseWriter, r *http.Request) {
-	if !s.requireEdge(w, r) {
+	authorizedClubID, ok := s.requireEdge(w, r)
+	if !ok {
 		return
 	}
 	clubID := strings.TrimSpace(r.URL.Query().Get("club_id"))
 	if clubID == "" {
 		writeError(w, http.StatusBadRequest, "club_id is required")
+		return
+	}
+	if authorizedClubID != "" && authorizedClubID != clubID {
+		writeError(w, http.StatusForbidden, "controller is not authorized for this club")
 		return
 	}
 	if err := s.expireElapsedGrants(r.Context()); err != nil {
@@ -2945,7 +3069,8 @@ func (s *Server) handleEdgeSnapshot(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleEdgeEvents(w http.ResponseWriter, r *http.Request) {
-	if !s.requireEdge(w, r) {
+	authorizedClubID, ok := s.requireEdge(w, r)
+	if !ok {
 		return
 	}
 	var req edgeEventBatch
@@ -2955,6 +3080,10 @@ func (s *Server) handleEdgeEvents(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.ClubID == "" {
 		writeError(w, http.StatusBadRequest, "club_id is required")
+		return
+	}
+	if authorizedClubID != "" && authorizedClubID != req.ClubID {
+		writeError(w, http.StatusForbidden, "controller is not authorized for this club")
 		return
 	}
 	processed := 0
@@ -6102,6 +6231,16 @@ type clubSettingsRequest struct {
 	OFDVATPercent           int    `json:"ofd_vat_percent"`
 }
 
+type controllerActivationRequest struct {
+	NodeMode string `json:"node_mode"`
+}
+
+type controllerEnrollmentRequest struct {
+	Code     string `json:"code"`
+	NodeID   string `json:"node_id"`
+	NodeName string `json:"node_name"`
+}
+
 type networkRequest struct {
 	Name   string `json:"name"`
 	Status string `json:"status"`
@@ -7195,6 +7334,24 @@ func slugify(value string) string {
 	return result
 }
 
+func sanitizeNodeID(value string) string {
+	value = strings.ToLower(strings.TrimSpace(value))
+	var out strings.Builder
+	previousDash := false
+	for _, char := range value {
+		if (char >= 'a' && char <= 'z') || (char >= '0' && char <= '9') {
+			out.WriteRune(char)
+			previousDash = false
+			continue
+		}
+		if !previousDash && out.Len() > 0 {
+			out.WriteByte('-')
+			previousDash = true
+		}
+	}
+	return strings.Trim(out.String(), "-")
+}
+
 func (s *Server) uniqueExternalPCID(ctx context.Context, clubID, label, currentPCID string) string {
 	base := slugify(label)
 	if strings.HasPrefix(base, "club-") {
@@ -7434,19 +7591,33 @@ func (s *Server) requireCore(w http.ResponseWriter, r *http.Request) bool {
 	return false
 }
 
-func (s *Server) requireEdge(w http.ResponseWriter, r *http.Request) bool {
+// requireEdge returns the club bound to an enrolled Controller Node. An empty
+// club means a legacy/global server token, which is intentionally kept for the
+// cloud node and existing deployments.
+func (s *Server) requireEdge(w http.ResponseWriter, r *http.Request) (string, bool) {
 	token := bearerToken(r.Header.Get("Authorization"))
 	if token == "" {
 		token = strings.TrimSpace(r.Header.Get("X-Edge-Token"))
 	}
-	if s.cfg.EdgeSyncToken == "" {
-		return !strings.EqualFold(s.cfg.AppEnv, "production")
+	if (s.cfg.EdgeSyncToken != "" && token == s.cfg.EdgeSyncToken) || (s.cfg.CoreToken != "" && token == s.cfg.CoreToken) {
+		return "", true
 	}
-	if token == s.cfg.EdgeSyncToken || (s.cfg.CoreToken != "" && token == s.cfg.CoreToken) {
-		return true
+	if token != "" {
+		var clubID string
+		err := s.db.QueryRow(r.Context(), `
+			SELECT club_id::text
+			FROM controller_nodes
+			WHERE sync_token_hash = $1 AND status = 'active'
+		`, hashToken(token)).Scan(&clubID)
+		if err == nil {
+			return clubID, true
+		}
+	}
+	if s.cfg.EdgeSyncToken == "" && !strings.EqualFold(s.cfg.AppEnv, "production") {
+		return "", true
 	}
 	writeError(w, http.StatusUnauthorized, "edge token required")
-	return false
+	return "", false
 }
 
 func bearerToken(value string) string {

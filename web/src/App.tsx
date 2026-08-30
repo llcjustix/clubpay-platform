@@ -56,6 +56,12 @@ type Tariff = {
 
 type PaymentProvider = 'payme' | 'click' | 'mock';
 
+type ControllerActivation = {
+  activation_code: string;
+  node_mode: 'edge' | 'manager';
+  expires_at: string;
+};
+
 type QRPaymentProvider = {
   provider: PaymentProvider;
   label: string;
@@ -1770,6 +1776,7 @@ function SettingsPage({ auth, selectedClubID, currentPath, onClubChange, onLogou
   const [showNetworkForm, setShowNetworkForm] = useState(false);
   const [tariffZoneFilter, setTariffZoneFilter] = useState('');
   const [pcZoneFilter, setPCZoneFilter] = useState('');
+  const [controllerActivation, setControllerActivation] = useState<ControllerActivation | null>(null);
 
   async function loadSettings() {
     if (!selectedClubID) return;
@@ -1920,6 +1927,32 @@ function SettingsPage({ auth, selectedClubID, currentPath, onClubChange, onLogou
       'Настройки клуба сохранены',
       true,
     );
+  }
+
+  async function createControllerActivation(nodeMode: 'edge' | 'manager') {
+    if (!selectedClubID) return;
+    try {
+      setError('');
+      setMessage('');
+      const payload = await api<ControllerActivation>(`/api/backoffice/clubs/${selectedClubID}/controller-activations`, {
+        method: 'POST',
+        body: JSON.stringify({ node_mode: nodeMode }),
+      });
+      setControllerActivation(payload);
+      setMessage('Код создан. Он действует 30 минут и сработает только один раз.');
+    } catch (err) {
+      setError(String((err as Error).message || err));
+    }
+  }
+
+  async function copyControllerActivation() {
+    if (!controllerActivation?.activation_code) return;
+    try {
+      await navigator.clipboard.writeText(controllerActivation.activation_code);
+      setMessage('Код скопирован');
+    } catch {
+      setError('Не удалось скопировать код. Выделите его и скопируйте вручную.');
+    }
   }
 
   async function saveNetwork() {
@@ -2183,6 +2216,7 @@ function SettingsPage({ auth, selectedClubID, currentPath, onClubChange, onLogou
           )}
 
           {settingsSection === 'club' && (
+          <>
           <Panel className="stack settings-wide">
             <SectionTitle
               icon={<Building2 size={18} />}
@@ -2210,6 +2244,30 @@ function SettingsPage({ auth, selectedClubID, currentPath, onClubChange, onLogou
               <Button icon={<Save size={16} />} onClick={saveClub}>{creatingClub ? 'Создать клуб' : 'Сохранить клуб'}</Button>
             </div>
           </Panel>
+          {!creatingClub && (
+            <Panel className="stack settings-wide">
+              <SectionTitle icon={<KeyRound size={18} />} title="Локальный Controller" caption="Один код связывает установку с этим клубом. Код не хранится на сервере и исчезает после первого использования." />
+              {!controllerActivation ? (
+                <div className="button-row">
+                  <Button variant="secondary" icon={<Monitor size={16} />} onClick={() => createControllerActivation('edge')}>Создать код для основного сервера / Raspberry Pi</Button>
+                  <Button variant="ghost" icon={<Monitor size={16} />} onClick={() => createControllerActivation('manager')}>Код для резервного ПК менеджера</Button>
+                </div>
+              ) : (
+                <div className="inline-editor">
+                  <div className="form-mode">
+                    <strong>Код {controllerActivation.node_mode === 'edge' ? 'основного Controller' : 'резервного Controller'}</strong>
+                    <span>Вставьте его в окно установки. До {new Date(controllerActivation.expires_at).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' })}.</span>
+                  </div>
+                  <div className="readonly-token">{controllerActivation.activation_code}</div>
+                  <div className="button-row">
+                    <Button size="sm" icon={<Copy size={15} />} onClick={copyControllerActivation}>Скопировать код</Button>
+                    <Button size="sm" variant="ghost" onClick={() => setControllerActivation(null)}>Скрыть</Button>
+                  </div>
+                </div>
+              )}
+            </Panel>
+          )}
+          </>
           )}
 
           {!creatingClub && canManageNetwork && settingsSection === 'connections' && (
