@@ -9,6 +9,31 @@ if not "%errorlevel%"=="0" (
   exit /b
 )
 
+rem The PostgreSQL runtime embedded by the Controller requires the supported
+rem Microsoft Visual C++ x64 runtime. Fresh Windows Server/VM images often do
+rem not include it; without this preflight initdb fails with 0xC0000135.
+reg query "HKLM\SOFTWARE\Microsoft\VisualStudio\14.0\VC\Runtimes\x64" /v Installed 2>nul | find "0x1" >nul
+if not errorlevel 1 goto vc_runtime_ready
+
+echo.
+echo Installing the required Microsoft Visual C++ runtime...
+set "VC_REDIST=%TEMP%\ClubPay-vc_redist.x64.exe"
+powershell -NoProfile -ExecutionPolicy Bypass -Command "Invoke-WebRequest -UseBasicParsing -Uri 'https://aka.ms/vs/17/release/vc_redist.x64.exe' -OutFile '%VC_REDIST%'"
+if errorlevel 1 (
+  echo Could not download the Microsoft Visual C++ runtime.
+  echo Check the Internet connection and start this installer again.
+  pause
+  exit /b 1
+)
+"%VC_REDIST%" /install /quiet /norestart
+set "VC_REDIST_EXIT=%errorlevel%"
+if "%VC_REDIST_EXIT%"=="0" goto vc_runtime_ready
+if "%VC_REDIST_EXIT%"=="3010" goto vc_runtime_ready
+echo Microsoft Visual C++ runtime installation failed with code %VC_REDIST_EXIT%.
+pause
+exit /b 1
+
+:vc_runtime_ready
 if exist "controller.env" (
   schtasks.exe /Query /TN "ClubPay Controller Node" >nul 2>&1
   if not errorlevel 1 (
