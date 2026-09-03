@@ -221,6 +221,7 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("DELETE /api/backoffice/tariffs/{tariff_id}", s.handleBackofficeDeleteTariff)
 	mux.HandleFunc("POST /api/backoffice/clubs/{club_id}/pcs", s.handleBackofficeCreatePC)
 	mux.HandleFunc("POST /api/backoffice/pcs/{pc_id}", s.handleBackofficeUpdatePC)
+	mux.HandleFunc("POST /api/backoffice/pcs/{pc_id}/agent-enrollment", s.handleBackofficeAgentEnrollment)
 	mux.HandleFunc("POST /api/backoffice/pcs/{pc_id}/qr/rotate", s.handleBackofficeRotatePCQR)
 	mux.HandleFunc("DELETE /api/backoffice/pcs/{pc_id}", s.handleBackofficeDeletePC)
 	mux.HandleFunc("POST /api/backoffice/clubs/{club_id}/users", s.handleBackofficeCreateUser)
@@ -1206,6 +1207,84 @@ func (s *Server) handleBackofficeUpdatePC(w http.ResponseWriter, r *http.Request
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"success": true})
+}
+
+// handleBackofficeAgentEnrollment returns the private per-PC configuration
+// consumed by the Windows Agent package. It is intentionally available only
+// to a club owner: the file contains the Controller's Agent credential and
+// must be treated like a deployment secret, not a player-facing download.
+func (s *Server) handleBackofficeAgentEnrollment(w http.ResponseWriter, r *http.Request) {
+	auth, ok := s.requireAuth(w, r)
+	if !ok {
+		return
+	}
+	pcID := r.PathValue("pc_id")
+	clubID, err := s.clubIDForEntity(r.Context(), "pc_refs", pcID)
+	if err != nil {
+		writeError(w, http.StatusNotFound, "pc not found")
+		return
+	}
+	if _, ok := s.requireClubRole(w, r, auth, clubID, "owner"); !ok {
+		return
+	}
+	if strings.TrimSpace(s.cfg.CoreToken) == "" {
+		writeError(w, http.StatusServiceUnavailable, "Controller core token is not configured")
+		return
+	}
+
+	var req agentEnrollmentRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid json")
+		return
+	}
+	controllerURL, err := normalizeAgentControllerURL(req.ControllerURL)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	var externalPCID string
+	err = s.db.QueryRow(r.Context(), `
+		SELECT external_pc_id
+		FROM pc_refs
+		WHERE id = $1 AND club_id = $2 AND status_cache <> 'deleted'
+	`, pcID, clubID).Scan(&externalPCID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		writeError(w, http.StatusNotFound, "pc not found")
+		return
+	}
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"filename": "clubpay-agent-enrollment.json",
+		"enrollment": map[string]any{
+			"external_pc_id": externalPCID,
+			"controller_url":  controllerURL,
+			"core_token":      s.cfg.CoreToken,
+		},
+	})
+}
+
+func normalizeAgentControllerURL(raw string) (string, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return "", fmt.Errorf("controller_url is required")
+	}
+	if !strings.Contains(raw, "://") {
+		raw = "http://" + raw
+	}
+	parsed, err := url.ParseRequestURI(raw)
+	if err != nil || parsed.Host == "" || (parsed.Scheme != "http" && parsed.Scheme != "https") || parsed.User != nil {
+		return "", fmt.Errorf("controller_url must be an http or https address")
+	}
+	if parsed.RawQuery != "" || parsed.Fragment != "" || (parsed.Path != "" && parsed.Path != "/") {
+		return "", fmt.Errorf("controller_url must not contain a path, query, or fragment")
+	}
+	parsed.Path = ""
+	return strings.TrimRight(parsed.String(), "/"), nil
 }
 
 // handleBackofficeRotatePCQR invalidates the old physical QR and issues a new,
@@ -6272,6 +6351,10 @@ type pcRequest struct {
 	MACAddress   string `json:"mac_address"`
 	Status       string `json:"status"`
 	QRToken      string `json:"qr_token"`
+}
+
+type agentEnrollmentRequest struct {
+	ControllerURL string `json:"controller_url"`
 }
 
 func normalizeMACAddress(value string) (string, error) {

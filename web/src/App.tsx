@@ -9,6 +9,7 @@ import {
   Copy,
   Clock3,
   CreditCard,
+  Download,
   Gamepad2,
   Network,
   KeyRound,
@@ -60,6 +61,15 @@ type ControllerActivation = {
   activation_code: string;
   node_mode: 'edge' | 'manager';
   expires_at: string;
+};
+
+type AgentEnrollment = {
+  filename: string;
+  enrollment: {
+    external_pc_id: string;
+    controller_url: string;
+    core_token: string;
+  };
 };
 
 type QRPaymentProvider = {
@@ -1777,6 +1787,7 @@ function SettingsPage({ auth, selectedClubID, currentPath, onClubChange, onLogou
   const [tariffZoneFilter, setTariffZoneFilter] = useState('');
   const [pcZoneFilter, setPCZoneFilter] = useState('');
   const [controllerActivation, setControllerActivation] = useState<ControllerActivation | null>(null);
+  const [agentControllerURL, setAgentControllerURL] = useState('');
 
   async function loadSettings() {
     if (!selectedClubID) return;
@@ -2091,6 +2102,34 @@ function SettingsPage({ auth, selectedClubID, currentPath, onClubChange, onLogou
     );
   }
 
+  async function downloadAgentEnrollment(pc: ManagedPC) {
+    const controllerURL = agentControllerURL.trim();
+    if (!controllerURL) {
+      setError('Укажите адрес основного Local Controller перед подготовкой Agent.');
+      return;
+    }
+    try {
+      setError('');
+      setMessage('');
+      const payload = await api<AgentEnrollment>(`/api/backoffice/pcs/${pc.id}/agent-enrollment`, {
+        method: 'POST',
+        body: JSON.stringify({ controller_url: controllerURL }),
+      });
+      const blob = new Blob([JSON.stringify(payload.enrollment, null, 2)], { type: 'application/json' });
+      const href = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = href;
+      link.download = payload.filename || 'clubpay-agent-enrollment.json';
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      URL.revokeObjectURL(href);
+      setMessage(`Файл привязки для «${pc.label}» скачан. Положите его рядом с install-agent.cmd в папке именно этого ПК.`);
+    } catch (err) {
+      setError(String((err as Error).message || err));
+    }
+  }
+
   async function saveUser() {
     const path = userForm.id ? `/api/backoffice/users/${userForm.id}/clubs/${selectedClubID}` : `/api/backoffice/clubs/${selectedClubID}/users`;
     const payload = { ...userForm, role: canManageNetwork && userForm.role === 'owner' ? 'owner' : 'admin' };
@@ -2392,6 +2431,13 @@ function SettingsPage({ auth, selectedClubID, currentPath, onClubChange, onLogou
           {!creatingClub && settingsSection === 'pcs' && (
           <Panel className="stack settings-wide">
             <SectionTitle icon={<Monitor size={18} />} title="Компьютеры" caption="Для каждого ПК QR создаётся автоматически. Распечатайте его и разместите у компьютера; системный ID в QR не раскрывается." />
+            <div className="inline-editor">
+              <div className="form-mode">
+                <strong>Подготовка Agent без команд</strong>
+                <span>Укажите LAN-адрес основного Controller один раз. Для каждого ПК скачается отдельный приватный файл; сотрудник только кладёт его рядом с пакетом Agent и запускает install-agent.cmd.</span>
+              </div>
+              <Field label="Адрес основного Local Controller" value={agentControllerURL} onChange={setAgentControllerURL} help="Например, 192.168.1.10:8080. Это внутренний адрес сети клуба, не публичный сайт. Файл привязки нельзя отправлять игрокам или в чат." />
+            </div>
             <div className="table-filter">
               <label>
                 Зона
@@ -2420,6 +2466,7 @@ function SettingsPage({ auth, selectedClubID, currentPath, onClubChange, onLogou
                       <td>
                         <div className="row-actions">
                           <Button size="sm" variant="ghost" icon={<QrCode size={14} />} onClick={() => printPCQR(pc)}>Печать</Button>
+                          <Button size="sm" variant="secondary" icon={<Download size={14} />} onClick={() => downloadAgentEnrollment(pc)}>Подготовить Agent</Button>
                           <Button size="sm" variant="ghost" icon={<RefreshCw size={14} />} onClick={() => rotatePCQR(pc)}>Перевыпустить</Button>
                           <Button size="sm" variant="ghost" onClick={() => { setPCForm(pc); setShowPCForm(true); }}>Изменить</Button>
                         </div>
