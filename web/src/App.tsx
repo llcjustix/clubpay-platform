@@ -1966,6 +1966,22 @@ function SettingsPage({ auth, selectedClubID, currentPath, onClubChange, onLogou
     }
   }
 
+  function downloadControllerEnrollment() {
+    if (!controllerActivation?.activation_code) return;
+    const blob = new Blob([JSON.stringify({ activation_code: controllerActivation.activation_code }, null, 2)], {
+      type: 'application/json',
+    });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = 'controller-enrollment.json';
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    URL.revokeObjectURL(url);
+    setMessage('Файл привязки Controller скачан. Положите его рядом с install-windows.cmd и запустите установку.');
+  }
+
   async function saveNetwork() {
     if (!networkForm.name.trim()) {
       setError('Укажите название сети');
@@ -2300,6 +2316,7 @@ function SettingsPage({ auth, selectedClubID, currentPath, onClubChange, onLogou
                   <div className="readonly-token">{controllerActivation.activation_code}</div>
                   <div className="button-row">
                     <Button size="sm" icon={<Copy size={15} />} onClick={copyControllerActivation}>Скопировать код</Button>
+                    <Button size="sm" variant="secondary" icon={<Download size={15} />} onClick={downloadControllerEnrollment}>Скачать файл установки</Button>
                     <Button size="sm" variant="ghost" onClick={() => setControllerActivation(null)}>Скрыть</Button>
                   </div>
                 </div>

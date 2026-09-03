@@ -69,8 +69,15 @@ if exist "controller.env" (
 
 echo.
 echo ClubPay Controller Node setup
-echo Generate a one-time activation code in ClubPay Web Admin first.
-set /p ACTIVATION_CODE=Paste activation code:
+set "ACTIVATION_CODE="
+if exist "controller-enrollment.json" (
+  for /f "usebackq delims=" %%A in (`powershell -NoProfile -Command "$j = ConvertFrom-Json -InputObject (Get-Content -LiteralPath '%~dp0controller-enrollment.json' -Raw); [Console]::Write([string]$j.activation_code)"`) do set "ACTIVATION_CODE=%%A"
+  if not "%ACTIVATION_CODE%"=="" echo Using prepared Controller enrollment file.
+)
+if "%ACTIVATION_CODE%"=="" (
+  echo Generate a one-time activation code in ClubPay Web Admin first.
+  set /p ACTIVATION_CODE=Paste activation code:
+)
 if "%ACTIVATION_CODE%"=="" (
   echo Activation code is required.
   pause

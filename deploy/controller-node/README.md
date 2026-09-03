@@ -8,11 +8,13 @@ Controller — локальный центр клуба, а не просто Wa
 
 1. В ClubPay Web Admin откройте **Настройки → Клуб → Локальный Controller** и
    создайте код: основной — для Windows-сервера/Raspberry Pi, резервный — для
-   ПК менеджера. Код действует 30 минут и подходит только для одной установки.
+   ПК менеджера. Нажмите **«Скачать файл установки»** и положите приватный
+   `controller-enrollment.json` рядом с установщиком. Код действует 30 минут и
+   подходит только для одной установки.
 2. Скачайте подходящий архив Controller из GitHub Releases и распакуйте его:
    `C:\ClubPay\Controller` на Windows или `/opt/clubpay-controller` на Pi.
-3. Windows: правый клик на `install-windows.cmd` → **Запуск от имени
-   администратора**, вставьте код. Pi: `chmod +x install-linux.sh &&
+3. Windows: запустите `install-windows.cmd` от имени администратора — файл
+   привязки подхватится автоматически. Pi: `chmod +x install-linux.sh &&
    ./install-linux.sh`, вставьте код и пароль sudo.
 4. Установщик сам создаёт `controller.env`, запускает встроенный PostgreSQL и
    регистрирует постоянный сервис. Docker, отдельный PostgreSQL и ручная
