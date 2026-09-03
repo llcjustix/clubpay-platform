@@ -44,14 +44,28 @@ foreach ($directory in @('web', 'migrations')) {
 
 # controller.env, data and runtime are deliberately never copied or deleted.
 schtasks.exe /Run /TN 'ClubPay Controller Node' | Out-Null
-Start-Sleep -Seconds 3
 
-try {
-    $status = Invoke-RestMethod -Uri 'http://127.0.0.1:8080/api/node/status' -TimeoutSec 10
-    if (-not $status.ok) { throw 'Controller status is not ok' }
+# The embedded PostgreSQL instance can take longer than a few seconds to open
+# its existing data directory after a Windows reboot or an upgrade. Poll the
+# local endpoint rather than treating a normal cold start as a failed update.
+$lastError = ''
+$healthy = $false
+for ($attempt = 1; $attempt -le 18; $attempt++) {
+    try {
+        $status = Invoke-RestMethod -Uri 'http://127.0.0.1:8080/api/node/status' -TimeoutSec 5
+        if ($status.ok) {
+            $healthy = $true
+            break
+        }
+        $lastError = 'Controller status is not ok'
+    }
+    catch {
+        $lastError = $_.Exception.Message
+    }
+    Start-Sleep -Seconds 3
 }
-catch {
-    throw "Files were updated, but Controller did not become healthy. $($_.Exception.Message)"
+if (-not $healthy) {
+    throw "Files were updated, but Controller did not become healthy after 54 seconds. $lastError"
 }
 
 Write-Host ''
