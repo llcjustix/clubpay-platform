@@ -30,10 +30,13 @@ jobs:
           npm run build
       - name: Package Windows Controller Node
         run: |
+          pwsh -NoProfile -Command "[scriptblock]::Create((Get-Content -Path 'deploy/controller-node/update-windows.ps1' -Raw)) | Out-Null"
           mkdir -p dist/windows/ClubPay-Controller/web dist/windows/ClubPay-Controller/migrations
           GOOS=windows GOARCH=amd64 CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o dist/windows/ClubPay-Controller/ClubPay.Controller.exe ./cmd/api
           cp deploy/controller-node/controller.env.example dist/windows/ClubPay-Controller/
           cp deploy/controller-node/install-windows.cmd dist/windows/ClubPay-Controller/
+          cp deploy/controller-node/update-windows.cmd dist/windows/ClubPay-Controller/
+          cp deploy/controller-node/update-windows.ps1 dist/windows/ClubPay-Controller/
           cp deploy/controller-node/README.md dist/windows/ClubPay-Controller/
           cp migrations/*.sql dist/windows/ClubPay-Controller/migrations/
           cp -R web/dist/. dist/windows/ClubPay-Controller/web/
