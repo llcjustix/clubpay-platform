@@ -7,7 +7,9 @@ on:
 
 jobs:
   deploy:
-    runs-on: [self-hosted, docker, clubpay-platform]
+    runs-on:
+      group: jlearnx runner
+      labels: [self-hosted, docker, jlearnx]
 
     steps:
       - name: Checkout repository
@@ -19,20 +21,20 @@ jobs:
       #       local attempt=1
       #       local max_attempts=5
       #       local delay=15
-
+      #
       #       until "$@"; do
       #         if [ "$attempt" -ge "$max_attempts" ]; then
       #           echo "Command failed after $attempt attempts: $*"
       #           return 1
       #         fi
-
+      #
       #         echo "Command failed, retrying in ${delay}s: $*"
       #         sleep "$delay"
       #         attempt=$((attempt + 1))
       #         delay=$((delay * 2))
       #       done
       #     }
-
+      #
       #     retry docker pull golang:1.22-alpine
       #     retry docker pull node:22-alpine
 
@@ -65,8 +67,6 @@ jobs:
           docker push ${{ secrets.DOCKER_USERNAME }}/clubpay-web:${{ github.sha }}
           docker push ${{ secrets.DOCKER_USERNAME }}/clubpay-web:latest
 
-      # The runner is also the deployment host. Old build layers can fill its
-      # disk after a few releases; keep running containers and volumes intact.
       - name: Reclaim unused Docker disk space
         run: |
           df -h .
@@ -77,9 +77,6 @@ jobs:
 
       - name: Deploy
         run: |
-          # Deploy from the checked-out workspace. The runner and deployment
-          # host are the same machine, and copying this file to /home can fail
-          # when that filesystem is full even though the image build succeeded.
           cd "$GITHUB_WORKSPACE"
 
           export DB_HOST="${{ secrets.DB_HOST }}"
@@ -88,28 +85,22 @@ jobs:
           export DB_USER="${{ secrets.DB_USER }}"
           export DB_PASSWORD="${{ secrets.DB_PASSWORD }}"
           export DOCKER_USERNAME="${{ secrets.DOCKER_USERNAME }}"
-          # Use the immutable image created by this run. Do not rely on a
-          # previously cached `latest` image on the self-hosted runner.
           export IMAGE_TAG="${{ github.sha }}"
 
           export CORE_MODE="ws"
           export CORE_TOKEN="${{ secrets.CORE_TOKEN }}"
-          # A Raspberry Pi relay connects outbound with its own token. It may
-          # send only Wake-on-LAN packets; it never receives payment or player
-          # credentials and must not reuse the Agent/Core shared token.
+
           export EDGE_WOL_TOKEN="${{ secrets.EDGE_WOL_TOKEN }}"
           export WOL_ENABLED="${{ vars.WOL_ENABLED || 'false' }}"
           export WOL_WAIT_SECONDS="${{ vars.WOL_WAIT_SECONDS || '60' }}"
 
-          # Telegram delivery is optional in local development, but must be
-          # configured explicitly on production deployments.
           export TELEGRAM_BOT_TOKEN="${{ secrets.TELEGRAM_BOT_TOKEN }}"
           export TELEGRAM_BOT_USERNAME="clubPay_tg_bot"
-          # Enable only after BotFather is configured with
-          # https://clubpay.justix.uz/miniapp as the Main Mini App URL.
+
           export TELEGRAM_MINI_APP_ENABLED="${{ vars.TELEGRAM_MINI_APP_ENABLED || 'false' }}"
           export TELEGRAM_POLLING_ENABLED="true"
 
           docker compose pull api web
           docker compose up -d --remove-orphans --force-recreate
+
           docker ps
