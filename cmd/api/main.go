@@ -348,8 +348,10 @@ func setupControllerNode(configPath, activationCode, activationURL, nodeName str
 	if err != nil {
 		return fmt.Errorf("prepare bundled local database: %w", err)
 	}
-	if err := localDatabase.Stop(); err != nil {
-		return fmt.Errorf("finish local database setup: %w", err)
+	if localDatabase != nil {
+		if err := localDatabase.Stop(); err != nil {
+			return fmt.Errorf("finish local database setup: %w", err)
+		}
 	}
 	if err := os.Rename(pendingConfigPath, absoluteConfigPath); err != nil {
 		return fmt.Errorf("activate controller config: %w", err)
@@ -414,9 +416,26 @@ func startEmbeddedDatabase(cfg config.Config) (*embeddedpostgres.EmbeddedPostgre
 		CachePath(filepath.Join(filepath.Dir(cfg.LocalDatabaseRuntimeDir), "postgres-cache")).
 		StartTimeout(90 * time.Second))
 	if err := postgres.Start(); err != nil {
+		// On Windows the PostgreSQL child process can outlive the Controller
+		// process during an in-place upgrade. It already owns the same local data
+		// directory and is safe to reuse; the normal database connection below
+		// still validates the configured credentials before the API starts.
+		if localDatabasePortOpen(parsed.Hostname(), port) {
+			log.Printf("local PostgreSQL is already listening on %s:%d; reusing it", parsed.Hostname(), port)
+			return nil, nil
+		}
 		return nil, err
 	}
 	return postgres, nil
+}
+
+func localDatabasePortOpen(host string, port int) bool {
+	connection, err := net.DialTimeout("tcp", net.JoinHostPort(host, strconv.Itoa(port)), 2*time.Second)
+	if err != nil {
+		return false
+	}
+	_ = connection.Close()
+	return true
 }
 
 func installLinuxControllerService(configPath string) error {
