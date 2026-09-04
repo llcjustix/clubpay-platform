@@ -15,28 +15,12 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      # - name: Pull base images
-      #   run: |
-      #     retry() {
-      #       local attempt=1
-      #       local max_attempts=5
-      #       local delay=15
-      #
-      #       until "$@"; do
-      #         if [ "$attempt" -ge "$max_attempts" ]; then
-      #           echo "Command failed after $attempt attempts: $*"
-      #           return 1
-      #         fi
-      #
-      #         echo "Command failed, retrying in ${delay}s: $*"
-      #         sleep "$delay"
-      #         attempt=$((attempt + 1))
-      #         delay=$((delay * 2))
-      #       done
-      #     }
-      #
-      #     retry docker pull golang:1.22-alpine
-      #     retry docker pull node:22-alpine
+      - name: Show runner information
+        run: |
+          echo "Runner: $(hostname)"
+          echo "Workspace: $GITHUB_WORKSPACE"
+          pwd
+          docker ps
 
       - name: Login to Docker Hub
         run: |
@@ -69,21 +53,34 @@ jobs:
 
       - name: Reclaim unused Docker disk space
         run: |
-          df -h .
+          echo "=== Before cleanup ==="
+          df -h
+
           docker builder prune --all --force
           docker image prune --all --force
           docker container prune --force
-          df -h .
+
+          echo "=== After cleanup ==="
+          df -h
 
       - name: Deploy
         run: |
           cd "$GITHUB_WORKSPACE"
+
+          echo "=== Deploying from ==="
+          pwd
+
+          ls -la
+
+          echo "=== docker-compose files ==="
+          ls -la docker-compose*
 
           export DB_HOST="${{ secrets.DB_HOST }}"
           export DB_PORT="${{ secrets.DB_PORT }}"
           export DB_NAME="${{ secrets.DB_NAME }}"
           export DB_USER="${{ secrets.DB_USER }}"
           export DB_PASSWORD="${{ secrets.DB_PASSWORD }}"
+
           export DOCKER_USERNAME="${{ secrets.DOCKER_USERNAME }}"
           export IMAGE_TAG="${{ github.sha }}"
 
@@ -100,7 +97,20 @@ jobs:
           export TELEGRAM_MINI_APP_ENABLED="${{ vars.TELEGRAM_MINI_APP_ENABLED || 'false' }}"
           export TELEGRAM_POLLING_ENABLED="true"
 
+          echo "=== Pulling images ==="
           docker compose pull api web
-          docker compose up -d --remove-orphans --force-recreate
 
+          echo "=== Starting containers ==="
+          docker compose up -d \
+            --remove-orphans \
+            --force-recreate
+
+          echo "=== Running containers ==="
           docker ps
+
+      - name: Show application logs on failure
+        if: failure()
+        run: |
+          cd "$GITHUB_WORKSPACE" || exit 0
+          docker compose ps
+          docker compose logs --tail=100
