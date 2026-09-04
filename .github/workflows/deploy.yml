@@ -8,7 +8,7 @@ on:
 jobs:
   deploy:
     runs-on:
-#      group: jlearnx runner
+      group: jlearnx runner
       labels: [self-hosted, docker, jlearnx]
 
     steps:
