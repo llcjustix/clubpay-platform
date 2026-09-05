@@ -156,6 +156,7 @@ func (s *Server) Routes() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /api/health", s.handleHealth)
 	mux.HandleFunc("GET /api/node/status", s.handleNodeStatus)
+	mux.HandleFunc("POST /api/node/sync", s.handleNodeSync)
 	mux.HandleFunc("POST /api/auth/login", s.handleLogin)
 	mux.HandleFunc("GET /api/auth/me", s.handleMe)
 	mux.HandleFunc("POST /api/auth/logout", s.handleLogout)
@@ -261,6 +262,24 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleNodeStatus(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, s.nodeStatusPayload())
+}
+
+// handleNodeSync lets a freshly installed Agent request the initial cloud pull
+// before its bootstrap check. It is protected with the same Core credential as
+// bootstrap and is available only on a local Controller.
+func (s *Server) handleNodeSync(w http.ResponseWriter, r *http.Request) {
+	if !s.localNodeMode() {
+		writeError(w, http.StatusNotFound, "local synchronization is unavailable on this node")
+		return
+	}
+	if !s.requireCore(w, r) {
+		return
+	}
+	if err := s.syncEdgeOnce(r.Context()); err != nil {
+		writeError(w, http.StatusBadGateway, "initial cloud synchronization failed: "+err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"success": true})
 }
 
 func (s *Server) nodeStatusPayload() map[string]any {
