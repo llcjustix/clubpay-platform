@@ -42,7 +42,7 @@ const OWNER_REFRESH_MS = 5000;
 const TOKEN_KEY = 'clubpay_token';
 const CLUB_KEY = 'clubpay_club_id';
 const NAVIGATION_EVENT = 'clubpay:navigate';
-const CONTROLLER_RELEASE_URL = 'https://github.com/llcjustix/clubpay-platform/releases/download/controller-v0.2.13/ClubPay-Controller-win-x64.zip';
+const CONTROLLER_RELEASE_URL = 'https://github.com/llcjustix/clubpay-platform/releases/download/controller-v0.2.14/ClubPay-Controller-win-x64.zip';
 const MANAGER_RELEASE_URL = 'https://github.com/llcjustix/clubpay-core-agent/releases/download/v0.4.16/ClubPay-Manager-Desktop-win-x64.zip';
 const AGENT_RELEASE_URL = 'https://github.com/llcjustix/clubpay-core-agent/releases/download/v0.4.16/ClubPay-Agent-win-x64.zip';
 
@@ -480,7 +480,9 @@ $ErrorActionPreference = 'Stop'
 Write-Host 'Preparing ClubPay ${spec.title}…' -ForegroundColor Cyan
 ${taskCleanup}
 $clubPayProcessNames = @(${processNames})
-Get-CimInstance Win32_Process | Where-Object { $clubPayProcessNames -contains $_.Name -and $_.ExecutablePath -like 'C:\\ClubPay\\*' } | ForEach-Object { Invoke-CimMethod -InputObject $_ -MethodName Terminate | Out-Null }
+Get-CimInstance Win32_Process | Where-Object {
+  ($clubPayProcessNames -contains $_.Name -or $clubPayProcessNames -contains [IO.Path]::GetFileNameWithoutExtension($_.Name)) -and $_.ExecutablePath -like 'C:\\ClubPay\\*'
+} | ForEach-Object { Invoke-CimMethod -InputObject $_ -MethodName Terminate | Out-Null }
 if ($clubPayProcessNames -contains 'ClubPay.Agent.Admin') { & taskkill.exe /F /T /IM ClubPay.Agent.Admin.exe 2>$null | Out-Null }
 Start-Sleep -Seconds 2
 
