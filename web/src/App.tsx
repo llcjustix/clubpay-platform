@@ -42,9 +42,9 @@ const OWNER_REFRESH_MS = 5000;
 const TOKEN_KEY = 'clubpay_token';
 const CLUB_KEY = 'clubpay_club_id';
 const NAVIGATION_EVENT = 'clubpay:navigate';
-const CONTROLLER_RELEASE_URL = 'https://github.com/llcjustix/clubpay-platform/releases/download/controller-v0.2.14/ClubPay-Controller-win-x64.zip';
-const MANAGER_RELEASE_URL = 'https://github.com/llcjustix/clubpay-core-agent/releases/download/v0.4.17/ClubPay-Manager-Desktop-win-x64.zip';
-const AGENT_RELEASE_URL = 'https://github.com/llcjustix/clubpay-core-agent/releases/download/v0.4.17/ClubPay-Agent-win-x64.zip';
+const CONTROLLER_RELEASE_URL = 'https://github.com/llcjustix/clubpay-platform/releases/download/controller-v0.2.15/ClubPay-Controller-win-x64.zip';
+const MANAGER_RELEASE_URL = 'https://github.com/llcjustix/clubpay-core-agent/releases/download/v0.4.18/ClubPay-Manager-Desktop-win-x64.zip';
+const AGENT_RELEASE_URL = 'https://github.com/llcjustix/clubpay-core-agent/releases/download/v0.4.18/ClubPay-Agent-win-x64.zip';
 
 type Tariff = {
   id: string;
