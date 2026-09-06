@@ -537,9 +537,12 @@ Read-Host 'Press Enter to close'
   const encoded = base64UTF16LE(powershell);
   return `@echo off
 setlocal EnableExtensions
+rem Run outside the ClubPay tree: the installer may need to remove the folder
+rem from which this one-file bootstrap was launched.
+cd /d "%TEMP%"
 net session >nul 2>&1
 if not "%errorlevel%"=="0" (
-  powershell -NoProfile -ExecutionPolicy Bypass -Command "Start-Process -FilePath '%~f0' -Verb RunAs"
+  powershell -NoProfile -ExecutionPolicy Bypass -Command "Start-Process -FilePath '%~f0' -WorkingDirectory $env:TEMP -Verb RunAs"
   exit /b
 )
 powershell -NoProfile -ExecutionPolicy Bypass -EncodedCommand ${encoded}
