@@ -482,7 +482,11 @@ ${taskCleanup}
 $clubPayProcessNames = @(${processNames})
 Get-CimInstance Win32_Process | Where-Object {
   ($clubPayProcessNames -contains $_.Name -or $clubPayProcessNames -contains [IO.Path]::GetFileNameWithoutExtension($_.Name)) -and $_.ExecutablePath -like 'C:\\ClubPay\\*'
-} | ForEach-Object { Invoke-CimMethod -InputObject $_ -MethodName Terminate | Out-Null }
+} | ForEach-Object {
+  # A process can exit between the query above and Terminate. That is already
+  # the desired result, not a failed installation.
+  try { Invoke-CimMethod -InputObject $_ -MethodName Terminate -ErrorAction Stop | Out-Null } catch { }
+}
 if ($clubPayProcessNames -contains 'ClubPay.Agent.Admin') { & taskkill.exe /F /T /IM ClubPay.Agent.Admin.exe 2>$null | Out-Null }
 Start-Sleep -Seconds 2
 
