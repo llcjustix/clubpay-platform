@@ -500,7 +500,8 @@ func sanitizeLocalNodeID(value string) string {
 // enrollment to overwrite another Controller's cloud sync token.
 func localControllerNodeID(hostname string) string {
 	base := sanitizeLocalNodeID(hostname)
-	for _, iface := range net.Interfaces() {
+	interfaces, _ := net.Interfaces()
+	for _, iface := range interfaces {
 		if iface.Flags&net.FlagLoopback != 0 || len(iface.HardwareAddr) == 0 {
 			continue
 		}
