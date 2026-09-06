@@ -2564,7 +2564,7 @@ function SettingsPage({ auth, selectedClubID, currentPath, onClubChange, onLogou
             <div className="inline-editor">
               <div className="form-mode">
                 <strong>Подготовка Agent без команд</strong>
-                <span>Укажите LAN-адрес основного Controller один раз. Для каждого ПК скачается отдельный приватный файл; сотрудник только кладёт его рядом с пакетом Agent и запускает install-agent.cmd.</span>
+                <span>Укажите LAN-адрес основного Controller один раз. Для каждого ПК скачается отдельный приватный установщик: сотрудник открывает только этот файл двойным кликом.</span>
               </div>
               <Field label="Адрес основного Local Controller" value={agentControllerURL} onChange={setAgentControllerURL} help="Например, 192.168.1.10:8080. Это внутренний адрес сети клуба, не публичный сайт. Файл привязки нельзя отправлять игрокам или в чат." />
             </div>
