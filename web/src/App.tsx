@@ -487,7 +487,11 @@ Get-CimInstance Win32_Process | Where-Object {
   # the desired result, not a failed installation.
   try { Invoke-CimMethod -InputObject $_ -MethodName Terminate -ErrorAction Stop | Out-Null } catch { }
 }
-if ($clubPayProcessNames -contains 'ClubPay.Agent.Admin') { & taskkill.exe /F /T /IM ClubPay.Agent.Admin.exe 2>$null | Out-Null }
+if ($clubPayProcessNames -contains 'ClubPay.Agent.Admin' -and $null -ne (Get-Process -Name 'ClubPay.Agent.Admin' -ErrorAction SilentlyContinue)) {
+  # cmd owns stderr redirection here. If the process wins a race and exits,
+  # taskkill's non-zero exit code must not abort a clean installation.
+  & cmd.exe /c 'taskkill /F /T /IM ClubPay.Agent.Admin.exe >nul 2>nul'
+}
 Start-Sleep -Seconds 2
 
 foreach ($path in @(${removePaths})) {
