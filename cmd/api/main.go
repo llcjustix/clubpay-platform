@@ -248,7 +248,7 @@ func setupControllerNode(configPath, activationCode, activationURL, nodeName str
 		return errors.New("the Controller package is incomplete: web/index.html is missing")
 	}
 	hostname, _ := os.Hostname()
-	nodeID := sanitizeLocalNodeID(hostname)
+	nodeID := localControllerNodeID(hostname)
 	if nodeID == "" {
 		nodeID = "club-controller-" + randomLocalHex(3)
 	}
@@ -492,6 +492,25 @@ func sanitizeLocalNodeID(value string) string {
 		}
 	}
 	return strings.Trim(out.String(), "-")
+}
+
+// localControllerNodeID remains stable across reinstalls on one machine while
+// differentiating Windows VMs cloned from the same image. A hostname alone is
+// not sufficient: cloned VMs frequently retain it, causing one Controller's
+// enrollment to overwrite another Controller's cloud sync token.
+func localControllerNodeID(hostname string) string {
+	base := sanitizeLocalNodeID(hostname)
+	for _, iface := range net.Interfaces() {
+		if iface.Flags&net.FlagLoopback != 0 || len(iface.HardwareAddr) == 0 {
+			continue
+		}
+		suffix := strings.ReplaceAll(iface.HardwareAddr.String(), ":", "")
+		if base == "" {
+			return "club-controller-" + suffix
+		}
+		return base + "-" + suffix
+	}
+	return base
 }
 
 func randomLocalHex(bytesLen int) string {

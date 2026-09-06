@@ -3719,6 +3719,17 @@ func (s *Server) applyEdgeSnapshotData(ctx context.Context, clubID string, paylo
 	`, payload["zones"]); err != nil {
 		return err
 	}
+	// A fresh local Controller runs the same schema migrations as Cloud, which
+	// seed demo accounts. Their IDs differ from the real club accounts but their
+	// e-mail or phone can be the same (for example admin@clubpay.local). Remove
+	// only those conflicting local rows before importing Cloud's canonical IDs;
+	// user_club_roles cascades with the user row. Without this, the unique email
+	// index rolls back the entire first snapshot import.
+	if s.localNodeMode() {
+		if err := removeLocalUserSyncConflicts(ctx, tx, payload["users"]); err != nil {
+			return err
+		}
+	}
 	if err := execJSON(ctx, tx, `
 		WITH input AS (
 			SELECT * FROM jsonb_to_recordset($1::jsonb) AS x(
@@ -3910,6 +3921,26 @@ func (s *Server) applyEdgeSnapshotData(ctx context.Context, clubID string, paylo
 		  )
 	`, clubID)
 	return tx.Commit(ctx)
+}
+
+func removeLocalUserSyncConflicts(ctx context.Context, tx pgx.Tx, users any) error {
+	payload, err := json.Marshal(jsonArrayValue(users))
+	if err != nil {
+		return err
+	}
+	_, err = tx.Exec(ctx, `
+		WITH incoming AS (
+			SELECT * FROM jsonb_to_recordset($1::jsonb) AS x(id uuid, email text, phone text)
+		)
+		DELETE FROM users existing
+		USING incoming cloud
+		WHERE existing.id <> cloud.id
+		  AND (
+			(lower(COALESCE(existing.email, '')) <> '' AND lower(COALESCE(cloud.email, '')) <> '' AND lower(existing.email) = lower(cloud.email))
+			OR (COALESCE(existing.phone, '') <> '' AND COALESCE(cloud.phone, '') <> '' AND existing.phone = cloud.phone)
+		  )
+	`, payload)
+	return err
 }
 
 func execJSON(ctx context.Context, tx pgx.Tx, sql string, value any) error {
