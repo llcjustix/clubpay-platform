@@ -669,12 +669,13 @@ func (s *Server) handleControllerActivation(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
-		"node_mode":      nodeMode,
-		"club_id":        clubID,
-		"node_id":        nodeID,
-		"sync_token":     syncToken,
-		"cloud_base_url": s.cfg.PublicBaseURL,
-		"core_token":     s.cfg.CoreToken,
+		"node_mode":         nodeMode,
+		"club_id":           clubID,
+		"node_id":           nodeID,
+		"sync_token":        syncToken,
+		"cloud_base_url":    s.cfg.PublicBaseURL,
+		"frontend_base_url": s.cfg.FrontendBaseURL,
+		"core_token":        s.cfg.CoreToken,
 	})
 }
 
