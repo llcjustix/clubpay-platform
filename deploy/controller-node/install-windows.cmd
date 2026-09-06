@@ -9,6 +9,17 @@ if not "%errorlevel%"=="0" (
   exit /b
 )
 
+rem Agents and Manager PCs must reach the local Controller over the club LAN.
+rem Register this narrow inbound rule as part of the one-click setup so an
+rem operator never has to configure Windows Firewall by hand.
+netsh advfirewall firewall delete rule name="ClubPay Controller TCP 8080" >nul 2>nul
+netsh advfirewall firewall add rule name="ClubPay Controller TCP 8080" dir=in action=allow protocol=TCP localport=8080 >nul
+if errorlevel 1 (
+  echo Could not create the Windows Firewall rule for ClubPay Controller TCP 8080.
+  pause
+  exit /b 1
+)
+
 rem The PostgreSQL runtime embedded by the Controller requires the supported
 rem Microsoft Visual C++ x64 runtime. Fresh Windows Server/VM images often do
 rem not include it; without this preflight initdb fails with 0xC0000135.
