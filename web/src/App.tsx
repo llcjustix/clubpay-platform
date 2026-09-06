@@ -43,7 +43,7 @@ const TOKEN_KEY = 'clubpay_token';
 const CLUB_KEY = 'clubpay_club_id';
 const AGENT_CONTROLLER_URL_KEY = 'clubpay_agent_controller_url';
 const NAVIGATION_EVENT = 'clubpay:navigate';
-const CONTROLLER_RELEASE_URL = 'https://github.com/llcjustix/clubpay-platform/releases/download/controller-v0.2.18/ClubPay-Controller-win-x64.zip';
+const CONTROLLER_RELEASE_URL = 'https://github.com/llcjustix/clubpay-platform/releases/download/controller-v0.2.19/ClubPay-Controller-win-x64.zip';
 const MANAGER_RELEASE_URL = 'https://github.com/llcjustix/clubpay-core-agent/releases/download/v0.4.20/ClubPay-Manager-Desktop-win-x64.zip';
 const AGENT_RELEASE_URL = 'https://github.com/llcjustix/clubpay-core-agent/releases/download/v0.4.18/ClubPay-Agent-win-x64.zip';
 
@@ -2283,15 +2283,20 @@ function SettingsPage({ auth, selectedClubID, currentPath, onClubChange, onLogou
           title: `Agent for ${pc.label}`,
           releaseURL: AGENT_RELEASE_URL,
           installerName: 'install-agent.cmd',
-          installDirectory: 'C:\\ClubPay\\Agent-setup',
+          // Keep the package outside the Agent's installed files. In
+          // particular, a previously interrupted bootstrap can leave its old
+          // working directory locked under C:\\ClubPay; that must never block
+          // a fresh per-PC enrollment.
+          installDirectory: 'C:\\ProgramData\\ClubPay\\Agent-package',
           enrollmentFilename: payload.filename || 'clubpay-agent-enrollment.json',
           enrollment: payload.enrollment,
           // Agent VMs sometimes contain a Controller left by a failed pilot
-          // setup. The clean installer owns C:\\ClubPay, so it must stop that
-          // embedded PostgreSQL tree as well before removing the directory.
+          // setup. Remove only the owned application directories, not the
+          // parent C:\\ClubPay tree: an abandoned installer folder there can
+          // still be the working directory of a stale cmd.exe process.
           processNames: ['ClubPay.Agent.Client', 'ClubPay.Controller', 'postgres', 'pg_ctl'],
           taskName: 'ClubPay Controller Node',
-          removeBeforeInstall: ['C:\\ClubPay', 'C:\\ProgramData\\ClubPay\\Agent'],
+          removeBeforeInstall: ['C:\\ClubPay\\Agent', 'C:\\ClubPay\\Controller', 'C:\\ProgramData\\ClubPay\\Agent'],
         }),
       );
     setMessage(`Скачан один файл установки для «${pc.label}». Перенесите только его на этот игровой ПК и откройте двойным кликом.`);
