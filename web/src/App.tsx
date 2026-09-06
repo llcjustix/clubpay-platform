@@ -41,6 +41,7 @@ const ADMIN_REFRESH_MS = 2000;
 const OWNER_REFRESH_MS = 5000;
 const TOKEN_KEY = 'clubpay_token';
 const CLUB_KEY = 'clubpay_club_id';
+const AGENT_CONTROLLER_URL_KEY = 'clubpay_agent_controller_url';
 const NAVIGATION_EVENT = 'clubpay:navigate';
 const CONTROLLER_RELEASE_URL = 'https://github.com/llcjustix/clubpay-platform/releases/download/controller-v0.2.15/ClubPay-Controller-win-x64.zip';
 const MANAGER_RELEASE_URL = 'https://github.com/llcjustix/clubpay-core-agent/releases/download/v0.4.18/ClubPay-Manager-Desktop-win-x64.zip';
@@ -1916,6 +1917,14 @@ function SettingsPage({ auth, selectedClubID, currentPath, onClubChange, onLogou
   const [controllerActivation, setControllerActivation] = useState<ControllerActivation | null>(null);
   const [agentControllerURL, setAgentControllerURL] = useState('');
 
+  const agentControllerURLStorageKey = selectedClubID
+    ? `${AGENT_CONTROLLER_URL_KEY}:${selectedClubID}`
+    : AGENT_CONTROLLER_URL_KEY;
+
+  useEffect(() => {
+    setAgentControllerURL(localStorage.getItem(agentControllerURLStorageKey) || '');
+  }, [agentControllerURLStorageKey]);
+
   async function loadSettings() {
     if (!selectedClubID) return;
     try {
@@ -2288,6 +2297,22 @@ function SettingsPage({ auth, selectedClubID, currentPath, onClubChange, onLogou
     }
   }
 
+  function saveAgentControllerURL() {
+    const controllerURL = agentControllerURL.trim();
+    if (!controllerURL) {
+      setError('Укажите адрес основного Local Controller.');
+      return;
+    }
+    try {
+      localStorage.setItem(agentControllerURLStorageKey, controllerURL);
+      setAgentControllerURL(controllerURL);
+      setError('');
+      setMessage('Адрес основного Local Controller сохранён на этом Manager.');
+    } catch {
+      setError('Не удалось сохранить адрес на этом Manager.');
+    }
+  }
+
   async function saveUser() {
     const path = userForm.id ? `/api/backoffice/users/${userForm.id}/clubs/${selectedClubID}` : `/api/backoffice/clubs/${selectedClubID}/users`;
     const payload = { ...userForm, role: canManageNetwork && userForm.role === 'owner' ? 'owner' : 'admin' };
@@ -2596,6 +2621,9 @@ function SettingsPage({ auth, selectedClubID, currentPath, onClubChange, onLogou
                 <span>Укажите LAN-адрес основного Controller один раз. Для каждого ПК скачается отдельный приватный установщик: сотрудник открывает только этот файл двойным кликом.</span>
               </div>
               <Field label="Адрес основного Local Controller" value={agentControllerURL} onChange={setAgentControllerURL} help="Например, 192.168.1.10:8080. Это внутренний адрес сети клуба, не публичный сайт. Файл привязки нельзя отправлять игрокам или в чат." />
+              <div className="button-row">
+                <Button size="sm" variant="secondary" icon={<Save size={14} />} onClick={saveAgentControllerURL}>Сохранить адрес</Button>
+              </div>
             </div>
             <div className="table-filter">
               <label>
