@@ -21,6 +21,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"clubpay/internal/config"
@@ -38,6 +39,7 @@ type Server struct {
 	core         core.Adapter
 	edgeWOLRelay http.Handler
 	wakePC       core.WakeHandler
+	edgeSyncMu    sync.Mutex
 }
 
 type coreEventSubscriber interface {
@@ -2893,6 +2895,7 @@ func (s *Server) handleCoreEvent(w http.ResponseWriter, r *http.Request) {
 		writeError(w, status, err.Error())
 		return
 	}
+	s.syncAfterCoreEvent(req.EventType)
 	writeJSON(w, http.StatusOK, result)
 }
 
@@ -2907,7 +2910,30 @@ func (s *Server) handleCoreWSEvent(ctx context.Context, event core.EventMessage)
 		OccurredAt:    event.TS,
 		Payload:       event.Payload,
 	})
+	if err == nil {
+		s.syncAfterCoreEvent(event.Name)
+	}
 	return err
+}
+
+// A newly connected Agent is immediately useful to a player, so waiting for
+// the background edge interval leaves the public QR briefly reporting a false
+// "offline" state. Push presence-changing events as soon as they are accepted.
+// The mutex in syncEdgeOnce keeps this from racing the regular edge loop.
+func (s *Server) syncAfterCoreEvent(eventType string) {
+	if !s.localNodeMode() {
+		return
+	}
+	switch normalizeCoreEventType(eventType) {
+	case "agent_online", "agent_offline", "pc_status_changed", "session_started", "session_ended":
+	default:
+		return
+	}
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		_ = s.syncEdgeOnce(ctx)
+	}()
 }
 
 func (s *Server) processCoreEvent(ctx context.Context, req coreEventRequest) (map[string]any, int, error) {
@@ -3251,6 +3277,9 @@ func (s *Server) RunEdgeSync(ctx context.Context) {
 }
 
 func (s *Server) syncEdgeOnce(ctx context.Context) error {
+	s.edgeSyncMu.Lock()
+	defer s.edgeSyncMu.Unlock()
+
 	nodeID := s.edgeNodeID()
 	clubID := strings.TrimSpace(s.cfg.EdgeClubID)
 	// A brand new Controller has an empty database. Pull before the first push:
