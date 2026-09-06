@@ -43,8 +43,8 @@ const TOKEN_KEY = 'clubpay_token';
 const CLUB_KEY = 'clubpay_club_id';
 const NAVIGATION_EVENT = 'clubpay:navigate';
 const CONTROLLER_RELEASE_URL = 'https://github.com/llcjustix/clubpay-platform/releases/download/controller-v0.2.14/ClubPay-Controller-win-x64.zip';
-const MANAGER_RELEASE_URL = 'https://github.com/llcjustix/clubpay-core-agent/releases/download/v0.4.16/ClubPay-Manager-Desktop-win-x64.zip';
-const AGENT_RELEASE_URL = 'https://github.com/llcjustix/clubpay-core-agent/releases/download/v0.4.16/ClubPay-Agent-win-x64.zip';
+const MANAGER_RELEASE_URL = 'https://github.com/llcjustix/clubpay-core-agent/releases/download/v0.4.17/ClubPay-Manager-Desktop-win-x64.zip';
+const AGENT_RELEASE_URL = 'https://github.com/llcjustix/clubpay-core-agent/releases/download/v0.4.17/ClubPay-Agent-win-x64.zip';
 
 type Tariff = {
   id: string;
@@ -2086,7 +2086,10 @@ function SettingsPage({ auth, selectedClubID, currentPath, onClubChange, onLogou
         enrollment: { activation_code: controllerActivation.activation_code },
         processNames: isManager ? ['ClubPay.Agent.Admin', 'ClubPay.Controller', 'postgres', 'pg_ctl'] : ['ClubPay.Controller', 'postgres', 'pg_ctl'],
         taskName: 'ClubPay Controller Node',
-        removeBeforeInstall: isManager ? [] : ['C:\\ClubPay\\Controller-v023', 'C:\\ClubPay\\Controller-v024'],
+        // Every node type has its own VM. A clean one-click installation owns
+        // this directory, so remove all remnants before copying the release.
+        // This makes a retry deterministic even after an interrupted install.
+        removeBeforeInstall: ['C:\\ClubPay'],
       }),
     );
     setMessage('Скачан один файл установки. Перенесите его на нужную VM, откройте двойным кликом и подтвердите окно Windows.');
@@ -2251,6 +2254,7 @@ function SettingsPage({ auth, selectedClubID, currentPath, onClubChange, onLogou
           enrollmentFilename: payload.filename || 'clubpay-agent-enrollment.json',
           enrollment: payload.enrollment,
           processNames: ['ClubPay.Agent.Client'],
+          removeBeforeInstall: ['C:\\ClubPay', 'C:\\ProgramData\\ClubPay\\Agent'],
         }),
       );
     setMessage(`Скачан один файл установки для «${pc.label}». Перенесите только его на этот игровой ПК и откройте двойным кликом.`);
