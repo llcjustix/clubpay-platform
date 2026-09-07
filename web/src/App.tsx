@@ -43,9 +43,12 @@ const TOKEN_KEY = 'clubpay_token';
 const CLUB_KEY = 'clubpay_club_id';
 const AGENT_CONTROLLER_URL_KEY = 'clubpay_agent_controller_url';
 const NAVIGATION_EVENT = 'clubpay:navigate';
-const CONTROLLER_RELEASE_URL = 'https://github.com/llcjustix/clubpay-platform/releases/download/controller-v0.2.25/ClubPay-Controller-win-x64.zip';
-const MANAGER_RELEASE_URL = 'https://github.com/llcjustix/clubpay-core-agent/releases/download/v0.4.24/ClubPay-Manager-Desktop-win-x64.zip';
-const AGENT_RELEASE_URL = 'https://github.com/llcjustix/clubpay-core-agent/releases/download/v0.4.24/ClubPay-Agent-win-x64.zip';
+// These one-file downloads are only the one-time bridge for installations
+// created before automatic updates existed. Every subsequent release is
+// discovered and verified by the installed Controller/Manager/Agent itself.
+const CONTROLLER_RELEASE_URL = 'https://github.com/llcjustix/clubpay-platform/releases/download/controller-v0.2.26/ClubPay-Controller-win-x64.zip';
+const MANAGER_RELEASE_URL = 'https://github.com/llcjustix/clubpay-core-agent/releases/download/v0.4.26/ClubPay-Manager-Desktop-win-x64.zip';
+const AGENT_RELEASE_URL = 'https://github.com/llcjustix/clubpay-core-agent/releases/download/v0.4.26/ClubPay-Agent-win-x64.zip';
 
 type Tariff = {
   id: string;
@@ -2163,7 +2166,7 @@ function SettingsPage({ auth, selectedClubID, currentPath, onClubChange, onLogou
         taskName: 'ClubPay Controller Node',
       }),
     );
-    setMessage('Скачан один файл обновления Controller. Откройте его двойным кликом только на основном Controller.');
+    setMessage('Скачан переходный файл Controller. Откройте его один раз — последующие релизы Controller будут ставиться автоматически.');
   }
 
   function downloadManagerUpdate() {
@@ -2182,7 +2185,7 @@ function SettingsPage({ auth, selectedClubID, currentPath, onClubChange, onLogou
         processNames: ['ClubPay.Agent.Admin', 'ClubPay.Controller', 'postgres', 'pg_ctl'],
       }),
     );
-    setMessage('Скачан один файл обновления Manager. Откройте его двойным кликом только на ПК менеджера.');
+    setMessage('Скачан переходный файл Manager. Откройте его один раз — последующие релизы Manager будут ставиться автоматически.');
   }
 
   async function saveNetwork() {
@@ -2378,7 +2381,7 @@ function SettingsPage({ auth, selectedClubID, currentPath, onClubChange, onLogou
         processNames: ['ClubPay.Agent.Client'],
       }),
     );
-    setMessage('Скачан один файл обновления Agent. Откройте его двойным кликом на уже привязанном игровом ПК.');
+    setMessage('Скачан переходный файл Agent. Откройте его один раз на свободном ПК — последующие релизы придут автоматически.');
   }
 
   function saveAgentControllerURL() {
@@ -2557,8 +2560,8 @@ function SettingsPage({ auth, selectedClubID, currentPath, onClubChange, onLogou
                 <div className="button-row">
                   <Button variant="secondary" icon={<Monitor size={16} />} onClick={() => createControllerActivation('edge')}>Создать код для основного сервера / Raspberry Pi</Button>
                   <Button variant="ghost" icon={<Monitor size={16} />} onClick={() => createControllerActivation('manager')}>Код для резервного ПК менеджера</Button>
-                  <Button variant="ghost" icon={<Download size={16} />} onClick={downloadControllerUpdate}>Скачать обновление Controller</Button>
-                  <Button variant="ghost" icon={<Download size={16} />} onClick={downloadManagerUpdate}>Скачать обновление Manager</Button>
+                  <Button variant="ghost" icon={<Download size={16} />} onClick={downloadControllerUpdate}>Включить автообновления Controller</Button>
+                  <Button variant="ghost" icon={<Download size={16} />} onClick={downloadManagerUpdate}>Включить автообновления Manager</Button>
                 </div>
               ) : (
                 <div className="inline-editor">
@@ -2569,8 +2572,8 @@ function SettingsPage({ auth, selectedClubID, currentPath, onClubChange, onLogou
                   <div className="readonly-token">{controllerActivation.activation_code}</div>
                   <div className="button-row">
                     <Button size="sm" icon={<Download size={15} />} onClick={downloadControllerEnrollment}>Скачать установщик (1 файл)</Button>
-                    <Button size="sm" variant="ghost" icon={<Download size={15} />} onClick={downloadControllerUpdate}>Скачать обновление Controller</Button>
-                    <Button size="sm" variant="ghost" icon={<Download size={15} />} onClick={downloadManagerUpdate}>Скачать обновление Manager</Button>
+                    <Button size="sm" variant="ghost" icon={<Download size={15} />} onClick={downloadControllerUpdate}>Включить автообновления Controller</Button>
+                    <Button size="sm" variant="ghost" icon={<Download size={15} />} onClick={downloadManagerUpdate}>Включить автообновления Manager</Button>
                     <Button size="sm" variant="ghost" icon={<Copy size={15} />} onClick={copyControllerActivation}>Скопировать код вручную</Button>
                     <Button size="sm" variant="ghost" onClick={() => setControllerActivation(null)}>Скрыть</Button>
                   </div>
@@ -2742,7 +2745,7 @@ function SettingsPage({ auth, selectedClubID, currentPath, onClubChange, onLogou
                         <div className="row-actions">
                           <Button size="sm" variant="ghost" icon={<QrCode size={14} />} onClick={() => printPCQR(pc)}>Печать</Button>
                           <Button size="sm" variant="secondary" icon={<Download size={14} />} onClick={() => downloadAgentEnrollment(pc)}>Скачать Agent (1 файл)</Button>
-                          <Button size="sm" variant="ghost" icon={<Download size={14} />} onClick={downloadAgentUpdate}>Обновить Agent</Button>
+                          <Button size="sm" variant="ghost" icon={<Download size={14} />} onClick={downloadAgentUpdate}>Включить автообновления</Button>
                           <Button size="sm" variant="ghost" icon={<RefreshCw size={14} />} onClick={() => rotatePCQR(pc)}>Перевыпустить</Button>
                           <Button size="sm" variant="ghost" onClick={() => { setPCForm(pc); setShowPCForm(true); }}>Изменить</Button>
                         </div>
