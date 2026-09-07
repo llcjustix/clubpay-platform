@@ -87,7 +87,11 @@ func checkAutomaticUpdates(ctx context.Context, cfg config.Config, server *httpa
 		log.Printf("automatic %s update lookup: %v", mode, err)
 		return
 	}
-	if release.CompareVersions(artifact.Version, currentVersion) <= 0 {
+	installedVersion := currentVersion
+	if mode == "manager" {
+		installedVersion = managerInstalledVersion(currentVersion)
+	}
+	if release.CompareVersions(artifact.Version, installedVersion) <= 0 {
 		clearCompletedUpdateMarker()
 		return
 	}
@@ -96,6 +100,23 @@ func checkAutomaticUpdates(ctx context.Context, cfg config.Config, server *httpa
 		return
 	}
 	log.Printf("automatic %s update to %s was scheduled", mode, artifact.Version)
+}
+
+// A Manager contains a local read-only Controller. Its Controller build tag
+// is deliberately independent from the desktop Manager release tag, so use
+// the marker packaged with the desktop app when deciding whether it needs a
+// new Manager archive. Without it, a newer Controller tag could make the
+// Manager schedule the same desktop update forever.
+func managerInstalledVersion(fallback string) string {
+	controllerRoot := controllerInstallRoot()
+	if controllerRoot == "" {
+		return fallback
+	}
+	data, err := os.ReadFile(filepath.Join(filepath.Dir(controllerRoot), "clubpay-manager-version.txt"))
+	if err != nil || strings.TrimSpace(string(data)) == "" {
+		return fallback
+	}
+	return strings.TrimSpace(string(data))
 }
 
 func controllerInstallRoot() string {
