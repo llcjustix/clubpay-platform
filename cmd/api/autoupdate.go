@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -21,6 +22,8 @@ const (
 	platformReleasesAPI = "https://api.github.com/repos/llcjustix/clubpay-platform/releases?per_page=30"
 	agentReleasesAPI    = "https://api.github.com/repos/llcjustix/clubpay-core-agent/releases?per_page=30"
 )
+
+var releaseHTTPClient = &http.Client{Timeout: 20 * time.Second}
 
 // runAutomaticUpdateLoop is intentionally run only by an installed local
 // node. Cloud has no right to rewrite a club LAN process; every update is
@@ -55,7 +58,7 @@ func runAutomaticUpdateLoop(ctx context.Context, cfg config.Config, server *http
 func checkAutomaticUpdates(ctx context.Context, cfg config.Config, server *httpapi.Server, currentVersion string) {
 	mode := strings.ToLower(strings.TrimSpace(cfg.NodeMode))
 	if mode == "edge" {
-		agentArtifact, err := release.Latest(ctx, nil, agentReleasesAPI, "v", "ClubPay-Agent-win-x64.zip")
+		agentArtifact, err := release.Latest(ctx, releaseHTTPClient, agentReleasesAPI, "v", "ClubPay-Agent-win-x64.zip")
 		if err != nil {
 			log.Printf("automatic Agent update lookup: %v", err)
 		} else {
@@ -74,11 +77,11 @@ func checkAutomaticUpdates(ctx context.Context, cfg config.Config, server *httpa
 	if mode == "manager" {
 		archiveName = "ClubPay-Manager-Desktop-win-x64.zip"
 		updaterName = "update-manager.ps1"
-		artifact, err = release.Latest(ctx, nil, agentReleasesAPI, "v", archiveName)
+		artifact, err = release.Latest(ctx, releaseHTTPClient, agentReleasesAPI, "v", archiveName)
 	} else {
 		archiveName = "ClubPay-Controller-win-x64.zip"
 		updaterName = "update-windows.ps1"
-		artifact, err = release.Latest(ctx, nil, platformReleasesAPI, "controller-v", archiveName)
+		artifact, err = release.Latest(ctx, releaseHTTPClient, platformReleasesAPI, "controller-v", archiveName)
 	}
 	if err != nil {
 		log.Printf("automatic %s update lookup: %v", mode, err)
