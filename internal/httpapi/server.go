@@ -3388,7 +3388,10 @@ func (s *Server) startPendingEdgeGrants(ctx context.Context, clubID string) bool
 		  AND g.parent_grant_id IS NULL
 		  AND (
 		    g.status = 'pending'
-		    OR (g.status = 'start_failed' AND COALESCE(g.last_error, '') ILIKE '%agent offline%')
+		    OR (g.status = 'start_failed' AND (
+		      COALESCE(g.last_error, '') ILIKE '%agent offline%'
+		      OR COALESCE(g.last_error, '') ILIKE '%agent_offline%'
+		    ))
 		  )
 		  AND p.status_cache IN ('available', 'sleeping')
 		ORDER BY g.created_at
