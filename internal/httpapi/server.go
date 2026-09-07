@@ -266,11 +266,11 @@ func (s *Server) handleNodeStatus(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, s.nodeStatusPayload())
 }
 
-// handleNodeSync lets a freshly installed Agent request the initial cloud pull
-// before its bootstrap check. It is protected with the same Core credential as
-// bootstrap and is available only on a local Controller.
+// handleNodeSync lets a freshly installed Agent ask the primary Controller for
+// an immediate cloud reconciliation before its bootstrap check. A Manager has
+// a local cache too, but must never become an authority for PC presence.
 func (s *Server) handleNodeSync(w http.ResponseWriter, r *http.Request) {
-	if !s.localNodeMode() {
+	if !s.edgeNodeMode() {
 		writeError(w, http.StatusNotFound, "local synchronization is unavailable on this node")
 		return
 	}
@@ -2921,7 +2921,11 @@ func (s *Server) handleCoreWSEvent(ctx context.Context, event core.EventMessage)
 // "offline" state. Push presence-changing events as soon as they are accepted.
 // The mutex in syncEdgeOnce keeps this from racing the regular edge loop.
 func (s *Server) syncAfterCoreEvent(eventType string) {
-	if !s.localNodeMode() {
+	// The primary Controller is the only node that publishes a snapshot. The
+	// Manager intentionally consumes that snapshot read-only: otherwise its
+	// cached "offline" value can race a live Agent and overwrite the Cloud
+	// status back to offline.
+	if !s.edgeNodeMode() {
 		return
 	}
 	switch normalizeCoreEventType(eventType) {
@@ -3289,6 +3293,24 @@ func (s *Server) syncEdgeOnce(ctx context.Context) error {
 	var localClubExists bool
 	if err := s.db.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM clubs WHERE id = $1)`, clubID).Scan(&localClubExists); err != nil {
 		return err
+	}
+	// A Manager is a read-only local cache for the club configuration. It must
+	// pull from Cloud but never post its own full snapshot: PC presence belongs
+	// to the primary Controller, and a stale Manager snapshot must not win a
+	// last-write-wins race against a live Agent.
+	if s.managerNodeMode() {
+		pullID, _ := s.startEdgeSyncRun(ctx, nodeID, clubID, "pull")
+		var pulled map[string]any
+		if err := s.getCloudJSON(ctx, "/api/edge/snapshot?club_id="+url.QueryEscape(clubID), &pulled); err != nil {
+			s.finishEdgeSyncRun(ctx, pullID, "failed", "", err)
+			return err
+		}
+		if err := s.applyEdgeSnapshotData(ctx, clubID, pulled); err != nil {
+			s.finishEdgeSyncRun(ctx, pullID, "failed", "", err)
+			return err
+		}
+		s.finishEdgeSyncRun(ctx, pullID, "success", "", nil)
+		return nil
 	}
 	if !localClubExists {
 		pullID, _ := s.startEdgeSyncRun(ctx, nodeID, clubID, "initial_pull")
