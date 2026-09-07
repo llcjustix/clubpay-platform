@@ -43,9 +43,9 @@ const TOKEN_KEY = 'clubpay_token';
 const CLUB_KEY = 'clubpay_club_id';
 const AGENT_CONTROLLER_URL_KEY = 'clubpay_agent_controller_url';
 const NAVIGATION_EVENT = 'clubpay:navigate';
-const CONTROLLER_RELEASE_URL = 'https://github.com/llcjustix/clubpay-platform/releases/download/controller-v0.2.24/ClubPay-Controller-win-x64.zip';
-const MANAGER_RELEASE_URL = 'https://github.com/llcjustix/clubpay-core-agent/releases/download/v0.4.23/ClubPay-Manager-Desktop-win-x64.zip';
-const AGENT_RELEASE_URL = 'https://github.com/llcjustix/clubpay-core-agent/releases/download/v0.4.22/ClubPay-Agent-win-x64.zip';
+const CONTROLLER_RELEASE_URL = 'https://github.com/llcjustix/clubpay-platform/releases/download/controller-v0.2.25/ClubPay-Controller-win-x64.zip';
+const MANAGER_RELEASE_URL = 'https://github.com/llcjustix/clubpay-core-agent/releases/download/v0.4.24/ClubPay-Manager-Desktop-win-x64.zip';
+const AGENT_RELEASE_URL = 'https://github.com/llcjustix/clubpay-core-agent/releases/download/v0.4.24/ClubPay-Agent-win-x64.zip';
 
 type Tariff = {
   id: string;
@@ -459,6 +459,7 @@ type WindowsInstallerBootstrap = {
   installerName: string;
   updaterName?: string;
   updateOnly?: boolean;
+  installedMarker?: string;
   installDirectory: string;
   enrollmentFilename: string;
   enrollment: unknown;
@@ -508,7 +509,7 @@ foreach ($path in @(${removePaths})) {
   }
 }`;
   const hasExistingInstall = spec.updaterName
-    ? `(Test-Path -LiteralPath '${spec.installDirectory}\\controller.env')`
+    ? `(Test-Path -LiteralPath '${spec.installedMarker || `${spec.installDirectory}\\controller.env`}')`
     : '$false';
   const updateBranch = spec.updaterName
     ? `if ($hasExistingInstall) {
@@ -2165,6 +2166,25 @@ function SettingsPage({ auth, selectedClubID, currentPath, onClubChange, onLogou
     setMessage('Скачан один файл обновления Controller. Откройте его двойным кликом только на основном Controller.');
   }
 
+  function downloadManagerUpdate() {
+    downloadTextFile(
+      'ClubPay-Manager-update.cmd',
+      windowsInstallerBootstrap({
+        title: 'Manager',
+        releaseURL: MANAGER_RELEASE_URL,
+        installerName: 'install-manager.cmd',
+        updaterName: 'update-manager.cmd',
+        updateOnly: true,
+        installDirectory: 'C:\\ClubPay\\Manager',
+        installedMarker: 'C:\\ClubPay\\Manager\\Controller\\controller.env',
+        enrollmentFilename: 'controller-enrollment.json',
+        enrollment: {},
+        processNames: ['ClubPay.Agent.Admin', 'ClubPay.Controller', 'postgres', 'pg_ctl'],
+      }),
+    );
+    setMessage('Скачан один файл обновления Manager. Откройте его двойным кликом только на ПК менеджера.');
+  }
+
   async function saveNetwork() {
     if (!networkForm.name.trim()) {
       setError('Укажите название сети');
@@ -2340,6 +2360,25 @@ function SettingsPage({ auth, selectedClubID, currentPath, onClubChange, onLogou
     } catch (err) {
       setError(String((err as Error).message || err));
     }
+  }
+
+  function downloadAgentUpdate() {
+    downloadTextFile(
+      'ClubPay-Agent-update.cmd',
+      windowsInstallerBootstrap({
+        title: 'Agent',
+        releaseURL: AGENT_RELEASE_URL,
+        installerName: 'install-agent.cmd',
+        updaterName: 'update-agent.cmd',
+        updateOnly: true,
+        installDirectory: 'C:\\ClubPay\\Agent',
+        installedMarker: 'C:\\ClubPay\\Agent\\appsettings.Local.json',
+        enrollmentFilename: 'clubpay-agent-enrollment.json',
+        enrollment: {},
+        processNames: ['ClubPay.Agent.Client'],
+      }),
+    );
+    setMessage('Скачан один файл обновления Agent. Откройте его двойным кликом на уже привязанном игровом ПК.');
   }
 
   function saveAgentControllerURL() {
@@ -2519,6 +2558,7 @@ function SettingsPage({ auth, selectedClubID, currentPath, onClubChange, onLogou
                   <Button variant="secondary" icon={<Monitor size={16} />} onClick={() => createControllerActivation('edge')}>Создать код для основного сервера / Raspberry Pi</Button>
                   <Button variant="ghost" icon={<Monitor size={16} />} onClick={() => createControllerActivation('manager')}>Код для резервного ПК менеджера</Button>
                   <Button variant="ghost" icon={<Download size={16} />} onClick={downloadControllerUpdate}>Скачать обновление Controller</Button>
+                  <Button variant="ghost" icon={<Download size={16} />} onClick={downloadManagerUpdate}>Скачать обновление Manager</Button>
                 </div>
               ) : (
                 <div className="inline-editor">
@@ -2530,6 +2570,7 @@ function SettingsPage({ auth, selectedClubID, currentPath, onClubChange, onLogou
                   <div className="button-row">
                     <Button size="sm" icon={<Download size={15} />} onClick={downloadControllerEnrollment}>Скачать установщик (1 файл)</Button>
                     <Button size="sm" variant="ghost" icon={<Download size={15} />} onClick={downloadControllerUpdate}>Скачать обновление Controller</Button>
+                    <Button size="sm" variant="ghost" icon={<Download size={15} />} onClick={downloadManagerUpdate}>Скачать обновление Manager</Button>
                     <Button size="sm" variant="ghost" icon={<Copy size={15} />} onClick={copyControllerActivation}>Скопировать код вручную</Button>
                     <Button size="sm" variant="ghost" onClick={() => setControllerActivation(null)}>Скрыть</Button>
                   </div>
@@ -2701,6 +2742,7 @@ function SettingsPage({ auth, selectedClubID, currentPath, onClubChange, onLogou
                         <div className="row-actions">
                           <Button size="sm" variant="ghost" icon={<QrCode size={14} />} onClick={() => printPCQR(pc)}>Печать</Button>
                           <Button size="sm" variant="secondary" icon={<Download size={14} />} onClick={() => downloadAgentEnrollment(pc)}>Скачать Agent (1 файл)</Button>
+                          <Button size="sm" variant="ghost" icon={<Download size={14} />} onClick={downloadAgentUpdate}>Обновить Agent</Button>
                           <Button size="sm" variant="ghost" icon={<RefreshCw size={14} />} onClick={() => rotatePCQR(pc)}>Перевыпустить</Button>
                           <Button size="sm" variant="ghost" onClick={() => { setPCForm(pc); setShowPCForm(true); }}>Изменить</Button>
                         </div>
