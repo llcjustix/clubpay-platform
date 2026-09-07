@@ -3358,7 +3358,115 @@ func (s *Server) syncEdgeOnce(ctx context.Context) error {
 		return err
 	}
 	s.finishEdgeSyncRun(ctx, pullID, "success", "", nil)
+	// Cloud owns payment acceptance, while Agents are reachable only through
+	// this primary LAN Controller. Start newly pulled paid grants here rather
+	// than making Cloud address an Agent WebSocket it cannot see.
+	if s.startPendingEdgeGrants(ctx, clubID) {
+		go func() {
+			syncCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			defer cancel()
+			_ = s.syncEdgeOnce(syncCtx)
+		}()
+	}
 	return nil
+}
+
+// startPendingEdgeGrants executes Cloud-approved access grants on the one node
+// that can actually reach an Agent: the primary Controller in the club LAN.
+// Cloud intentionally leaves these grants pending, then the normal pull/push
+// reconciliation makes command delivery durable across temporary outages.
+func (s *Server) startPendingEdgeGrants(ctx context.Context, clubID string) bool {
+	if !s.edgeNodeMode() || strings.TrimSpace(clubID) == "" {
+		return false
+	}
+	rows, err := s.db.Query(ctx, `
+		SELECT g.id, g.pc_ref_id, p.external_pc_id, g.duration_minutes, g.duration_seconds,
+		       COALESCE(g.payment_order_id::text, '')
+		FROM game_access_grants g
+		JOIN pc_refs p ON p.id = g.pc_ref_id
+		WHERE g.club_id = $1
+		  AND g.parent_grant_id IS NULL
+		  AND (
+		    g.status = 'pending'
+		    OR (g.status = 'start_failed' AND COALESCE(g.last_error, '') ILIKE '%agent offline%')
+		  )
+		  AND p.status_cache IN ('available', 'sleeping')
+		ORDER BY g.created_at
+		LIMIT 20
+	`, clubID)
+	if err != nil {
+		return false
+	}
+	defer rows.Close()
+
+	started := false
+	for rows.Next() {
+		var grantID, pcID, externalPCID, paymentOrderID string
+		var durationMinutes, durationSeconds int
+		if err := rows.Scan(&grantID, &pcID, &externalPCID, &durationMinutes, &durationSeconds, &paymentOrderID); err != nil {
+			continue
+		}
+		if durationSeconds <= 0 {
+			durationSeconds = durationMinutes * 60
+		}
+		if durationSeconds <= 0 {
+			_, _ = s.db.Exec(ctx, `UPDATE game_access_grants SET status = 'start_failed', last_error = 'invalid access duration' WHERE id = $1`, grantID)
+			continue
+		}
+
+		var extendToken string
+		_ = s.db.QueryRow(ctx, `
+			SELECT public_token
+			FROM qr_codes
+			WHERE session_grant_id = $1 AND type = 'session_extend' AND status = 'active'
+			ORDER BY created_at DESC
+			LIMIT 1
+		`, grantID).Scan(&extendToken)
+		extendURL := ""
+		if extendToken != "" {
+			extendURL = strings.TrimRight(s.cfg.FrontendBaseURL, "/") + "/qr/" + extendToken
+		}
+
+		result, err := s.core.StartSession(ctx, core.StartSessionCommand{
+			RequestID:       "start_" + grantID,
+			GrantID:         grantID,
+			ClubID:          clubID,
+			PCID:            pcID,
+			PCExternalID:    externalPCID,
+			DurationSeconds: durationSeconds,
+			DurationMinutes: secondsToMinutesCeil(durationSeconds),
+			GraceSeconds:    s.cfg.SessionGraceSeconds,
+			Source:          "online_payment",
+			PaymentOrderID:  paymentOrderID,
+			ExtendURL:       extendURL,
+			CreatedAt:       time.Now().UTC().Format(time.RFC3339),
+		})
+		if err != nil {
+			_, _ = s.db.Exec(ctx, `UPDATE game_access_grants SET status = 'start_failed', last_error = $1 WHERE id = $2`, err.Error(), grantID)
+			continue
+		}
+		coreSessionID := result.CoreSessionID
+		if coreSessionID == "" {
+			coreSessionID = "core-session-" + grantID
+		}
+		plannedEndsAt := result.EndsAt
+		if plannedEndsAt == nil {
+			endsAt := time.Now().UTC().Add(time.Duration(durationSeconds) * time.Second)
+			plannedEndsAt = &endsAt
+		}
+		graceEndsAt := plannedEndsAt.Add(s.sessionGraceDuration())
+		if _, err := s.db.Exec(ctx, `
+			UPDATE game_access_grants
+			SET status = 'accepted', core_session_id = $1, accepted_at = now(), planned_ends_at = $2, grace_ends_at = $3, last_error = NULL
+			WHERE id = $4
+		`, coreSessionID, plannedEndsAt, graceEndsAt, grantID); err != nil {
+			continue
+		}
+		s.updateSessionExtendQRExpiry(ctx, grantID, graceEndsAt)
+		_, _ = s.db.Exec(ctx, `UPDATE pc_refs SET status_cache = 'occupied' WHERE id = $1`, pcID)
+		started = true
+	}
+	return started
 }
 
 func (s *Server) postCloudJSON(ctx context.Context, path string, body any, result any) error {
@@ -4258,6 +4366,12 @@ func (s *Server) applyPaymentSuccess(ctx context.Context, success paymentSuccess
 			s.refundPlayerBalance(ctx, profilePlayerID, order.ClubID, profileBalanceSeconds, grantID, err.Error())
 		}
 		return "", err
+	}
+	// The public Cloud receives the payment but cannot see the club-LAN Agent
+	// socket. Leave the durable grant pending; the primary Controller pulls it
+	// and starts the session through its own connected Agent.
+	if !s.edgeNodeMode() {
+		return grantID, nil
 	}
 
 	startResult, err := s.core.StartSession(ctx, core.StartSessionCommand{
