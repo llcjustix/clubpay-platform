@@ -8318,7 +8318,13 @@ func (s *Server) expireElapsedGrants(ctx context.Context) error {
 }
 
 func (s *Server) syncCorePCStatus(ctx context.Context, pcID, externalPCID, fallback string) string {
-	if strings.EqualFold(s.cfg.CoreMode, "mock") || externalPCID == "" {
+	// Agents connect to the primary edge Controller inside the club LAN. Cloud
+	// has its own WS controller only for command routing and therefore has no
+	// Agent client to ask for a live status. Asking it here reports every PC as
+	// offline and overwrites the status that the edge snapshot just published.
+	// Only the primary edge Controller may query Core directly; Cloud and the
+	// Manager must use the synchronized cache.
+	if !s.edgeNodeMode() || strings.EqualFold(s.cfg.CoreMode, "mock") || externalPCID == "" {
 		return fallback
 	}
 	status, err := s.core.GetPCStatus(ctx, externalPCID)
