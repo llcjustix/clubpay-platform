@@ -28,6 +28,16 @@ jobs:
             -u "${{ secrets.DOCKER_USERNAME }}" \
             --password-stdin
 
+      # The self-hosted runner builds both large Windows-supporting API images
+      # and the PWA. Reclaim stale layers before (not after) the build so an
+      # otherwise healthy release cannot fail merely because a previous image
+      # exhausted its Docker disk.
+      - name: Reclaim Docker disk before build
+        run: |
+          docker builder prune --all --force
+          docker image prune --all --force
+          docker container prune --force
+
       - name: Build API
         run: |
           docker build \
