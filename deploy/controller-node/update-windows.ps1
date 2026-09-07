@@ -1,3 +1,7 @@
+param(
+    [switch]$NoPrompt
+)
+
 $ErrorActionPreference = 'Stop'
 
 $bundle = Split-Path -Parent $MyInvocation.MyCommand.Path
@@ -25,50 +29,85 @@ if ($null -eq $candidate) {
 $target = $candidate.Root
 Write-Host "Updating active Controller: $target" -ForegroundColor Cyan
 
+# Keep the currently working program files until the replacement has passed
+# its local health check. Config, PostgreSQL data and runtime stay in place and
+# are never part of either the update or this rollback copy.
+$backupRoot = Join-Path $env:TEMP ('clubpay-controller-backup-' + [guid]::NewGuid().ToString())
+New-Item -ItemType Directory -Path $backupRoot -Force | Out-Null
+Copy-Item -Path (Join-Path $target 'ClubPay.Controller.exe') -Destination $backupRoot -Force
+foreach ($directory in @('web', 'migrations')) {
+    $source = Join-Path $target $directory
+    if (Test-Path $source) {
+        Copy-Item -Path $source -Destination $backupRoot -Recurse -Force
+    }
+}
+
 # Stop the scheduled app before replacing its executable. The task remains
 # registered and continues to point to this same stable folder after update.
 schtasks.exe /End /TN 'ClubPay Controller Node' 2>$null | Out-Null
 Get-Process -Name 'ClubPay.Controller' -ErrorAction SilentlyContinue | Stop-Process -Force
 Start-Sleep -Seconds 1
 
-Copy-Item -Path $newExecutable -Destination (Join-Path $target 'ClubPay.Controller.exe') -Force
-foreach ($directory in @('web', 'migrations')) {
-    $source = Join-Path $bundle $directory
-    if (-not (Test-Path $source)) {
-        throw "Update package is incomplete: $source"
+try {
+    Copy-Item -Path $newExecutable -Destination (Join-Path $target 'ClubPay.Controller.exe') -Force
+    foreach ($directory in @('web', 'migrations')) {
+        $source = Join-Path $bundle $directory
+        if (-not (Test-Path $source)) {
+            throw "Update package is incomplete: $source"
+        }
+        $destination = Join-Path $target $directory
+        New-Item -ItemType Directory -Path $destination -Force | Out-Null
+        Copy-Item -Path (Join-Path $source '*') -Destination $destination -Recurse -Force
     }
-    $destination = Join-Path $target $directory
-    New-Item -ItemType Directory -Path $destination -Force | Out-Null
-    Copy-Item -Path (Join-Path $source '*') -Destination $destination -Recurse -Force
-}
 
-# controller.env, data and runtime are deliberately never copied or deleted.
-schtasks.exe /Run /TN 'ClubPay Controller Node' | Out-Null
+    # controller.env, data and runtime are deliberately never copied or deleted.
+    schtasks.exe /Run /TN 'ClubPay Controller Node' | Out-Null
 
 # The embedded PostgreSQL instance can take longer than a few seconds to open
 # its existing data directory after a Windows reboot or an upgrade. Poll the
 # local endpoint rather than treating a normal cold start as a failed update.
-$lastError = ''
-$healthy = $false
-for ($attempt = 1; $attempt -le 18; $attempt++) {
-    try {
-        $status = Invoke-RestMethod -Uri 'http://127.0.0.1:8080/api/node/status' -TimeoutSec 5
-        if ($status.ok) {
-            $healthy = $true
-            break
+    $lastError = ''
+    $healthy = $false
+    for ($attempt = 1; $attempt -le 18; $attempt++) {
+        try {
+            $status = Invoke-RestMethod -Uri 'http://127.0.0.1:8080/api/node/status' -TimeoutSec 5
+            if ($status.ok) {
+                $healthy = $true
+                break
+            }
+            $lastError = 'Controller status is not ok'
         }
-        $lastError = 'Controller status is not ok'
+        catch {
+            $lastError = $_.Exception.Message
+        }
+        Start-Sleep -Seconds 3
     }
-    catch {
-        $lastError = $_.Exception.Message
+    if (-not $healthy) {
+        throw "Controller did not become healthy after 54 seconds. $lastError"
     }
-    Start-Sleep -Seconds 3
 }
-if (-not $healthy) {
-    throw "Files were updated, but Controller did not become healthy after 54 seconds. $lastError"
+catch {
+    $updateError = $_
+    Write-Host 'Controller update failed; restoring the previous working build…' -ForegroundColor Yellow
+    schtasks.exe /End /TN 'ClubPay Controller Node' 2>$null | Out-Null
+    Get-Process -Name 'ClubPay.Controller' -ErrorAction SilentlyContinue | Stop-Process -Force
+    Copy-Item -Path (Join-Path $backupRoot 'ClubPay.Controller.exe') -Destination (Join-Path $target 'ClubPay.Controller.exe') -Force
+    foreach ($directory in @('web', 'migrations')) {
+        $source = Join-Path $backupRoot $directory
+        if (Test-Path $source) {
+            Copy-Item -Path $source -Destination $target -Recurse -Force
+        }
+    }
+    schtasks.exe /Run /TN 'ClubPay Controller Node' | Out-Null
+    throw $updateError
+}
+finally {
+    Remove-Item -Path $backupRoot -Recurse -Force -ErrorAction SilentlyContinue
 }
 
 Write-Host ''
 Write-Host 'Controller updated successfully.' -ForegroundColor Green
 Write-Host 'Open http://localhost:8080/admin to prepare Agent packages.' -ForegroundColor Green
-Read-Host 'Press Enter to close'
+if (-not $NoPrompt) {
+    Read-Host 'Press Enter to close'
+}

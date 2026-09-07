@@ -34,12 +34,15 @@ import (
 )
 
 type Server struct {
-	cfg          config.Config
-	db           *pgxpool.Pool
-	core         core.Adapter
-	edgeWOLRelay http.Handler
-	wakePC       core.WakeHandler
-	edgeSyncMu    sync.Mutex
+	cfg                 config.Config
+	db                  *pgxpool.Pool
+	core                core.Adapter
+	edgeWOLRelay        http.Handler
+	wakePC              core.WakeHandler
+	edgeSyncMu          sync.Mutex
+	agentUpdateMu       sync.Mutex
+	agentUpdate         core.AgentUpdateCommand
+	agentUpdateScheduled map[string]string
 }
 
 type coreEventSubscriber interface {
@@ -131,11 +134,26 @@ var paymeCheckoutPageTemplate = template.Must(template.New("payme-checkout").Par
 </html>`))
 
 func NewServer(cfg config.Config, db *pgxpool.Pool, coreAdapter core.Adapter) *Server {
-	server := &Server{cfg: cfg, db: db, core: coreAdapter}
+	server := &Server{cfg: cfg, db: db, core: coreAdapter, agentUpdateScheduled: make(map[string]string)}
 	if subscriber, ok := coreAdapter.(coreEventSubscriber); ok {
 		subscriber.SetEventHandler(server.handleCoreWSEvent)
 	}
 	return server
+}
+
+// SetAgentUpdateRelease is called by the primary Controller's release watcher.
+// A new version clears only the in-memory dispatch markers; Agents still make
+// the final free/busy decision themselves before their process is restarted.
+func (s *Server) SetAgentUpdateRelease(update core.AgentUpdateCommand) {
+	if strings.TrimSpace(update.Version) == "" || strings.TrimSpace(update.DownloadURL) == "" || strings.TrimSpace(update.ChecksumURL) == "" {
+		return
+	}
+	s.agentUpdateMu.Lock()
+	defer s.agentUpdateMu.Unlock()
+	if s.agentUpdate.Version != update.Version {
+		s.agentUpdateScheduled = make(map[string]string)
+	}
+	s.agentUpdate = update
 }
 
 // SetEdgeWOLRelay exposes a narrowly scoped, outbound-connected LAN relay.
@@ -3379,7 +3397,69 @@ func (s *Server) syncEdgeOnce(ctx context.Context) error {
 			_ = s.syncEdgeOnce(syncCtx)
 		}()
 	}
+	s.scheduleOneAvailableAgentUpdate(ctx, clubID)
 	return nil
+}
+
+// scheduleOneAvailableAgentUpdate rolls a club forward gently: one free,
+// connected Agent per edge synchronization. Busy, frozen and sleeping PCs are
+// never asked to update; an idle Agent schedules its own restart after ACKing
+// this command, so there is no chance of dropping an active player session.
+func (s *Server) scheduleOneAvailableAgentUpdate(ctx context.Context, clubID string) {
+	if !s.edgeNodeMode() || strings.TrimSpace(clubID) == "" {
+		return
+	}
+	dispatcher, ok := s.core.(core.AgentUpdateDispatcher)
+	if !ok {
+		return
+	}
+	s.agentUpdateMu.Lock()
+	update := s.agentUpdate
+	s.agentUpdateMu.Unlock()
+	if strings.TrimSpace(update.Version) == "" {
+		return
+	}
+	rows, err := s.db.Query(ctx, `
+		SELECT external_pc_id
+		FROM pc_refs
+		WHERE club_id = $1 AND status_cache = 'available'
+		ORDER BY created_at
+	`, clubID)
+	if err != nil {
+		return
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var externalPCID string
+		if rows.Scan(&externalPCID) != nil || strings.TrimSpace(externalPCID) == "" {
+			continue
+		}
+		s.agentUpdateMu.Lock()
+		alreadyScheduled := s.agentUpdateScheduled[externalPCID] == update.Version
+		s.agentUpdateMu.Unlock()
+		if alreadyScheduled {
+			continue
+		}
+		updateCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
+		err = dispatcher.UpdateAgent(updateCtx, externalPCID, update)
+		cancel()
+		if err != nil {
+			// Pre-auto-update Agents report an unknown command as invalid_state.
+			// Remember that one bootstrap exception instead of sending it the same
+			// unsupported command on every two-second edge sync. A manual
+			// transition install is required only for that legacy build.
+			if strings.HasPrefix(err.Error(), "invalid_state:") {
+				s.agentUpdateMu.Lock()
+				s.agentUpdateScheduled[externalPCID] = update.Version
+				s.agentUpdateMu.Unlock()
+			}
+			continue
+		}
+		s.agentUpdateMu.Lock()
+		s.agentUpdateScheduled[externalPCID] = update.Version
+		s.agentUpdateMu.Unlock()
+		return
+	}
 }
 
 // startPendingEdgeGrants executes Cloud-approved access grants on the one node

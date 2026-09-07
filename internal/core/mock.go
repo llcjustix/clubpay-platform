@@ -94,6 +94,21 @@ type EndSessionResult struct {
 	Message          string     `json:"message,omitempty"`
 }
 
+// AgentUpdateCommand is intentionally tiny: the primary Controller supplies
+// an immutable release archive and its checksum to an already authenticated
+// LAN Agent. The Agent schedules its own replacement only while free.
+type AgentUpdateCommand struct {
+	Version     string `json:"version"`
+	DownloadURL string `json:"download_url"`
+	ChecksumURL string `json:"checksum_url"`
+}
+
+// AgentUpdateDispatcher is optional because HTTP/mock cores do not own LAN
+// Agent sockets. A WebSocket Controller implements it.
+type AgentUpdateDispatcher interface {
+	UpdateAgent(ctx context.Context, externalPCID string, cmd AgentUpdateCommand) error
+}
+
 type Adapter interface {
 	GetPCStatus(ctx context.Context, externalPCID string) (PCStatus, error)
 	StartSession(ctx context.Context, cmd StartSessionCommand) (StartSessionResult, error)

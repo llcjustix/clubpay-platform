@@ -311,6 +311,21 @@ func (c *WSController) SetRepair(ctx context.Context, externalPCID string, on bo
 	return err
 }
 
+// UpdateAgent schedules an Agent-side update. The Agent immediately ACKs the
+// scheduling decision and performs replacement in a detached helper so the
+// WebSocket reply is not interrupted by its own process restart.
+func (c *WSController) UpdateAgent(ctx context.Context, externalPCID string, cmd AgentUpdateCommand) error {
+	if strings.TrimSpace(cmd.Version) == "" || strings.TrimSpace(cmd.DownloadURL) == "" || strings.TrimSpace(cmd.ChecksumURL) == "" {
+		return fmt.Errorf("agent update artifact is incomplete")
+	}
+	_, err := c.sendCommand(ctx, externalPCID, "update_agent", "update_"+safeCommandID(externalPCID)+"_"+unixMillis(), map[string]any{
+		"version":      cmd.Version,
+		"download_url": cmd.DownloadURL,
+		"checksum_url": cmd.ChecksumURL,
+	})
+	return err
+}
+
 var ErrAgentOffline = errors.New("agent_offline")
 
 func (c *WSController) clientForStart(ctx context.Context, externalPCID string) (*wsClient, error) {

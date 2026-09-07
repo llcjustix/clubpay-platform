@@ -33,6 +33,8 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
+var buildVersion = "dev"
+
 func main() {
 	configPath := flag.String("config", defaultControllerConfigPath(), "path to controller.env")
 	install := flag.Bool("install", false, "install Controller Node as a Windows startup task")
@@ -176,6 +178,7 @@ func main() {
 	syncCtx, syncCancel := context.WithCancel(context.Background())
 	defer syncCancel()
 	go server.RunEdgeSync(syncCtx)
+	go runAutomaticUpdateLoop(syncCtx, cfg, server, buildVersion)
 	go server.RunTelegramPolling(syncCtx)
 
 	httpServer := &http.Server{
@@ -323,6 +326,8 @@ func setupControllerNode(configPath, activationCode, activationURL, nodeName str
 		"TELEGRAM_MINI_APP_ENABLED=false",
 		"TELEGRAM_POLLING_ENABLED=false",
 		"MANAGER_ONLINE_PAYMENTS_ENABLED=false",
+		"AUTO_UPDATE_ENABLED=true",
+		"AUTO_UPDATE_CHECK_SECONDS=3600",
 		"EDGE_SYNC_INTERVAL_SECONDS=2",
 		"VOUCHER_MIN_MINUTES=5",
 		"VOUCHER_TTL_DAYS=30",

@@ -50,6 +50,8 @@ type Config struct {
 	ManagerNodeID           string
 	ManagerClubID           string
 	ManagerOnlinePayments   bool
+	AutoUpdateEnabled       bool
+	AutoUpdateCheckSeconds  int
 	TelegramBotToken        string
 	TelegramBotUsername     string
 	TelegramMiniAppEnabled   bool
@@ -107,6 +109,8 @@ func Load() (Config, error) {
 		ManagerNodeID:           env("MANAGER_NODE_ID", ""),
 		ManagerClubID:           env("MANAGER_CLUB_ID", ""),
 		ManagerOnlinePayments:   envBool("MANAGER_ONLINE_PAYMENTS_ENABLED", false),
+		AutoUpdateEnabled:       envBool("AUTO_UPDATE_ENABLED", true),
+		AutoUpdateCheckSeconds:  envInt("AUTO_UPDATE_CHECK_SECONDS", 3600),
 		TelegramBotToken:        env("TELEGRAM_BOT_TOKEN", ""),
 		TelegramBotUsername:     strings.TrimPrefix(strings.TrimSpace(env("TELEGRAM_BOT_USERNAME", "")), "@"),
 		TelegramMiniAppEnabled:   envBool("TELEGRAM_MINI_APP_ENABLED", false),
