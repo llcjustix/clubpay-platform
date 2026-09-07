@@ -3264,8 +3264,12 @@ func (s *Server) RunEdgeSync(ctx context.Context) {
 		return
 	}
 	interval := time.Duration(s.cfg.EdgeSyncIntervalSeconds) * time.Second
-	if interval < 5*time.Second {
-		interval = 15 * time.Second
+	// The Controller is the only node that can address LAN Agents. Keep its
+	// outbound Cloud pull short enough for a paid QR session to feel immediate.
+	// Older Controller env files contain 15 seconds, so cap them during the
+	// migration rather than requiring each club to edit its configuration.
+	if interval < time.Second || interval > 2*time.Second {
+		interval = 2 * time.Second
 	}
 	timer := time.NewTimer(2 * time.Second)
 	defer timer.Stop()
@@ -3361,7 +3365,14 @@ func (s *Server) syncEdgeOnce(ctx context.Context) error {
 	// Cloud owns payment acceptance, while Agents are reachable only through
 	// this primary LAN Controller. Start newly pulled paid grants here rather
 	// than making Cloud address an Agent WebSocket it cannot see.
+	// A previous Controller build could start two paid grants for one PC while
+	// recovering a payment. Reconcile that historical state before processing
+	// new grants, preserving both purchases as time on the one real session.
+	changed := s.reconcileDuplicateActiveEdgeGrants(ctx, clubID)
 	if s.startPendingEdgeGrants(ctx, clubID) {
+		changed = true
+	}
+	if changed {
 		go func() {
 			syncCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 			defer cancel()
@@ -3403,6 +3414,7 @@ func (s *Server) startPendingEdgeGrants(ctx context.Context, clubID string) bool
 	defer rows.Close()
 
 	started := false
+	activeByPC := make(map[string]activeGrantRow)
 	for rows.Next() {
 		var grantID, pcID, externalPCID, paymentOrderID string
 		var durationMinutes, durationSeconds int
@@ -3414,6 +3426,24 @@ func (s *Server) startPendingEdgeGrants(ctx context.Context, clubID string) bool
 		}
 		if durationSeconds <= 0 {
 			_, _ = s.db.Exec(ctx, `UPDATE game_access_grants SET status = 'start_failed', last_error = 'invalid access duration' WHERE id = $1`, grantID)
+			continue
+		}
+
+		// A Cloud payment can arrive while an older offline payment is being
+		// recovered. Never send two start_session commands to the same Agent:
+		// the later paid grant becomes an extension of the first session.
+		active, found := activeByPC[pcID]
+		if !found {
+			var lookupErr error
+			active, found, lookupErr = activeGrantForPC(ctx, s.db, pcID)
+			if lookupErr != nil {
+				continue
+			}
+		}
+		if found {
+			if err := s.mergeGrantIntoActiveSession(ctx, grantID, active, clubID, pcID, externalPCID, durationSeconds, paymentOrderID); err == nil {
+				started = true
+			}
 			continue
 		}
 
@@ -3467,9 +3497,132 @@ func (s *Server) startPendingEdgeGrants(ctx context.Context, clubID string) bool
 		}
 		s.updateSessionExtendQRExpiry(ctx, grantID, graceEndsAt)
 		_, _ = s.db.Exec(ctx, `UPDATE pc_refs SET status_cache = 'occupied' WHERE id = $1`, pcID)
+		activeByPC[pcID] = activeGrantRow{ID: grantID, CoreSessionID: coreSessionID, PlannedEndsAt: plannedEndsAt, DurationMinutes: secondsToMinutesCeil(durationSeconds), DurationSeconds: durationSeconds}
 		started = true
 	}
 	return started
+}
+
+// mergeGrantIntoActiveSession converts another paid root grant into an
+// extension. It is used only on the primary Controller, which owns the live
+// Agent connection and therefore serializes commands through edgeSyncMu.
+func (s *Server) mergeGrantIntoActiveSession(ctx context.Context, grantID string, active activeGrantRow, clubID, pcID, externalPCID string, durationSeconds int, paymentOrderID string) error {
+	if active.ID == "" || active.CoreSessionID == "" {
+		return fmt.Errorf("active session is missing core_session_id")
+	}
+	commandTag, err := s.db.Exec(ctx, `
+		UPDATE game_access_grants
+		SET status = 'pending', parent_grant_id = $2, core_session_id = $3, last_error = NULL
+		WHERE id = $1 AND parent_grant_id IS NULL
+	`, grantID, active.ID, active.CoreSessionID)
+	if err != nil {
+		return err
+	}
+	if commandTag.RowsAffected() == 0 {
+		return nil
+	}
+	if err := s.extendGrantSession(ctx, grantID, active.ID, active.CoreSessionID, clubID, pcID, externalPCID, durationSeconds, "online_payment", paymentOrderID, ""); err != nil {
+		// The command did not reach the Agent. Put the grant back into the
+		// root pending queue so the next edge pull can retry it instead of
+		// stranding a paid purchase as an unstartable child grant.
+		_, _ = s.db.Exec(ctx, `
+			UPDATE game_access_grants
+			SET status = 'pending', parent_grant_id = NULL, core_session_id = NULL
+			WHERE id = $1 AND status = 'pending'
+		`, grantID)
+		return err
+	}
+	return nil
+}
+
+// reconcileDuplicateActiveEdgeGrants repairs grants produced by older
+// Controllers. The Agent's latest session_started event identifies the session
+// that is actually running; every other paid root grant is merged into it.
+func (s *Server) reconcileDuplicateActiveEdgeGrants(ctx context.Context, clubID string) bool {
+	if !s.edgeNodeMode() || strings.TrimSpace(clubID) == "" {
+		return false
+	}
+	pcs, err := s.db.Query(ctx, `
+		SELECT p.id, p.external_pc_id
+		FROM pc_refs p
+		JOIN game_access_grants g ON g.pc_ref_id = p.id
+		WHERE p.club_id = $1
+		  AND g.parent_grant_id IS NULL
+		  AND g.status = 'accepted'
+		  AND COALESCE(g.grace_ends_at, g.planned_ends_at, g.accepted_at + make_interval(secs => g.duration_seconds), now()) > now()
+		GROUP BY p.id, p.external_pc_id
+		HAVING COUNT(*) > 1
+	`, clubID)
+	if err != nil {
+		return false
+	}
+	type duplicatePC struct {
+		id         string
+		externalID string
+	}
+	var duplicatePCs []duplicatePC
+	for pcs.Next() {
+		var pc duplicatePC
+		if err := pcs.Scan(&pc.id, &pc.externalID); err == nil {
+			duplicatePCs = append(duplicatePCs, pc)
+		}
+	}
+	pcs.Close()
+
+	changed := false
+	for _, pc := range duplicatePCs {
+		pcID, externalPCID := pc.id, pc.externalID
+		var liveCoreSessionID string
+		_ = s.db.QueryRow(ctx, `
+			SELECT COALESCE(core_session_id, '')
+			FROM core_events
+			WHERE external_pc_id = $1
+			  AND event_type = 'session_started'
+			  AND COALESCE(core_session_id, '') <> ''
+			ORDER BY occurred_at DESC, created_at DESC
+			LIMIT 1
+		`, externalPCID).Scan(&liveCoreSessionID)
+
+		grants, err := s.db.Query(ctx, `
+			SELECT id, COALESCE(core_session_id, ''), duration_minutes, duration_seconds,
+			       COALESCE(payment_order_id::text, '')
+			FROM game_access_grants
+			WHERE pc_ref_id = $1
+			  AND parent_grant_id IS NULL
+			  AND status = 'accepted'
+			  AND COALESCE(grace_ends_at, planned_ends_at, accepted_at + make_interval(secs => duration_seconds), now()) > now()
+			ORDER BY CASE WHEN $2 <> '' AND core_session_id = $2 THEN 0 ELSE 1 END,
+			         accepted_at DESC NULLS LAST, created_at DESC
+		`, pcID, liveCoreSessionID)
+		if err != nil {
+			continue
+		}
+		var primary activeGrantRow
+		for grants.Next() {
+			var grant activeGrantRow
+			var paymentOrderID string
+			if err := grants.Scan(&grant.ID, &grant.CoreSessionID, &grant.DurationMinutes, &grant.DurationSeconds, &paymentOrderID); err != nil {
+				continue
+			}
+			if grant.DurationSeconds <= 0 {
+				grant.DurationSeconds = grant.DurationMinutes * 60
+			}
+			if primary.ID == "" {
+				primary = grant
+				continue
+			}
+			if grant.DurationSeconds <= 0 || primary.CoreSessionID == "" {
+				continue
+			}
+			if err := s.mergeGrantIntoActiveSession(ctx, grant.ID, primary, clubID, pcID, externalPCID, grant.DurationSeconds, paymentOrderID); err == nil {
+				primary.DurationSeconds += grant.DurationSeconds
+				primary.DurationMinutes = secondsToMinutesCeil(primary.DurationSeconds)
+				changed = true
+			}
+		}
+		grants.Close()
+	}
+	return changed
 }
 
 func (s *Server) postCloudJSON(ctx context.Context, path string, body any, result any) error {

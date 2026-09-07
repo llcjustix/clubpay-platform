@@ -103,7 +103,7 @@ func Load() (Config, error) {
 		EdgeClubID:              env("EDGE_CLUB_ID", ""),
 		EdgeSyncToken:           env("EDGE_SYNC_TOKEN", ""),
 		EdgeWOLToken:            env("EDGE_WOL_TOKEN", ""),
-		EdgeSyncIntervalSeconds: envInt("EDGE_SYNC_INTERVAL_SECONDS", 15),
+		EdgeSyncIntervalSeconds: envInt("EDGE_SYNC_INTERVAL_SECONDS", 2),
 		ManagerNodeID:           env("MANAGER_NODE_ID", ""),
 		ManagerClubID:           env("MANAGER_CLUB_ID", ""),
 		ManagerOnlinePayments:   envBool("MANAGER_ONLINE_PAYMENTS_ENABLED", false),
