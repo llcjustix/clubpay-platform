@@ -24,6 +24,18 @@ func TestEdgeWOLRelayRoutesWakeToMatchingClub(t *testing.T) {
 	}
 	defer conn.Close()
 
+	// Dial returning only means the WebSocket handshake completed. The server
+	// registers the relay in its handler immediately afterwards, so wait for
+	// that hand-off before asserting that Wake can find it. Without this, a
+	// fast CI runner can race Wake against register and fail intermittently.
+	registeredBy := time.Now().Add(time.Second)
+	for relay.clientForClub("club-1") == nil {
+		if time.Now().After(registeredBy) {
+			t.Fatal("Raspberry Pi relay was not registered")
+		}
+		time.Sleep(time.Millisecond)
+	}
+
 	received := make(chan EdgeWOLCommand, 1)
 	go func() {
 		var command EdgeWOLCommand
