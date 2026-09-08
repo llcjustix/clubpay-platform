@@ -21,6 +21,11 @@ import (
 const (
 	platformReleasesAPI = "https://api.github.com/repos/llcjustix/clubpay-platform/releases?per_page=30"
 	agentReleasesAPI    = "https://api.github.com/repos/llcjustix/clubpay-core-agent/releases?per_page=30"
+	// A release check is lightweight and updates are only applied after a
+	// checksum verification. Keeping this bounded gives a newly published
+	// security or Agent fix a predictable delivery time instead of leaving a
+	// club on an older build for an hour because of a stale controller.env.
+	maximumAutomaticUpdateCheckInterval = 5 * time.Minute
 )
 
 var releaseHTTPClient = &http.Client{Timeout: 20 * time.Second}
@@ -34,8 +39,8 @@ func runAutomaticUpdateLoop(ctx context.Context, cfg config.Config, server *http
 		return
 	}
 	interval := time.Duration(cfg.AutoUpdateCheckSeconds) * time.Second
-	if interval < 5*time.Minute {
-		interval = 5 * time.Minute
+	if interval <= 0 || interval > maximumAutomaticUpdateCheckInterval {
+		interval = maximumAutomaticUpdateCheckInterval
 	}
 	check := func() {
 		checkAutomaticUpdates(ctx, cfg, server, currentVersion)
