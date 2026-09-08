@@ -2120,13 +2120,13 @@ function SettingsPage({ auth, selectedClubID, currentPath, onClubChange, onLogou
         enrollment: { activation_code: payload.activation_code },
         processNames: isManager ? ['ClubPay.Agent.Admin', 'ClubPay.Controller', 'postgres', 'pg_ctl'] : ['ClubPay.Controller', 'postgres', 'pg_ctl'],
         taskName: 'ClubPay Controller Node',
-        // Every node type has its own VM. A clean one-click installation owns
+        // Every node type has its own dedicated computer. A clean one-click installation owns
         // this directory, so remove all remnants before copying the release.
         // This makes a retry deterministic even after an interrupted install.
         removeBeforeInstall: ['C:\\ClubPay'],
       }),
       );
-      setMessage(`Скачан установщик ${isManager ? 'Manager' : 'основного Controller'}. Перенесите его на нужную VM и откройте двойным кликом.`);
+      setMessage(`Скачан установщик ${isManager ? 'Manager' : 'основного Controller'}. Перенесите его на нужный компьютер и откройте двойным кликом.`);
     } catch (err) {
       setError(String((err as Error).message || err));
     }
