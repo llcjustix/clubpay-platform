@@ -50,6 +50,11 @@ const CONTROLLER_RELEASE_URL = 'https://github.com/llcjustix/clubpay-platform/re
 const MANAGER_RELEASE_URL = 'https://github.com/llcjustix/clubpay-core-agent/releases/download/v0.4.26/ClubPay-Manager-Desktop-win-x64.zip';
 const AGENT_RELEASE_URL = 'https://github.com/llcjustix/clubpay-core-agent/releases/download/v0.4.26/ClubPay-Agent-win-x64.zip';
 
+type ControllerActivation = {
+  activation_code: string;
+  node_mode: 'edge' | 'manager';
+};
+
 type Tariff = {
   id: string;
   zone_id: string;
@@ -63,12 +68,6 @@ type Tariff = {
 };
 
 type PaymentProvider = 'payme' | 'click' | 'mock';
-
-type ControllerActivation = {
-  activation_code: string;
-  node_mode: 'edge' | 'manager';
-  expires_at: string;
-};
 
 type AgentEnrollment = {
   filename: string;
@@ -1938,7 +1937,6 @@ function SettingsPage({ auth, selectedClubID, currentPath, onClubChange, onLogou
   const [showNetworkForm, setShowNetworkForm] = useState(false);
   const [tariffZoneFilter, setTariffZoneFilter] = useState('');
   const [pcZoneFilter, setPCZoneFilter] = useState('');
-  const [controllerActivation, setControllerActivation] = useState<ControllerActivation | null>(null);
   const [agentControllerURL, setAgentControllerURL] = useState('');
 
   const agentControllerURLStorageKey = selectedClubID
@@ -2100,7 +2098,7 @@ function SettingsPage({ auth, selectedClubID, currentPath, onClubChange, onLogou
     );
   }
 
-  async function createControllerActivation(nodeMode: 'edge' | 'manager') {
+  async function downloadControllerInstaller(nodeMode: 'edge' | 'manager') {
     if (!selectedClubID) return;
     try {
       setError('');
@@ -2109,28 +2107,9 @@ function SettingsPage({ auth, selectedClubID, currentPath, onClubChange, onLogou
         method: 'POST',
         body: JSON.stringify({ node_mode: nodeMode }),
       });
-      setControllerActivation(payload);
-      setMessage('Код создан. Он действует 30 минут и сработает только один раз.');
-    } catch (err) {
-      setError(String((err as Error).message || err));
-    }
-  }
-
-  async function copyControllerActivation() {
-    if (!controllerActivation?.activation_code) return;
-    try {
-      await navigator.clipboard.writeText(controllerActivation.activation_code);
-      setMessage('Код скопирован');
-    } catch {
-      setError('Не удалось скопировать код. Выделите его и скопируйте вручную.');
-    }
-  }
-
-  function downloadControllerEnrollment() {
-    if (!controllerActivation?.activation_code) return;
-    const isManager = controllerActivation.node_mode === 'manager';
-    downloadTextFile(
-      isManager ? 'ClubPay-Manager-setup.cmd' : 'ClubPay-Controller-setup.cmd',
+      const isManager = payload.node_mode === 'manager';
+      downloadTextFile(
+        isManager ? 'ClubPay-Manager-setup.cmd' : 'ClubPay-Controller-setup.cmd',
       windowsInstallerBootstrap({
         title: isManager ? 'Manager' : 'Controller',
         releaseURL: isManager ? MANAGER_RELEASE_URL : CONTROLLER_RELEASE_URL,
@@ -2138,7 +2117,7 @@ function SettingsPage({ auth, selectedClubID, currentPath, onClubChange, onLogou
         updaterName: isManager ? undefined : 'update-windows.cmd',
         installDirectory: isManager ? 'C:\\ClubPay\\Manager' : 'C:\\ClubPay\\Controller',
         enrollmentFilename: 'controller-enrollment.json',
-        enrollment: { activation_code: controllerActivation.activation_code },
+        enrollment: { activation_code: payload.activation_code },
         processNames: isManager ? ['ClubPay.Agent.Admin', 'ClubPay.Controller', 'postgres', 'pg_ctl'] : ['ClubPay.Controller', 'postgres', 'pg_ctl'],
         taskName: 'ClubPay Controller Node',
         // Every node type has its own VM. A clean one-click installation owns
@@ -2146,46 +2125,11 @@ function SettingsPage({ auth, selectedClubID, currentPath, onClubChange, onLogou
         // This makes a retry deterministic even after an interrupted install.
         removeBeforeInstall: ['C:\\ClubPay'],
       }),
-    );
-    setMessage('Скачан один файл установки. Перенесите его на нужную VM, откройте двойным кликом и подтвердите окно Windows.');
-  }
-
-  function downloadControllerUpdate() {
-    downloadTextFile(
-      'ClubPay-Controller-update.cmd',
-      windowsInstallerBootstrap({
-        title: 'Controller',
-        releaseURL: CONTROLLER_RELEASE_URL,
-        installerName: 'install-windows.cmd',
-        updaterName: 'update-windows.cmd',
-        updateOnly: true,
-        installDirectory: 'C:\\ClubPay\\Controller',
-        enrollmentFilename: 'controller-enrollment.json',
-        enrollment: {},
-        processNames: ['ClubPay.Controller', 'postgres', 'pg_ctl'],
-        taskName: 'ClubPay Controller Node',
-      }),
-    );
-    setMessage('Скачан переходный файл Controller. Откройте его один раз — последующие релизы Controller будут ставиться автоматически.');
-  }
-
-  function downloadManagerUpdate() {
-    downloadTextFile(
-      'ClubPay-Manager-update.cmd',
-      windowsInstallerBootstrap({
-        title: 'Manager',
-        releaseURL: MANAGER_RELEASE_URL,
-        installerName: 'install-manager.cmd',
-        updaterName: 'update-manager.cmd',
-        updateOnly: true,
-        installDirectory: 'C:\\ClubPay\\Manager',
-        installedMarker: 'C:\\ClubPay\\Manager\\Controller\\controller.env',
-        enrollmentFilename: 'controller-enrollment.json',
-        enrollment: {},
-        processNames: ['ClubPay.Agent.Admin', 'ClubPay.Controller', 'postgres', 'pg_ctl'],
-      }),
-    );
-    setMessage('Скачан переходный файл Manager. Откройте его один раз — последующие релизы Manager будут ставиться автоматически.');
+      );
+      setMessage(`Скачан установщик ${isManager ? 'Manager' : 'основного Controller'}. Перенесите его на нужную VM и откройте двойным кликом.`);
+    } catch (err) {
+      setError(String((err as Error).message || err));
+    }
   }
 
   async function saveNetwork() {
@@ -2365,25 +2309,6 @@ function SettingsPage({ auth, selectedClubID, currentPath, onClubChange, onLogou
     }
   }
 
-  function downloadAgentUpdate() {
-    downloadTextFile(
-      'ClubPay-Agent-update.cmd',
-      windowsInstallerBootstrap({
-        title: 'Agent',
-        releaseURL: AGENT_RELEASE_URL,
-        installerName: 'install-agent.cmd',
-        updaterName: 'update-agent.cmd',
-        updateOnly: true,
-        installDirectory: 'C:\\ClubPay\\Agent',
-        installedMarker: 'C:\\ClubPay\\Agent\\appsettings.Local.json',
-        enrollmentFilename: 'clubpay-agent-enrollment.json',
-        enrollment: {},
-        processNames: ['ClubPay.Agent.Client'],
-      }),
-    );
-    setMessage('Скачан переходный файл Agent. Откройте его один раз на свободном ПК — последующие релизы придут автоматически.');
-  }
-
   function saveAgentControllerURL() {
     const controllerURL = agentControllerURL.trim();
     if (!controllerURL) {
@@ -2555,30 +2480,11 @@ function SettingsPage({ auth, selectedClubID, currentPath, onClubChange, onLogou
           </Panel>
           {!creatingClub && (
             <Panel className="stack settings-wide">
-              <SectionTitle icon={<KeyRound size={18} />} title="Локальный Controller" caption="Первичная установка и обновление всегда выдаются одним файлом из кабинета: ничего распаковывать и вводить в CMD не нужно." />
-              {!controllerActivation ? (
-                <div className="button-row">
-                  <Button variant="secondary" icon={<Monitor size={16} />} onClick={() => createControllerActivation('edge')}>Создать код для основного сервера / Raspberry Pi</Button>
-                  <Button variant="ghost" icon={<Monitor size={16} />} onClick={() => createControllerActivation('manager')}>Код для резервного ПК менеджера</Button>
-                  <Button variant="ghost" icon={<Download size={16} />} onClick={downloadControllerUpdate}>Включить автообновления Controller</Button>
-                  <Button variant="ghost" icon={<Download size={16} />} onClick={downloadManagerUpdate}>Включить автообновления Manager</Button>
-                </div>
-              ) : (
-                <div className="inline-editor">
-                  <div className="form-mode">
-                    <strong>Код {controllerActivation.node_mode === 'edge' ? 'основного Controller' : 'резервного Controller'}</strong>
-                    <span>Скачайте один установочный файл и запустите его на нужной VM до {new Date(controllerActivation.expires_at).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' })}.</span>
-                  </div>
-                  <div className="readonly-token">{controllerActivation.activation_code}</div>
-                  <div className="button-row">
-                    <Button size="sm" icon={<Download size={15} />} onClick={downloadControllerEnrollment}>Скачать установщик (1 файл)</Button>
-                    <Button size="sm" variant="ghost" icon={<Download size={15} />} onClick={downloadControllerUpdate}>Включить автообновления Controller</Button>
-                    <Button size="sm" variant="ghost" icon={<Download size={15} />} onClick={downloadManagerUpdate}>Включить автообновления Manager</Button>
-                    <Button size="sm" variant="ghost" icon={<Copy size={15} />} onClick={copyControllerActivation}>Скопировать код вручную</Button>
-                    <Button size="sm" variant="ghost" onClick={() => setControllerActivation(null)}>Скрыть</Button>
-                  </div>
-                </div>
-              )}
+              <SectionTitle icon={<KeyRound size={18} />} title="Локальные устройства" caption="Первичная установка выдаётся одним файлом. После установки Controller, Manager и свободные игровые ПК получают обновления автоматически." />
+              <div className="button-row">
+                <Button variant="secondary" icon={<Download size={16} />} onClick={() => downloadControllerInstaller('edge')}>Скачать установщик основного сервера / Raspberry Pi (1 файл)</Button>
+                <Button variant="secondary" icon={<Download size={16} />} onClick={() => downloadControllerInstaller('manager')}>Скачать установщик Manager (1 файл)</Button>
+              </div>
             </Panel>
           )}
           </>
@@ -2745,7 +2651,6 @@ function SettingsPage({ auth, selectedClubID, currentPath, onClubChange, onLogou
                         <div className="row-actions">
                           <Button size="sm" variant="ghost" icon={<QrCode size={14} />} onClick={() => printPCQR(pc)}>Печать</Button>
                           <Button size="sm" variant="secondary" icon={<Download size={14} />} onClick={() => downloadAgentEnrollment(pc)}>Скачать Agent (1 файл)</Button>
-                          <Button size="sm" variant="ghost" icon={<Download size={14} />} onClick={downloadAgentUpdate}>Включить автообновления</Button>
                           <Button size="sm" variant="ghost" icon={<RefreshCw size={14} />} onClick={() => rotatePCQR(pc)}>Перевыпустить</Button>
                           <Button size="sm" variant="ghost" onClick={() => { setPCForm(pc); setShowPCForm(true); }}>Изменить</Button>
                         </div>
