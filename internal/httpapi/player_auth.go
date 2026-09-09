@@ -20,8 +20,8 @@ import (
 )
 
 const (
-	playerAuthTTL        = 10 * time.Minute
-	telegramInitDataTTL  = 10 * time.Minute
+	playerAuthTTL       = 10 * time.Minute
+	telegramInitDataTTL = 10 * time.Minute
 )
 
 type playerIdentity struct {
@@ -302,6 +302,9 @@ func (s *Server) playerForAuthToken(ctx context.Context, q queryRower, token str
 }
 
 func (s *Server) verifiedPlayerForAuthToken(ctx context.Context, q queryRower, token, clubID string) (playerIdentity, error) {
+	if strings.HasPrefix(token, "mob_a_") {
+		return s.mobilePlayer(ctx, q, token)
+	}
 	var player playerIdentity
 	err := q.QueryRow(ctx, `
 		SELECT p.id, p.phone, COALESCE(p.first_name, '')
@@ -333,39 +336,7 @@ func (s *Server) recordPlayerTime(ctx context.Context, tx pgx.Tx, playerID, club
 	if secondsDelta == 0 {
 		return nil
 	}
-	var ledgerID string
-	err := tx.QueryRow(ctx, `
-		INSERT INTO player_time_ledger (player_id, club_id, seconds_delta, kind, game_access_grant_id, payment_order_id, idempotency_key)
-		VALUES ($1, $2, $3, $4, NULLIF($5, '')::uuid, NULLIF($6, '')::uuid, $7)
-		ON CONFLICT (idempotency_key) DO NOTHING
-		RETURNING id
-	`, playerID, clubID, secondsDelta, kind, grantID, paymentOrderID, idempotencyKey).Scan(&ledgerID)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return nil
-	}
-	if err != nil {
-		return err
-	}
-	if secondsDelta > 0 {
-		_, err = tx.Exec(ctx, `
-			INSERT INTO player_club_balances (player_id, club_id, seconds_balance)
-			VALUES ($1, $2, $3)
-			ON CONFLICT (player_id, club_id) DO UPDATE
-			SET seconds_balance = player_club_balances.seconds_balance + EXCLUDED.seconds_balance, updated_at = now()
-		`, playerID, clubID, secondsDelta)
-		return err
-	}
-	var remaining int
-	err = tx.QueryRow(ctx, `
-		UPDATE player_club_balances
-		SET seconds_balance = seconds_balance + $3, updated_at = now()
-		WHERE player_id = $1 AND club_id = $2 AND seconds_balance >= $4
-		RETURNING seconds_balance
-	`, playerID, clubID, secondsDelta, -secondsDelta).Scan(&remaining)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return fmt.Errorf("insufficient player balance")
-	}
-	return err
+	return s.recordTimeValue(ctx, tx, playerID, clubID, secondsDelta, kind, grantID, paymentOrderID, idempotencyKey)
 }
 
 func (s *Server) claimTelegramPlayerAuthChallenge(ctx context.Context, token, chatID string) (knownPlayer bool, returnURL string, err error) {
@@ -461,6 +432,13 @@ func (s *Server) handleRedeemPlayerBalance(w http.ResponseWriter, r *http.Reques
 		writeError(w, http.StatusBadRequest, "invalid json")
 		return
 	}
+	if strings.HasPrefix(req.PlayerAuthToken, "mob_") && mobileBearer(r) == "" {
+		writeError(w, 401, "mobile_auth_required")
+		return
+	}
+	if token := mobileBearer(r); token != "" {
+		req.PlayerAuthToken = token
+	}
 	if strings.TrimSpace(req.QRToken) == "" || strings.TrimSpace(req.PlayerAuthToken) == "" {
 		writeError(w, http.StatusBadRequest, "qr_token and player_auth_token are required")
 		return
@@ -486,7 +464,14 @@ func (s *Server) redeemPlayerBalanceToPC(ctx context.Context, req redeemPlayerBa
 		       CASE WHEN z.status = 'maintenance' THEN 'maintenance' ELSE p.status_cache END
 		FROM qr_codes q JOIN pc_refs p ON p.id = q.pc_ref_id JOIN zones z ON z.id = p.zone_id
 		WHERE q.public_token = $1 AND q.status = 'active' AND z.status <> 'deleted' AND p.status_cache <> 'deleted'
-	`, req.QRToken).Scan(&pcID, &clubID, &externalPCID, &qrType, &pcStatus)
+        AND (NOT $2::boolean OR (
+          EXISTS (SELECT 1 FROM clubs c WHERE c.id=p.club_id AND c.status='active')
+          AND (q.type='static_pc' OR (q.type='session_extend' AND q.expires_at>now()
+            AND EXISTS(SELECT 1 FROM game_access_grants g WHERE g.id=q.session_grant_id
+              AND g.pc_ref_id=p.id AND g.status='accepted'
+              AND COALESCE(g.grace_ends_at,g.planned_ends_at)>now())))
+        ))
+	`, req.QRToken, strings.HasPrefix(req.PlayerAuthToken, "mob_a_")).Scan(&pcID, &clubID, &externalPCID, &qrType, &pcStatus)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, fmt.Errorf("QR token not found")
 	}
@@ -503,13 +488,12 @@ func (s *Server) redeemPlayerBalanceToPC(ctx context.Context, req redeemPlayerBa
 		}
 		return nil, fmt.Errorf("PC is not available")
 	}
-	var seconds int
-	err = tx.QueryRow(ctx, `SELECT seconds_balance FROM player_club_balances WHERE player_id = $1 AND club_id = $2 FOR UPDATE`, player.ID, clubID).Scan(&seconds)
-	if errors.Is(err, pgx.ErrNoRows) || seconds <= 0 {
-		return nil, fmt.Errorf("there is no available time balance")
-	}
+	seconds, err := s.balanceSecondsForPC(ctx, tx, player.ID, clubID, pcID)
 	if err != nil {
 		return nil, err
+	}
+	if seconds <= 0 {
+		return nil, fmt.Errorf("there is no available time balance")
 	}
 	minutes := secondsToMinutesCeil(seconds)
 	var parent activeGrantRow
@@ -549,6 +533,9 @@ func (s *Server) redeemPlayerBalanceToPC(ctx context.Context, req redeemPlayerBa
 	if err != nil {
 		return nil, err
 	}
+	if err := linkMobileOperation(ctx, tx, "", grantID); err != nil {
+		return nil, err
+	}
 	if err := s.recordPlayerTime(ctx, tx, player.ID, clubID, -seconds, "session_start", grantID, "", "session-start:"+grantID); err != nil {
 		return nil, err
 	}
@@ -556,6 +543,9 @@ func (s *Server) redeemPlayerBalanceToPC(ctx context.Context, req redeemPlayerBa
 		return nil, err
 	}
 
+	// Reuse Controller reconciliation for new mobile sessions arriving at Cloud.
+	// No LAN credentials or direct Agent calls are exposed to the client.
+	_, mobile := ctx.Value(mobileOperationKey{}).(mobileOperationContext)
 	if extending {
 		if err := s.extendGrantSession(ctx, grantID, parent.ID, parent.CoreSessionID, clubID, pcID, externalPCID, seconds, "player_balance", "", ""); err != nil {
 			s.refundPlayerBalance(ctx, player.ID, clubID, seconds, grantID, err.Error())
@@ -567,6 +557,9 @@ func (s *Server) redeemPlayerBalanceToPC(ctx context.Context, req redeemPlayerBa
 	if err != nil {
 		s.refundPlayerBalance(ctx, player.ID, clubID, seconds, grantID, err.Error())
 		return nil, err
+	}
+	if mobile && !s.edgeNodeMode() {
+		return map[string]any{"success": true, "grant_id": grantID, "seconds_used": seconds}, nil
 	}
 	start, err := s.core.StartSession(ctx, core.StartSessionCommand{RequestID: "start_" + grantID, GrantID: grantID, ClubID: clubID, PCID: pcID, PCExternalID: externalPCID, DurationSeconds: seconds, DurationMinutes: minutes, GraceSeconds: s.cfg.SessionGraceSeconds, Source: "player_balance", ExtendURL: extendURL, CreatedAt: time.Now().UTC().Format(time.RFC3339)})
 	if err != nil {

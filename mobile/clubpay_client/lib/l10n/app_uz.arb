@@ -1,0 +1,184 @@
+{
+  "@@locale": "uz",
+  "appName": "ClubPay",
+  "welcome": "Vaqtingiz.\nO‘yiningiz.",
+  "intro": "O‘yin vaqtini saqlash va sevimli klublaringizda o‘yinga qaytish uchun kiring.",
+  "phone": "Telefon raqami",
+  "phoneHint": "+998 90 123 45 67",
+  "phoneError": "O‘zbekiston raqamini kiriting: +998 va 9 ta raqam",
+  "continueLabel": "Davom etish",
+  "telegramTitle": "Raqamni tasdiqlang",
+  "telegramHelp": "ClubPay botini oching, o‘z kontaktingizni yuboring va olingan kodni shu yerga kiriting. Kod ko‘pi bilan 3 daqiqa amal qiladi.",
+  "openTelegram": "Telegramni ochish",
+  "otp": "Telegramdagi kod",
+  "verify": "Kirish",
+  "newChallenge": "Yangi kod olish",
+  "challengeExpired": "So‘rov eskirgan. Yangi kod oling.",
+  "invalidOtp": "Kod noto‘g‘ri yoki eskirgan. Tekshiring yoki yangi kod oling.",
+  "rateLimited": "Urinishlar juda ko‘p. 15 daqiqadan keyin qayta urinib ko‘ring.",
+  "serviceUnavailable": "Telegram orqali kirish hozir ishlamayapti. Keyinroq urinib ko‘ring.",
+  "networkError": "ClubPay bilan bog‘lanib bo‘lmadi. Internetni tekshiring va qayta urinib ko‘ring.",
+  "storageError": "Sessiya saqlanmadi. Ma’lumotlarni saqlashga ruxsat bering va qayta kiring.",
+  "home": "Asosiy",
+  "profile": "Profil",
+  "scan": "QR skanerlash",
+  "gameTime": "O‘yin vaqti",
+  "perClub": "Vaqt har bir klubda alohida saqlanadi.",
+  "emptyBalance": "Hozircha o‘yin vaqtingiz yo‘q",
+  "emptyBalanceHelp": "Klub kompyuteridagi QR kodni skanerlang. Profil sessiyasining ishlatilmagan vaqti shu yerda saqlanadi.",
+  "chooseClub": "Klubni tanlang",
+  "unknownClub": "Klub hali tanlanmagan",
+  "startBalance": "Saqlangan vaqtdan boshlash",
+  "buyTime": "O‘yin vaqti sotib olish",
+  "balanceHelp": "Bu klubdagi vaqtdan foydalanish uchun kompyuterni QR orqali tanlang.",
+  "scanHelp": "Kamerani kompyuterdagi ClubPay QR kodiga qarating.",
+  "qrInput": "QR havolasi yoki kodi",
+  "checkQr": "QR tekshirish",
+  "uploadQr": "QR rasmini yuklash",
+  "camera": "Kamerani ochish",
+  "cameraHelp": "Kameraga ruxsat bering. Kamera ishlamasa, havolani kiriting yoki QR rasmini yuklang.",
+  "invalidQr": "QR tanilmadi. Kompyuter ekranidagi ClubPay QR kodidan foydalaning.",
+  "qrNotFound": "Bu QR topilmadi yoki endi mavjud emas. Havolani tekshiring yoki klub administratoridan kodni aniqlashtiring.",
+  "close": "Yopish",
+  "pc": "Kompyuter",
+  "zone": "Zona",
+  "available": "Bo‘sh",
+  "sleeping": "Uyqu rejimida",
+  "occupied": "Band",
+  "maintenance": "Mavjud emas",
+  "packages": "O‘yin vaqtini tanlang",
+  "customAmount": "O‘z summangiz, so‘m",
+  "customHelp": "Ushbu kompyuterdagi o‘yin vaqti uchun to‘lov.",
+  "providers": "To‘lov usuli",
+  "payme": "Payme",
+  "click": "Click",
+  "mock": "Sinov to‘lovi",
+  "noProviders": "To‘lov hozir mavjud emas",
+  "pay": "To‘lash",
+  "clubBalance": "Bu klubdagi vaqtingiz",
+  "startTime": "{time} vaqtga boshlash",
+  "duration": "{hours} soat {minutes} daq {seconds} son",
+  "price": "{amount} so‘m",
+  "payment": "To‘lov va sessiya",
+  "waitingPayment": "To‘lov kutilmoqda",
+  "startingSession": "Sessiya boshlanmoqda",
+  "startingHelp": "To‘lov tasdiqlandi. Klub kompyuteridan sessiya boshlanganligi tasdig‘ini kutyapmiz. Bu biroz vaqt olishi mumkin.",
+  "sessionReady": "Sessiya boshlandi",
+  "sessionEnded": "Sessiya tugadi",
+  "paymentFailed": "To‘lov yakunlanmadi",
+  "startFailed": "Boshlanishni tasdiqlab bo‘lmadi",
+  "checkStatus": "Holatni qayta tekshirish",
+  "openPayment": "To‘lov sahifasini ochish",
+  "returnHelp": "To‘lovdan keyin ClubPay’ga qayting. Holat avtomatik yangilanadi.",
+  "operationPending": "Operatsiya natijasi tekshirilmoqda",
+  "operationHelp": "Takroriy to‘lov yaratmang. Holatni yana tekshiring.",
+  "language": "Til",
+  "russian": "Русский",
+  "uzbek": "O‘zbekcha",
+  "logout": "Hisobdan chiqish",
+  "name": "Ism",
+  "refresh": "Yangilash",
+  "back": "Orqaga",
+  "loading": "ClubPay yuklanmoqda",
+  "resumePayment": "Sessiyani tekshirishni davom ettirish",
+  "noName": "Ism kiritilmagan",
+  "scanToBuy": "Vaqtni tanlash va to‘lash uchun kompyuter QR kodini skanerlang.",
+  "noTime": "Saqlangan vaqt yo‘q",
+  "imageTooLarge": "5 MB gacha PNG yoki JPEG tanlang.",
+  "amountError": "Noldan katta butun summa kiriting.",
+  "checkSlow": "Tasdiqlash ko‘proq vaqt olyapti. Holatni qayta tekshiring.",
+  "sessionExpired": "Kirish sessiyasi tugadi. Qayta kiring.",
+  "paymentUnavailable": "Operatsiya bajarilmadi. Kompyuter ma’lumotlarini yangilang.",
+  "authRetry": "Qayta kirish",
+  "signInHelp": "Raqam Telegram orqali tasdiqlanadi. Saqlangan vaqtingiz kirganingizdan keyin ko‘rinadi.",
+  "@startTime": {
+    "placeholders": {
+      "time": {
+        "type": "String"
+      }
+    }
+  },
+  "@duration": {
+    "placeholders": {
+      "hours": {
+        "type": "int"
+      },
+      "minutes": {
+        "type": "int"
+      },
+      "seconds": {
+        "type": "int"
+      }
+    }
+  },
+  "@price": {
+    "placeholders": {
+      "amount": {
+        "type": "int"
+      }
+    }
+  },
+  "localTestBanner": "Mahalliy sinov muhiti · Telegramsiz OTP",
+  "localSignInHelp": "Birinchi kirishni tekshirish uchun kod keyingi ekranda ko‘rinadi. +998 90 000 00 01 sinov raqamidan foydalanishingiz mumkin.",
+  "localOtpHelp": "Quyidagi kartadagi bir martalik kodni kiriting. U 3 daqiqa amal qiladi. Kontakt yuborish va Telegram orqali yetkazish bu yerda taqlid qilinadi.",
+  "localOtpLabel": "Bir martalik sinov kodingiz",
+  "localOtpInput": "Sinov uchun kirish kodi",
+  "testMode": "Sinov rejimi",
+  "readyToPlay": "O‘ynashga tayyormisiz?",
+  "welcomeBack": "Yana xush kelibsiz",
+  "homeSubtitle": "Kompyuteringiz. Vaqtingiz. Bir skan bilan.",
+  "accountSubtitle": "Hisobingiz va ilova sozlamalari.",
+  "yourAccount": "Hisobingiz",
+  "aboutApp": "Ilova haqida",
+  "startWithQr": "Kompyuterdagi QR dan boshlang",
+  "tapQrBelow": "Pastdagi QR tugmasini bosing va kamerani bo‘sh kompyuterning QR kodiga qarating.",
+  "timeReturnsHere": "Klubdagi QR kodni skanerlang. O‘yindan keyin klub va saqlangan qoldiq shu yerda ko‘rinadi.",
+  "howItWorks": "Bu qanday ishlaydi",
+  "guideScan": "Kompyuter QR kodini skanerlang",
+  "guideScanHelp": "Klubda bo‘sh kompyuterni tanlang va ilova pastidagi QR tugmasini bosing.",
+  "guideChoose": "O‘yin vaqtini tanlang",
+  "guideChooseHelp": "Vaqt sotib oling yoki shu klubdagi qoldiqdan foydalaning. Boshqa zonada vaqt uning narxiga qarab qayta hisoblanadi.",
+  "guidePlay": "O‘ynang. Qolgan vaqt saqlanadi",
+  "guidePlayHelp": "Seans boshlanganini kuting. Erta tugatsangiz, qolgan vaqt profilingizga qaytadi.",
+  "gotIt": "Tushunarli",
+  "cameraUnavailable": "Kamera mavjud emas",
+  "cameraFallbackHelp": "Ilova yoki brauzer sozlamalarida kameraga kirishga ruxsat bering, so‘ng qayta urinib ko‘ring.",
+  "retryCamera": "Qayta urinish",
+  "checkingQr": "Kompyuter tekshirilmoqda…",
+  "scanAgain": "Qayta skanerlash",
+  "pointCamera": "Kamerani kompyuter QR kodiga qarating",
+  "scanAutomatic": "U avtomatik aniqlanadi.",
+  "qrPhoto": "QR rasmi",
+  "manualQr": "Kod kiritish",
+  "manualQrHelp": "ClubPay kompyuterining QR kodidagi havola yoki kodni kiriting.",
+  "cameraStarting": "Kamera ulanmoqda",
+  "cameraPermissionHelp": "So‘rov paydo bo‘lganda kameraga kirishga ruxsat bering.",
+  "qrCatalogUnavailable": "QR tekshirilmadi: klub serveri hozir mavjud emas. Kod eskirgan bo‘lishi shart emas. Keyinroq qayta tekshiring.",
+  "retryQr": "Qayta tekshirish",
+  "liveCatalogPreview": "Haqiqiy kompyuter · ko‘rish",
+  "liveCatalogPreviewHelp": "Kompyuter ma’lumotlari haqiqiy klubdan olindi. Siz sinov profilidasiz: kompyuter va tariflarni ko‘rish mumkin, haqiqiy to‘lov va qolgan vaqt esa mavjud emas.",
+  "myClubs": "Mening klublarim",
+  "yourTime": "O‘yin vaqtingiz",
+  "zoneConversionHelp": "Har bir klub uchun bitta qoldiq. Vaqt tanlangan zona narxiga qarab qayta hisoblanadi.",
+  "clubOffline": "Klub hozir tarmoqqa ulanmagan",
+  "balanceStale": "Aloqa yo‘q. Oxirgi olingan qoldiq ko‘rsatilgan.",
+  "balanceUpdated": "Yangilangan: {time}",
+  "@balanceUpdated": {
+    "placeholders": {
+      "time": {
+        "type": "String"
+      }
+    }
+  },
+  "balancePending": "Qoldiq yangilanmoqda…",
+  "useBalance": "Vaqtdan foydalanish",
+  "balanceInZone": "{zone} zonasida mavjud",
+  "@balanceInZone": {
+    "placeholders": {
+      "zone": {
+        "type": "String"
+      }
+    }
+  },
+  "balanceUnknown": "Qoldiqni olish imkonsiz. Yangilab ko‘ring."
+}

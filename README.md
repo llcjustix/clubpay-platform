@@ -396,3 +396,8 @@ Mini App не требует отдельного мобильного прил�
 Backend проверяет подпись `Telegram.WebApp.initData`, срок её действия и соответствие параметра конкретному QR. QR выбирает только компьютер; профиль игрока определяется по подтверждённому `telegram_chat_id`.
 
 Для локального тестирования можно не поднимать публичный webhook: в development включён `TELEGRAM_POLLING_ENABLED=true`, и API сам забирает `/start` через Telegram `getUpdates`, если у бота не настроен webhook. В production лучше использовать webhook и выключить polling.
+
+
+## Flutter client
+
+Нативный мобильный профиль ClubPay (Flutter Web / будущий iOS): [запуск и документация](mobile/clubpay_client/README.md).

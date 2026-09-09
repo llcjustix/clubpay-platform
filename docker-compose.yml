@@ -35,6 +35,10 @@ services:
       # DATABASE_URL: postgres://clubpay:clubpay@postgres:5432/clubpay?sslmode=disable
       PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:-https://api-clubpay.justix.uz}
       FRONTEND_BASE_URL: ${FRONTEND_BASE_URL:-https://clubpay.justix.uz}
+      # Public Flutter client URL used for returning from Click/Payme.
+      # Leave empty until the client has an HTTPS origin; mobile checkouts
+      # then fail before an invoice is created rather than losing the return.
+      MOBILE_RETURN_BASE_URL: ${MOBILE_RETURN_BASE_URL:-}
       ADMIN_API_TOKEN: ${ADMIN_API_TOKEN:-}
       CLOUD_BASE_URL: ${CLOUD_BASE_URL:-}
       DEFAULT_PAYMENT_PROVIDER: ${DEFAULT_PAYMENT_PROVIDER:-mock}

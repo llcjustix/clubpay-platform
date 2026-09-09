@@ -104,6 +104,23 @@ jobs:
           export TELEGRAM_BOT_TOKEN="${{ secrets.TELEGRAM_BOT_TOKEN }}"
           export TELEGRAM_BOT_USERNAME="clubPay_tg_bot"
 
+          # A production QR must never fall back to mock payment. Provider
+          # secrets stay in GitHub Secrets; changing a ClubPay image does not
+          # expose them in the repository or Actions output.
+          export DEFAULT_PAYMENT_PROVIDER="${{ vars.DEFAULT_PAYMENT_PROVIDER || 'payme' }}"
+          export MOCK_PAYMENTS_ENABLED="${{ vars.MOCK_PAYMENTS_ENABLED || 'false' }}"
+          export CLICK_MERCHANT_ID="${{ secrets.CLICK_MERCHANT_ID }}"
+          export CLICK_SERVICE_ID="${{ secrets.CLICK_SERVICE_ID }}"
+          export CLICK_MERCHANT_USER_ID="${{ secrets.CLICK_MERCHANT_USER_ID }}"
+          export CLICK_SECRET_KEY="${{ secrets.CLICK_SECRET_KEY }}"
+          export PAYME_CHECKOUT_URL="${{ vars.PAYME_CHECKOUT_URL || 'https://checkout.paycom.uz' }}"
+          export PAYME_MERCHANT_ID="${{ secrets.PAYME_MERCHANT_ID }}"
+          export PAYME_SECRET_KEY="${{ secrets.PAYME_SECRET_KEY }}"
+          # Until Flutter gets its own public origin, return a mobile payment
+          # to the existing web status page. It polls the same invoice and is
+          # therefore a safe fallback for both web and mobile checkouts.
+          export MOBILE_RETURN_BASE_URL="${{ vars.MOBILE_RETURN_BASE_URL || 'https://clubpay.justix.uz' }}"
+
           export TELEGRAM_MINI_APP_ENABLED="${{ vars.TELEGRAM_MINI_APP_ENABLED || 'false' }}"
           export TELEGRAM_POLLING_ENABLED="true"
 

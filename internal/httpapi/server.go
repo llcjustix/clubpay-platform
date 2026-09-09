@@ -34,14 +34,14 @@ import (
 )
 
 type Server struct {
-	cfg                 config.Config
-	db                  *pgxpool.Pool
-	core                core.Adapter
-	edgeWOLRelay        http.Handler
-	wakePC              core.WakeHandler
-	edgeSyncMu          sync.Mutex
-	agentUpdateMu       sync.Mutex
-	agentUpdate         core.AgentUpdateCommand
+	cfg                  config.Config
+	db                   *pgxpool.Pool
+	core                 core.Adapter
+	edgeWOLRelay         http.Handler
+	wakePC               core.WakeHandler
+	edgeSyncMu           sync.Mutex
+	agentUpdateMu        sync.Mutex
+	agentUpdate          core.AgentUpdateCommand
 	agentUpdateScheduled map[string]string
 }
 
@@ -174,6 +174,7 @@ func (s *Server) SetWakePCHandler(handler core.WakeHandler) {
 
 func (s *Server) Routes() http.Handler {
 	mux := http.NewServeMux()
+	s.mobileRoutes(mux)
 	mux.HandleFunc("GET /api/health", s.handleHealth)
 	mux.HandleFunc("GET /api/node/status", s.handleNodeStatus)
 	mux.HandleFunc("POST /api/node/sync", s.handleNodeSync)
@@ -184,9 +185,9 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("POST /api/player-auth/start", s.handleStartPlayerAuth)
 	mux.HandleFunc("POST /api/player-auth/miniapp", s.handleMiniAppPlayerAuth)
 	mux.HandleFunc("GET /api/player-auth/{token}", s.handlePlayerAuthStatus)
-	mux.HandleFunc("POST /api/player-balance/redeem", s.handleRedeemPlayerBalance)
+	mux.HandleFunc("POST /api/player-balance/redeem", s.mobileMutation(s.handleRedeemPlayerBalance))
 	mux.HandleFunc("GET /api/orders/{invoice_id}", s.handleOrder)
-	mux.HandleFunc("POST /api/checkouts", s.handleCreateCheckout)
+	mux.HandleFunc("POST /api/checkouts", s.mobileMutation(s.handleCreateCheckout))
 	mux.HandleFunc("POST /api/payments/click/prepare", s.handleClickPrepare)
 	mux.HandleFunc("POST /api/payments/click/complete", s.handleClickComplete)
 	mux.HandleFunc("POST /api/payments/click/callback", s.handleClickCallback)
@@ -1305,8 +1306,8 @@ func (s *Server) handleBackofficeAgentEnrollment(w http.ResponseWriter, r *http.
 		"filename": "clubpay-agent-enrollment.json",
 		"enrollment": map[string]any{
 			"external_pc_id": externalPCID,
-			"controller_url":  controllerURL,
-			"core_token":      s.cfg.CoreToken,
+			"controller_url": controllerURL,
+			"core_token":     s.cfg.CoreToken,
 		},
 	})
 }
@@ -1779,6 +1780,13 @@ func (s *Server) handleCreateCheckout(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid json")
 		return
 	}
+	if strings.HasPrefix(req.PlayerAuthToken, "mob_") && mobileBearer(r) == "" {
+		writeError(w, 401, "mobile_auth_required")
+		return
+	}
+	if token := mobileBearer(r); token != "" {
+		req.PlayerAuthToken = token
+	}
 	if req.QRToken == "" || (req.TariffBlockID == "" && req.AmountUZS <= 0) {
 		writeError(w, http.StatusBadRequest, "qr_token and package or amount_uzs are required")
 		return
@@ -1957,6 +1965,21 @@ func (s *Server) handleCreateCheckout(w http.ResponseWriter, r *http.Request) {
 	}
 
 	returnURL := s.cfg.FrontendBaseURL + "/payment/return?invoice_id=" + invoiceID
+	if _, ok := ctx.Value(mobileOperationKey{}).(mobileOperationContext); ok {
+		if s.cfg.MobileReturnBaseURL == "" {
+			writeError(w, 503, "mobile_return_not_configured")
+			return
+		}
+		returnURL = s.mobileReturnURL(invoiceID)
+		if _, err = tx.Exec(ctx, `UPDATE payment_orders SET client_return_url=$2 WHERE id=$1`, orderID, returnURL); err != nil {
+			mobileInternal(w)
+			return
+		}
+		if err = linkMobileOperation(ctx, tx, invoiceID, ""); err != nil {
+			mobileInternal(w)
+			return
+		}
+	}
 
 	var providerPaymentID, checkoutURL string
 	switch provider {
@@ -2343,7 +2366,7 @@ func (s *Server) handlePaymeCheckoutPage(w http.ResponseWriter, r *http.Request)
 		writeError(w, http.StatusBadRequest, "order is not a Payme order")
 		return
 	}
-	returnURL := s.cfg.FrontendBaseURL + "/payment/return?invoice_id=" + url.QueryEscape(invoiceID)
+	returnURL := s.paymentReturnURL(r.Context(), invoiceID)
 	if order.Status == "paid" {
 		http.Redirect(w, r, returnURL, http.StatusSeeOther)
 		return
@@ -2390,7 +2413,7 @@ func (s *Server) handlePaymeSandboxPage(w http.ResponseWriter, r *http.Request) 
 		writeError(w, http.StatusBadRequest, "order is not a Payme order")
 		return
 	}
-	returnURL := s.cfg.FrontendBaseURL + "/payment/return?invoice_id=" + url.QueryEscape(invoiceID)
+	returnURL := s.paymentReturnURL(r.Context(), invoiceID)
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.WriteHeader(http.StatusOK)
 	_ = paymeSandboxPageTemplate.Execute(w, map[string]any{
@@ -2421,7 +2444,7 @@ func (s *Server) handlePaymeSandboxPay(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "order is not a Payme order")
 		return
 	}
-	returnURL := s.cfg.FrontendBaseURL + "/payment/return?invoice_id=" + url.QueryEscape(invoiceID)
+	returnURL := s.paymentReturnURL(r.Context(), invoiceID)
 	if order.Status == "paid" {
 		http.Redirect(w, r, returnURL, http.StatusSeeOther)
 		return
@@ -3278,6 +3301,7 @@ func (s *Server) handleEdgeEvents(w http.ResponseWriter, r *http.Request) {
 				writeError(w, http.StatusBadRequest, err.Error())
 				return
 			}
+			_, _ = s.db.Exec(r.Context(), `UPDATE clubs SET controller_synced_at=now() WHERE id=$1`, req.ClubID)
 		case "voucher_redeemed":
 			if event.CodeHash != "" {
 				_, _ = s.db.Exec(r.Context(), `
@@ -3932,14 +3956,14 @@ func (s *Server) edgeSnapshotData(ctx context.Context, clubID string, includeTec
 		return nil, err
 	}
 	playerBalances, err := s.queryMaps(ctx, `
-		SELECT player_id, club_id, seconds_balance, updated_at
+		SELECT player_id, club_id, seconds_balance, updated_at, time_value_units, reference_price_tiyin
 		FROM player_club_balances WHERE club_id = $1
 	`, clubID)
 	if err != nil {
 		return nil, err
 	}
 	playerLedger, err := s.queryMaps(ctx, `
-		SELECT id, player_id, club_id, seconds_delta, kind, game_access_grant_id, payment_order_id, idempotency_key, created_at
+		SELECT id, player_id, club_id, seconds_delta, kind, game_access_grant_id, payment_order_id, idempotency_key, created_at, time_value_delta
 		FROM player_time_ledger WHERE club_id = $1 ORDER BY created_at
 	`, clubID)
 	if err != nil {
@@ -3988,7 +4012,7 @@ func (s *Server) edgeSnapshotData(ctx context.Context, clubID string, includeTec
 		SELECT id, club_id, pc_ref_id, payment_order_id, cash_payment_id, parent_grant_id, player_id, duration_minutes, duration_seconds, status,
 		       COALESCE(core_session_id, '') AS core_session_id, voucher_id, returned_voucher_id, source, accepted_at,
 		       planned_ends_at, grace_ends_at, ended_at, COALESCE(end_reason, '') AS end_reason,
-		       remaining_minutes, remaining_seconds, COALESCE(last_error, '') AS last_error, created_at
+		       remaining_minutes, remaining_seconds, COALESCE(last_error, '') AS last_error, created_at, time_value_rate
 		FROM game_access_grants
 		WHERE club_id = $1
 		ORDER BY created_at
@@ -4274,31 +4298,32 @@ func (s *Server) applyEdgeSnapshotData(ctx context.Context, clubID string, paylo
 	}
 	if err := execJSON(ctx, tx, `
 		WITH input AS (
-			SELECT * FROM jsonb_to_recordset($1::jsonb) AS x(id uuid, club_id uuid, pc_ref_id uuid, payment_order_id uuid, cash_payment_id uuid, parent_grant_id uuid, player_id uuid, duration_minutes int, duration_seconds int, status text, core_session_id text, voucher_id uuid, returned_voucher_id uuid, source text, accepted_at timestamptz, planned_ends_at timestamptz, grace_ends_at timestamptz, ended_at timestamptz, end_reason text, remaining_minutes int, remaining_seconds int, last_error text, created_at timestamptz)
+			SELECT * FROM jsonb_to_recordset($1::jsonb) AS x(id uuid, club_id uuid, pc_ref_id uuid, payment_order_id uuid, cash_payment_id uuid, parent_grant_id uuid, player_id uuid, duration_minutes int, duration_seconds int, status text, core_session_id text, voucher_id uuid, returned_voucher_id uuid, source text, accepted_at timestamptz, planned_ends_at timestamptz, grace_ends_at timestamptz, ended_at timestamptz, end_reason text, remaining_minutes int, remaining_seconds int, last_error text, created_at timestamptz, time_value_rate bigint)
 		)
-		INSERT INTO game_access_grants (id, club_id, pc_ref_id, payment_order_id, cash_payment_id, parent_grant_id, player_id, duration_minutes, duration_seconds, status, core_session_id, voucher_id, returned_voucher_id, source, accepted_at, planned_ends_at, grace_ends_at, ended_at, end_reason, remaining_minutes, remaining_seconds, last_error, created_at)
-		SELECT id, club_id, pc_ref_id, payment_order_id, cash_payment_id, parent_grant_id, player_id, duration_minutes, COALESCE(NULLIF(duration_seconds, 0), duration_minutes * 60), COALESCE(NULLIF(status, ''), 'pending'), NULLIF(core_session_id, ''), voucher_id, returned_voucher_id, COALESCE(NULLIF(source, ''), 'online_payment'), accepted_at, planned_ends_at, grace_ends_at, ended_at, NULLIF(end_reason, ''), COALESCE(remaining_minutes, 0), COALESCE(NULLIF(remaining_seconds, 0), remaining_minutes * 60, 0), NULLIF(last_error, ''), COALESCE(created_at, now())
+		INSERT INTO game_access_grants (id, club_id, pc_ref_id, payment_order_id, cash_payment_id, parent_grant_id, player_id, duration_minutes, duration_seconds, status, core_session_id, voucher_id, returned_voucher_id, source, accepted_at, planned_ends_at, grace_ends_at, ended_at, end_reason, remaining_minutes, remaining_seconds, last_error, created_at, time_value_rate)
+		SELECT id, club_id, pc_ref_id, payment_order_id, cash_payment_id, parent_grant_id, player_id, duration_minutes, COALESCE(NULLIF(duration_seconds, 0), duration_minutes * 60), COALESCE(NULLIF(status, ''), 'pending'), NULLIF(core_session_id, ''), voucher_id, returned_voucher_id, COALESCE(NULLIF(source, ''), 'online_payment'), accepted_at, planned_ends_at, grace_ends_at, ended_at, NULLIF(end_reason, ''), COALESCE(remaining_minutes, 0), COALESCE(NULLIF(remaining_seconds, 0), remaining_minutes * 60, 0), NULLIF(last_error, ''), COALESCE(created_at, now()), time_value_rate
 		FROM input
-		ON CONFLICT (id) DO UPDATE SET parent_grant_id = EXCLUDED.parent_grant_id, player_id = EXCLUDED.player_id, duration_minutes = EXCLUDED.duration_minutes, duration_seconds = EXCLUDED.duration_seconds, status = EXCLUDED.status, core_session_id = EXCLUDED.core_session_id, voucher_id = EXCLUDED.voucher_id, returned_voucher_id = EXCLUDED.returned_voucher_id, accepted_at = EXCLUDED.accepted_at, planned_ends_at = EXCLUDED.planned_ends_at, grace_ends_at = EXCLUDED.grace_ends_at, ended_at = EXCLUDED.ended_at, end_reason = EXCLUDED.end_reason, remaining_minutes = EXCLUDED.remaining_minutes, remaining_seconds = EXCLUDED.remaining_seconds, last_error = EXCLUDED.last_error
+		ON CONFLICT (id) DO UPDATE SET parent_grant_id = EXCLUDED.parent_grant_id, player_id = EXCLUDED.player_id, duration_minutes = EXCLUDED.duration_minutes, duration_seconds = EXCLUDED.duration_seconds, status = EXCLUDED.status, core_session_id = EXCLUDED.core_session_id, voucher_id = EXCLUDED.voucher_id, returned_voucher_id = EXCLUDED.returned_voucher_id, accepted_at = EXCLUDED.accepted_at, planned_ends_at = EXCLUDED.planned_ends_at, grace_ends_at = EXCLUDED.grace_ends_at, ended_at = EXCLUDED.ended_at, end_reason = EXCLUDED.end_reason, remaining_minutes = EXCLUDED.remaining_minutes, remaining_seconds = EXCLUDED.remaining_seconds, last_error = EXCLUDED.last_error, time_value_rate = COALESCE(game_access_grants.time_value_rate, EXCLUDED.time_value_rate)
 	`, payload["game_access_grants"]); err != nil {
 		return err
 	}
 	if err := execJSON(ctx, tx, `
 		WITH input AS (
-			SELECT * FROM jsonb_to_recordset($1::jsonb) AS x(player_id uuid, club_id uuid, seconds_balance int, updated_at timestamptz)
+			SELECT * FROM jsonb_to_recordset($1::jsonb) AS x(player_id uuid, club_id uuid, seconds_balance int, updated_at timestamptz, time_value_units bigint, reference_price_tiyin bigint)
 		)
-		INSERT INTO player_club_balances (player_id, club_id, seconds_balance, updated_at)
-		SELECT player_id, club_id, GREATEST(seconds_balance, 0), COALESCE(updated_at, now()) FROM input
-		ON CONFLICT (player_id, club_id) DO UPDATE SET seconds_balance = EXCLUDED.seconds_balance, updated_at = EXCLUDED.updated_at
+		INSERT INTO player_club_balances (player_id, club_id, seconds_balance, updated_at, time_value_units, reference_price_tiyin)
+		SELECT player_id, club_id, GREATEST(seconds_balance, 0), COALESCE(updated_at, now()), time_value_units, reference_price_tiyin FROM input
+		ON CONFLICT (player_id, club_id) DO UPDATE SET seconds_balance = EXCLUDED.seconds_balance, updated_at = EXCLUDED.updated_at, time_value_units=EXCLUDED.time_value_units, reference_price_tiyin=EXCLUDED.reference_price_tiyin
+        WHERE EXCLUDED.updated_at >= player_club_balances.updated_at AND (EXCLUDED.time_value_units IS NOT NULL OR player_club_balances.time_value_units IS NULL)
 	`, payload["player_club_balances"]); err != nil {
 		return err
 	}
 	if err := execJSON(ctx, tx, `
 		WITH input AS (
-			SELECT * FROM jsonb_to_recordset($1::jsonb) AS x(id uuid, player_id uuid, club_id uuid, seconds_delta int, kind text, game_access_grant_id uuid, payment_order_id uuid, idempotency_key text, created_at timestamptz)
+			SELECT * FROM jsonb_to_recordset($1::jsonb) AS x(id uuid, player_id uuid, club_id uuid, seconds_delta int, kind text, game_access_grant_id uuid, payment_order_id uuid, idempotency_key text, created_at timestamptz, time_value_delta bigint)
 		)
-		INSERT INTO player_time_ledger (id, player_id, club_id, seconds_delta, kind, game_access_grant_id, payment_order_id, idempotency_key, created_at)
-		SELECT id, player_id, club_id, seconds_delta, kind, game_access_grant_id, payment_order_id, idempotency_key, COALESCE(created_at, now()) FROM input
+		INSERT INTO player_time_ledger (id, player_id, club_id, seconds_delta, kind, game_access_grant_id, payment_order_id, idempotency_key, created_at, time_value_delta)
+		SELECT id, player_id, club_id, seconds_delta, kind, game_access_grant_id, payment_order_id, idempotency_key, COALESCE(created_at, now()), time_value_delta FROM input
 		ON CONFLICT DO NOTHING
 	`, payload["player_time_ledger"]); err != nil {
 		return err
@@ -4563,17 +4588,11 @@ func (s *Server) applyPaymentSuccess(ctx context.Context, success paymentSuccess
 	profilePlayerID := ""
 	if order.PlayerID != nil && *order.PlayerID != "" {
 		profilePlayerID = *order.PlayerID
-		err = tx.QueryRow(ctx, `
-			SELECT seconds_balance
-			FROM player_club_balances
-			WHERE player_id = $1 AND club_id = $2
-			FOR UPDATE
-		`, profilePlayerID, order.ClubID).Scan(&profileBalanceSeconds)
-		if errors.Is(err, pgx.ErrNoRows) {
-			profileBalanceSeconds = 0
-		} else if err != nil {
+		profileBalanceSeconds, err = s.balanceSecondsForGrant(ctx, tx, profilePlayerID, order.ClubID, order.PCID, existingGrantID)
+		if err != nil {
 			return "", err
 		}
+
 		if profileBalanceSeconds > 0 {
 			sessionDurationSeconds += profileBalanceSeconds
 		}
@@ -6297,7 +6316,8 @@ func (s *Server) handleTelegramWebhook(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid json")
 		return
 	}
-	result, err := s.processTelegramUpdate(r.Context(), update)
+	ctx := context.WithValue(r.Context(), mobileWebhookKey{}, s.cfg.TelegramWebhookSecret != "")
+	result, err := s.processTelegramUpdate(ctx, update)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -6318,6 +6338,12 @@ func (s *Server) processTelegramUpdate(ctx context.Context, update telegramUpdat
 		if len(parts) > 1 {
 			startPayload = strings.TrimSpace(parts[1])
 		}
+	}
+	if handled, err := s.processMobileTelegram(ctx, message, startPayload); handled || err != nil {
+		if err != nil {
+			return nil, fmt.Errorf("mobile Telegram authorization unavailable")
+		}
+		return map[string]any{"success": true}, nil
 	}
 	if phone == "" && strings.HasPrefix(startPayload, "auth_") {
 		knownPlayer, returnURL, err := s.claimTelegramPlayerAuthChallenge(ctx, startPayload, chatID)
@@ -7828,7 +7854,7 @@ func writeConflictIfUnique(w http.ResponseWriter, err error, message string) boo
 func withCORS(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Access-Control-Allow-Origin", "*")
-		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Edge-Token, X-Telegram-Bot-Api-Secret-Token")
+		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization, Idempotency-Key, X-Edge-Token, X-Telegram-Bot-Api-Secret-Token")
 		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS")
 		if r.Method == http.MethodOptions {
 			w.WriteHeader(http.StatusNoContent)

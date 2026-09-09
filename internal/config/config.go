@@ -8,18 +8,19 @@ import (
 )
 
 type Config struct {
-	AppEnv          string
-	NodeMode        string
-	HTTPAddr        string
-	DatabaseURL     string
-	PublicBaseURL   string
-	FrontendBaseURL string
-	WebDir          string
-	LocalDatabaseMode string
-	LocalDatabaseDataDir string
+	AppEnv                  string
+	NodeMode                string
+	HTTPAddr                string
+	DatabaseURL             string
+	PublicBaseURL           string
+	FrontendBaseURL         string
+	MobileReturnBaseURL     string
+	WebDir                  string
+	LocalDatabaseMode       string
+	LocalDatabaseDataDir    string
 	LocalDatabaseRuntimeDir string
-	AdminAPIToken   string
-	CloudBaseURL    string
+	AdminAPIToken           string
+	CloudBaseURL            string
 
 	DefaultPaymentProvider string
 	MockPaymentsEnabled    bool
@@ -54,7 +55,7 @@ type Config struct {
 	AutoUpdateCheckSeconds  int
 	TelegramBotToken        string
 	TelegramBotUsername     string
-	TelegramMiniAppEnabled   bool
+	TelegramMiniAppEnabled  bool
 	TelegramWebhookSecret   string
 	TelegramPollingEnabled  bool
 
@@ -70,6 +71,7 @@ func Load() (Config, error) {
 		paymeCheckoutURL = "https://test.paycom.uz"
 	}
 	cfg := Config{
+		MobileReturnBaseURL:     strings.TrimRight(env("MOBILE_RETURN_BASE_URL", ""), "/"),
 		AppEnv:                  appEnv,
 		NodeMode:                strings.ToLower(env("NODE_MODE", "cloud")),
 		HTTPAddr:                env("HTTP_ADDR", ":8080"),
@@ -113,7 +115,7 @@ func Load() (Config, error) {
 		AutoUpdateCheckSeconds:  envInt("AUTO_UPDATE_CHECK_SECONDS", 3600),
 		TelegramBotToken:        env("TELEGRAM_BOT_TOKEN", ""),
 		TelegramBotUsername:     strings.TrimPrefix(strings.TrimSpace(env("TELEGRAM_BOT_USERNAME", "")), "@"),
-		TelegramMiniAppEnabled:   envBool("TELEGRAM_MINI_APP_ENABLED", false),
+		TelegramMiniAppEnabled:  envBool("TELEGRAM_MINI_APP_ENABLED", false),
 		TelegramWebhookSecret:   env("TELEGRAM_WEBHOOK_SECRET", ""),
 		TelegramPollingEnabled:  envBool("TELEGRAM_POLLING_ENABLED", !strings.EqualFold(appEnv, "production")),
 		VoucherMinMinutes:       envInt("VOUCHER_MIN_MINUTES", 5),
