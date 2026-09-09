@@ -53,6 +53,7 @@
   "payme": "Payme",
   "click": "Click",
   "mock": "Sinov to‘lovi",
+  "testPayAndStart": "Sinov to‘lovi va ishga tushirish",
   "noProviders": "To‘lov hozir mavjud emas",
   "pay": "To‘lash",
   "clubBalance": "Bu klubdagi vaqtingiz",

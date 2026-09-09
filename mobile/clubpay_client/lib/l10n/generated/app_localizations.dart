@@ -416,6 +416,12 @@ abstract class AppLocalizations {
   /// **'Тестовая оплата'**
   String get mock;
 
+  /// No description provided for @testPayAndStart.
+  ///
+  /// In ru, this message translates to:
+  /// **'Тестово оплатить и запустить'**
+  String get testPayAndStart;
+
   /// No description provided for @noProviders.
   ///
   /// In ru, this message translates to:

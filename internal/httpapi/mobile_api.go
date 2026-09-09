@@ -15,7 +15,7 @@ import (
 	"time"
 )
 
-type mobileOperationContext struct{ Player, Key string }
+type mobileOperationContext struct{ Player, Phone, Key string }
 type mobileOperationKey struct{}
 
 func (s *Server) mobileRoutes(mux *http.ServeMux) {
@@ -28,6 +28,7 @@ func (s *Server) mobileRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/mobile/orders/{invoice_id}", s.handleMobileOrder)
 	mux.HandleFunc("GET /api/mobile/sessions/{grant_id}", s.handleMobileSession)
 	mux.HandleFunc("GET /api/mobile/operations/{key}", s.handleMobileOperation)
+	mux.HandleFunc("POST /api/mobile/payments/test/success/{invoice_id}", s.handleMobileTestPaymentSuccess)
 }
 
 // Existing web callers retain their flow. Mobile callers require a durable key.
@@ -80,7 +81,7 @@ func (s *Server) mobileMutation(next http.HandlerFunc) http.HandlerFunc {
 			_, _ = w.Write(response)
 			return
 		}
-		ctx := context.WithValue(r.Context(), mobileOperationKey{}, mobileOperationContext{p.ID, key})
+		ctx := context.WithValue(r.Context(), mobileOperationKey{}, mobileOperationContext{p.ID, p.Phone, key})
 		// Finish the operation after a browser disconnect, bounded by the API timeout.
 		ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 90*time.Second)
 		defer cancel()
@@ -101,6 +102,35 @@ func (s *Server) mobileMutation(next http.HandlerFunc) http.HandlerFunc {
 		w.WriteHeader(recorder.Code)
 		_, _ = w.Write(response)
 	}
+}
+
+// Test payment is deliberately a separate mobile-only endpoint.  The public
+// mock endpoint remains restricted to development mode and cannot be used to
+// turn a real club QR into a free-session link.
+func (s *Server) handleMobileTestPaymentSuccess(w http.ResponseWriter, r *http.Request) {
+	p, ok := s.requireMobile(w, r)
+	if !ok {
+		return
+	}
+	if !s.mobileTestPaymentAllowed(p) {
+		writeError(w, http.StatusForbidden, "mobile_test_payment_not_allowed")
+		return
+	}
+	invoiceID := r.PathValue("invoice_id")
+	if invoiceID == "" {
+		writeError(w, http.StatusBadRequest, "invoice_id is required")
+		return
+	}
+	grantID, err := s.completeMockPayment(r.Context(), invoiceID, p.ID)
+	if errors.Is(err, errMockOrderNotFound) {
+		writeError(w, http.StatusNotFound, "order not found")
+		return
+	}
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"success": true, "grant_id": grantID})
 }
 func linkMobileOperation(ctx context.Context, tx pgx.Tx, invoice, grant string) error {
 	op, ok := ctx.Value(mobileOperationKey{}).(mobileOperationContext)

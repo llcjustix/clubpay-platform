@@ -47,14 +47,16 @@ class _ComputerScreenState extends ConsumerState<ComputerScreen> {
     }
     setState(() => _busy = true);
     final repo = ref.read(paymentRepositoryProvider);
+    final provider = _provider ??
+        pc.providers.where((p) => p.available).firstOrNull?.id;
     try {
       await repo.begin(
         token: pc.token,
         tariff: _tariff ?? (pc.tariffs.isEmpty ? null : pc.tariffs.first.id),
         amount: amount,
-        provider:
-            _provider ?? pc.providers.where((p) => p.available).firstOrNull?.id,
+        provider: provider,
         redeem: redeem,
+        testPayment: !redeem && provider == 'mock',
       );
       if (mounted) context.push('/session');
     } catch (e) {
@@ -235,8 +237,8 @@ class _ComputerScreenState extends ConsumerState<ComputerScreen> {
                   ],
                 ),
               ActionButton(
-                label: l.pay,
-                icon: Icons.open_in_new,
+                label: selectedProvider == 'mock' ? l.testPayAndStart : l.pay,
+                icon: selectedProvider == 'mock' ? Icons.play_arrow : Icons.open_in_new,
                 busy: _busy,
                 onPressed:
                     pc.canStart &&

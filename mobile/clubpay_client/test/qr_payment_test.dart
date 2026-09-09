@@ -4,6 +4,7 @@ import 'package:image/image.dart' as img;
 import 'package:zxing2/qrcode.dart';
 import 'package:clubpay_client/core/api_client.dart';
 import 'package:clubpay_client/core/secure_store.dart';
+import 'package:clubpay_client/features/auth/domain/auth_models.dart';
 import 'package:clubpay_client/features/qr/data/qr_image_decoder.dart';
 import 'package:clubpay_client/features/qr/data/qr_repository.dart';
 import 'package:clubpay_client/features/qr/domain/qr_models.dart';
@@ -174,4 +175,36 @@ void main() {
       expect(keys.toSet().length, 1);
     },
   );
+  test('Test payment confirms only the mobile order after checkout', () async {
+    final vault = SessionVault(MemoryStore());
+    await vault.save(const TokenPair('mob_a_test', 'mob_r_test'));
+    var checkoutCalls = 0;
+    var confirmationCalls = 0;
+    final api = ApiClient(
+      vault,
+      dio: stubDio((request) async {
+        if (request.path == '/api/checkouts') {
+          checkoutCalls++;
+          expect(request.data['payment_provider'], 'mock');
+          return (201, {'order': {'invoice_id': 'cp_test_payment'}});
+        }
+        if (request.path ==
+            '/api/mobile/payments/test/success/cp_test_payment') {
+          confirmationCalls++;
+          expect(request.headers['Authorization'], 'Bearer mob_a_test');
+          return (200, {'success': true, 'grant_id': 'grant_test_payment'});
+        }
+        fail('Unexpected request ${request.path}');
+      }),
+    );
+    final pending = await PaymentRepository(api).begin(
+      token: 'pc_test',
+      tariff: 'tariff_test',
+      provider: 'mock',
+      testPayment: true,
+    );
+    expect(pending.invoice, 'cp_test_payment');
+    expect(checkoutCalls, 1);
+    expect(confirmationCalls, 1);
+  });
 }

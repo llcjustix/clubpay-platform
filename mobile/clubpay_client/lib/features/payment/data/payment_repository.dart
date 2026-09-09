@@ -23,9 +23,13 @@ class PaymentRepository {
     int? amount,
     String? provider,
     bool redeem = false,
+    bool testPayment = false,
   }) async {
     final old = await pending();
-    if (old != null) return old;
+    if (old != null) {
+      if (testPayment && old.invoice != null) await _completeTestPayment(old.invoice!);
+      return old;
+    }
     final operation = PendingOperation(
       key: const Uuid().v4(),
       path: redeem ? '/api/player-balance/redeem' : '/api/checkouts',
@@ -38,7 +42,15 @@ class PaymentRepository {
     );
     // Save the exact operation before submission, including its immutable key.
     await remember(operation);
-    return _submit(operation);
+    final submitted = await _submit(operation);
+    if (testPayment && submitted.invoice != null) {
+      await _completeTestPayment(submitted.invoice!);
+    }
+    return submitted;
+  }
+
+  Future<void> _completeTestPayment(String invoice) async {
+    await api.post('/api/mobile/payments/test/success/${Uri.encodeComponent(invoice)}', {});
   }
 
   Future<PendingOperation> _submit(PendingOperation operation) async {

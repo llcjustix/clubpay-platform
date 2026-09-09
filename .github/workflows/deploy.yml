@@ -120,6 +120,8 @@ jobs:
           # to the existing web status page. It polls the same invoice and is
           # therefore a safe fallback for both web and mobile checkouts.
           export MOBILE_RETURN_BASE_URL="${{ vars.MOBILE_RETURN_BASE_URL || 'https://clubpay.justix.uz' }}"
+          export MOBILE_TEST_PAYMENTS_ENABLED="${{ vars.MOBILE_TEST_PAYMENTS_ENABLED || 'false' }}"
+          export MOBILE_TEST_PAYMENT_PHONES="${{ secrets.MOBILE_TEST_PAYMENT_PHONES }}"
 
           export TELEGRAM_MINI_APP_ENABLED="${{ vars.TELEGRAM_MINI_APP_ENABLED || 'false' }}"
           export TELEGRAM_POLLING_ENABLED="true"

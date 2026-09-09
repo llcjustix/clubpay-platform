@@ -180,6 +180,9 @@ class AppLocalizationsUz extends AppLocalizations {
   String get mock => 'Sinov to‘lovi';
 
   @override
+  String get testPayAndStart => 'Sinov to‘lovi va ishga tushirish';
+
+  @override
   String get noProviders => 'To‘lov hozir mavjud emas';
 
   @override

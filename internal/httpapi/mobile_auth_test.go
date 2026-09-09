@@ -90,7 +90,7 @@ func TestMobileIntegration(t *testing.T) {
 	if err = clubdb.RunMigrations(ctx, pool, "../../migrations"); err != nil {
 		t.Fatal(err)
 	}
-	s := NewServer(config.Config{TelegramBotToken: "test-bot-pepper", TelegramBotUsername: "clubpay_test", TelegramWebhookSecret: "test-hook", MobileReturnBaseURL: "http://localhost:7357", FrontendBaseURL: "http://localhost:5173", PublicBaseURL: "http://localhost:8080", MockPaymentsEnabled: true, DefaultPaymentProvider: "mock", SessionGraceSeconds: 180}, pool, core.NewMockAdapter())
+	s := NewServer(config.Config{TelegramBotToken: "test-bot-pepper", TelegramBotUsername: "clubpay_test", TelegramWebhookSecret: "test-hook", MobileReturnBaseURL: "http://localhost:7357", FrontendBaseURL: "http://localhost:5173", PublicBaseURL: "http://localhost:8080", DefaultPaymentProvider: "mock", MobileTestPaymentsEnabled: true, MobileTestPaymentPhones: []string{"+998901234567"}, SessionGraceSeconds: 180}, pool, core.NewMockAdapter())
 	var mu sync.Mutex
 	var delivered string
 	original := http.DefaultClient
@@ -233,6 +233,22 @@ func TestMobileIntegration(t *testing.T) {
 		t.Fatal("seconds changed")
 	}
 	body := map[string]any{"qr_token": qr, "tariff_block_id": tariff, "payment_provider": "mock"}
+	publicQR := expect(200, "GET", "/api/qr/"+qr, "", "", nil)
+	for _, provider := range publicQR["payment_providers"].([]any) {
+		if provider.(map[string]any)["provider"] == "mock" {
+			t.Fatal("public QR exposed mobile test payment")
+		}
+	}
+	authorizedQR := expect(200, "GET", "/api/qr/"+qr, access, "", nil)
+	var mobileTestProvider bool
+	for _, provider := range authorizedQR["payment_providers"].([]any) {
+		if provider.(map[string]any)["provider"] == "mock" && provider.(map[string]any)["configured"] == true {
+			mobileTestProvider = true
+		}
+	}
+	if !mobileTestProvider {
+		t.Fatal("allowed mobile profile did not receive test payment")
+	}
 	expect(400, "POST", "/api/checkouts", access, "", body)
 	bodyWithToken := map[string]any{"qr_token": qr, "tariff_block_id": tariff, "payment_provider": "mock", "player_auth_token": access}
 	expect(401, "POST", "/api/checkouts", "", "", bodyWithToken)
@@ -248,7 +264,9 @@ func TestMobileIntegration(t *testing.T) {
 		t.Fatal("unpaid session marked started")
 	}
 	expect(404, "GET", "/api/mobile/orders/cp_other", access, "", nil)
-	expect(200, "POST", "/api/payments/mock/success/"+invoice, "", "", nil)
+	expect(403, "POST", "/api/payments/mock/success/"+invoice, "", "", nil)
+	expect(401, "POST", "/api/mobile/payments/test/success/"+invoice, "", "", nil)
+	expect(200, "POST", "/api/mobile/payments/test/success/"+invoice, access, "", nil)
 	status = expect(200, "GET", "/api/mobile/orders/"+invoice, access, "", nil)
 	if status["grant_status"] != "pending" {
 		t.Fatalf("cloud grant should wait for Controller: %v", status)
@@ -270,6 +288,7 @@ func TestMobileIntegration(t *testing.T) {
 	ch2 := challenge("+998902222222")
 	otp2 := issueOTP(ch2, 88, "+998902222222")
 	other := expect(200, "POST", "/api/mobile/auth/verify", "", "", map[string]any{"challenge": ch2, "device_id": device, "otp": otp2})["access_token"].(string)
+	expect(403, "POST", "/api/mobile/payments/test/success/"+invoice, other, "", nil)
 	expect(404, "GET", "/api/mobile/orders/"+invoice, other, "", nil)
 	expect(404, "GET", "/api/mobile/sessions/"+status["grant_id"].(string), other, "", nil)
 	expect(404, "GET", "/api/mobile/operations/checkout-test-key-001", other, "", nil)

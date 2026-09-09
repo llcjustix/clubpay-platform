@@ -43,21 +43,23 @@ type Config struct {
 	WOLBroadcastAddr string
 	WOLWaitSeconds   int
 
-	EdgeNodeID              string
-	EdgeClubID              string
-	EdgeSyncToken           string
-	EdgeWOLToken            string
-	EdgeSyncIntervalSeconds int
-	ManagerNodeID           string
-	ManagerClubID           string
-	ManagerOnlinePayments   bool
-	AutoUpdateEnabled       bool
-	AutoUpdateCheckSeconds  int
-	TelegramBotToken        string
-	TelegramBotUsername     string
-	TelegramMiniAppEnabled  bool
-	TelegramWebhookSecret   string
-	TelegramPollingEnabled  bool
+	EdgeNodeID                string
+	EdgeClubID                string
+	EdgeSyncToken             string
+	EdgeWOLToken              string
+	EdgeSyncIntervalSeconds   int
+	ManagerNodeID             string
+	ManagerClubID             string
+	ManagerOnlinePayments     bool
+	AutoUpdateEnabled         bool
+	AutoUpdateCheckSeconds    int
+	TelegramBotToken          string
+	TelegramBotUsername       string
+	TelegramMiniAppEnabled    bool
+	TelegramWebhookSecret     string
+	TelegramPollingEnabled    bool
+	MobileTestPaymentsEnabled bool
+	MobileTestPaymentPhones   []string
 
 	VoucherMinMinutes   int
 	VoucherTTLDays      int
@@ -71,56 +73,58 @@ func Load() (Config, error) {
 		paymeCheckoutURL = "https://test.paycom.uz"
 	}
 	cfg := Config{
-		MobileReturnBaseURL:     strings.TrimRight(env("MOBILE_RETURN_BASE_URL", ""), "/"),
-		AppEnv:                  appEnv,
-		NodeMode:                strings.ToLower(env("NODE_MODE", "cloud")),
-		HTTPAddr:                env("HTTP_ADDR", ":8080"),
-		DatabaseURL:             env("DATABASE_URL", "postgres://clubpay:clubpay@localhost:5432/clubpay?sslmode=disable"),
-		PublicBaseURL:           strings.TrimRight(env("PUBLIC_BASE_URL", "http://localhost:8080"), "/"),
-		FrontendBaseURL:         strings.TrimRight(env("FRONTEND_BASE_URL", "http://localhost:5173"), "/"),
-		WebDir:                  strings.TrimSpace(env("WEB_DIR", "")),
-		LocalDatabaseMode:       strings.ToLower(strings.TrimSpace(env("LOCAL_DATABASE_MODE", "external"))),
-		LocalDatabaseDataDir:    strings.TrimSpace(env("LOCAL_DATABASE_DATA_DIR", "data/postgres")),
-		LocalDatabaseRuntimeDir: strings.TrimSpace(env("LOCAL_DATABASE_RUNTIME_DIR", "runtime/postgres")),
-		AdminAPIToken:           env("ADMIN_API_TOKEN", ""),
-		CloudBaseURL:            strings.TrimRight(env("CLOUD_BASE_URL", ""), "/"),
-		DefaultPaymentProvider:  strings.ToLower(env("DEFAULT_PAYMENT_PROVIDER", "mock")),
-		MockPaymentsEnabled:     envBool("MOCK_PAYMENTS_ENABLED", !strings.EqualFold(appEnv, "production")),
-		ClickCheckoutURL:        strings.TrimRight(env("CLICK_CHECKOUT_URL", "https://my.click.uz/services/pay"), "/"),
-		ClickMerchantID:         env("CLICK_MERCHANT_ID", ""),
-		ClickServiceID:          env("CLICK_SERVICE_ID", ""),
-		ClickMerchantUserID:     env("CLICK_MERCHANT_USER_ID", ""),
-		ClickSecretKey:          env("CLICK_SECRET_KEY", ""),
-		PaymeCheckoutURL:        strings.TrimRight(env("PAYME_CHECKOUT_URL", paymeCheckoutURL), "/"),
-		PaymeMerchantID:         env("PAYME_MERCHANT_ID", ""),
-		PaymeSecretKey:          env("PAYME_SECRET_KEY", ""),
-		PlatformFeeBPS:          envInt("PLATFORM_FEE_BPS", 0),
-		SplitPaymentsEnabled:    envBool("SPLIT_PAYMENTS_ENABLED", false),
-		CoreMode:                env("CORE_MODE", "mock"),
-		CoreBaseURL:             strings.TrimRight(env("CORE_BASE_URL", "http://controller.local:8081"), "/"),
-		CoreToken:               env("CORE_TOKEN", ""),
-		CoreTimeoutMS:           envInt("CORE_TIMEOUT_MS", 10000),
-		WOLEnabled:              envBool("WOL_ENABLED", false),
-		WOLBroadcastAddr:        env("WOL_BROADCAST_ADDR", "255.255.255.255:9"),
-		WOLWaitSeconds:          envInt("WOL_WAIT_SECONDS", 60),
-		EdgeNodeID:              env("EDGE_NODE_ID", ""),
-		EdgeClubID:              env("EDGE_CLUB_ID", ""),
-		EdgeSyncToken:           env("EDGE_SYNC_TOKEN", ""),
-		EdgeWOLToken:            env("EDGE_WOL_TOKEN", ""),
-		EdgeSyncIntervalSeconds: envInt("EDGE_SYNC_INTERVAL_SECONDS", 2),
-		ManagerNodeID:           env("MANAGER_NODE_ID", ""),
-		ManagerClubID:           env("MANAGER_CLUB_ID", ""),
-		ManagerOnlinePayments:   envBool("MANAGER_ONLINE_PAYMENTS_ENABLED", false),
-		AutoUpdateEnabled:       envBool("AUTO_UPDATE_ENABLED", true),
-		AutoUpdateCheckSeconds:  envInt("AUTO_UPDATE_CHECK_SECONDS", 3600),
-		TelegramBotToken:        env("TELEGRAM_BOT_TOKEN", ""),
-		TelegramBotUsername:     strings.TrimPrefix(strings.TrimSpace(env("TELEGRAM_BOT_USERNAME", "")), "@"),
-		TelegramMiniAppEnabled:  envBool("TELEGRAM_MINI_APP_ENABLED", false),
-		TelegramWebhookSecret:   env("TELEGRAM_WEBHOOK_SECRET", ""),
-		TelegramPollingEnabled:  envBool("TELEGRAM_POLLING_ENABLED", !strings.EqualFold(appEnv, "production")),
-		VoucherMinMinutes:       envInt("VOUCHER_MIN_MINUTES", 5),
-		VoucherTTLDays:          envInt("VOUCHER_TTL_DAYS", 30),
-		SessionGraceSeconds:     envInt("SESSION_GRACE_SECONDS", 180),
+		MobileReturnBaseURL:       strings.TrimRight(env("MOBILE_RETURN_BASE_URL", ""), "/"),
+		AppEnv:                    appEnv,
+		NodeMode:                  strings.ToLower(env("NODE_MODE", "cloud")),
+		HTTPAddr:                  env("HTTP_ADDR", ":8080"),
+		DatabaseURL:               env("DATABASE_URL", "postgres://clubpay:clubpay@localhost:5432/clubpay?sslmode=disable"),
+		PublicBaseURL:             strings.TrimRight(env("PUBLIC_BASE_URL", "http://localhost:8080"), "/"),
+		FrontendBaseURL:           strings.TrimRight(env("FRONTEND_BASE_URL", "http://localhost:5173"), "/"),
+		WebDir:                    strings.TrimSpace(env("WEB_DIR", "")),
+		LocalDatabaseMode:         strings.ToLower(strings.TrimSpace(env("LOCAL_DATABASE_MODE", "external"))),
+		LocalDatabaseDataDir:      strings.TrimSpace(env("LOCAL_DATABASE_DATA_DIR", "data/postgres")),
+		LocalDatabaseRuntimeDir:   strings.TrimSpace(env("LOCAL_DATABASE_RUNTIME_DIR", "runtime/postgres")),
+		AdminAPIToken:             env("ADMIN_API_TOKEN", ""),
+		CloudBaseURL:              strings.TrimRight(env("CLOUD_BASE_URL", ""), "/"),
+		DefaultPaymentProvider:    strings.ToLower(env("DEFAULT_PAYMENT_PROVIDER", "mock")),
+		MockPaymentsEnabled:       envBool("MOCK_PAYMENTS_ENABLED", !strings.EqualFold(appEnv, "production")),
+		ClickCheckoutURL:          strings.TrimRight(env("CLICK_CHECKOUT_URL", "https://my.click.uz/services/pay"), "/"),
+		ClickMerchantID:           env("CLICK_MERCHANT_ID", ""),
+		ClickServiceID:            env("CLICK_SERVICE_ID", ""),
+		ClickMerchantUserID:       env("CLICK_MERCHANT_USER_ID", ""),
+		ClickSecretKey:            env("CLICK_SECRET_KEY", ""),
+		PaymeCheckoutURL:          strings.TrimRight(env("PAYME_CHECKOUT_URL", paymeCheckoutURL), "/"),
+		PaymeMerchantID:           env("PAYME_MERCHANT_ID", ""),
+		PaymeSecretKey:            env("PAYME_SECRET_KEY", ""),
+		PlatformFeeBPS:            envInt("PLATFORM_FEE_BPS", 0),
+		SplitPaymentsEnabled:      envBool("SPLIT_PAYMENTS_ENABLED", false),
+		CoreMode:                  env("CORE_MODE", "mock"),
+		CoreBaseURL:               strings.TrimRight(env("CORE_BASE_URL", "http://controller.local:8081"), "/"),
+		CoreToken:                 env("CORE_TOKEN", ""),
+		CoreTimeoutMS:             envInt("CORE_TIMEOUT_MS", 10000),
+		WOLEnabled:                envBool("WOL_ENABLED", false),
+		WOLBroadcastAddr:          env("WOL_BROADCAST_ADDR", "255.255.255.255:9"),
+		WOLWaitSeconds:            envInt("WOL_WAIT_SECONDS", 60),
+		EdgeNodeID:                env("EDGE_NODE_ID", ""),
+		EdgeClubID:                env("EDGE_CLUB_ID", ""),
+		EdgeSyncToken:             env("EDGE_SYNC_TOKEN", ""),
+		EdgeWOLToken:              env("EDGE_WOL_TOKEN", ""),
+		EdgeSyncIntervalSeconds:   envInt("EDGE_SYNC_INTERVAL_SECONDS", 2),
+		ManagerNodeID:             env("MANAGER_NODE_ID", ""),
+		ManagerClubID:             env("MANAGER_CLUB_ID", ""),
+		ManagerOnlinePayments:     envBool("MANAGER_ONLINE_PAYMENTS_ENABLED", false),
+		AutoUpdateEnabled:         envBool("AUTO_UPDATE_ENABLED", true),
+		AutoUpdateCheckSeconds:    envInt("AUTO_UPDATE_CHECK_SECONDS", 3600),
+		TelegramBotToken:          env("TELEGRAM_BOT_TOKEN", ""),
+		TelegramBotUsername:       strings.TrimPrefix(strings.TrimSpace(env("TELEGRAM_BOT_USERNAME", "")), "@"),
+		TelegramMiniAppEnabled:    envBool("TELEGRAM_MINI_APP_ENABLED", false),
+		TelegramWebhookSecret:     env("TELEGRAM_WEBHOOK_SECRET", ""),
+		TelegramPollingEnabled:    envBool("TELEGRAM_POLLING_ENABLED", !strings.EqualFold(appEnv, "production")),
+		MobileTestPaymentsEnabled: envBool("MOBILE_TEST_PAYMENTS_ENABLED", false),
+		MobileTestPaymentPhones:   envCSV("MOBILE_TEST_PAYMENT_PHONES"),
+		VoucherMinMinutes:         envInt("VOUCHER_MIN_MINUTES", 5),
+		VoucherTTLDays:            envInt("VOUCHER_TTL_DAYS", 30),
+		SessionGraceSeconds:       envInt("SESSION_GRACE_SECONDS", 180),
 	}
 	if cfg.DatabaseURL == "" {
 		return Config{}, fmt.Errorf("DATABASE_URL is required")
@@ -134,6 +138,16 @@ func Load() (Config, error) {
 		}
 	}
 	return cfg, nil
+}
+
+func envCSV(key string) []string {
+	values := make([]string, 0)
+	for _, value := range strings.Split(env(key, ""), ",") {
+		if value = strings.TrimSpace(value); value != "" {
+			values = append(values, value)
+		}
+	}
+	return values
 }
 
 func env(key, fallback string) string {

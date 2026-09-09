@@ -39,6 +39,8 @@ services:
       # Leave empty until the client has an HTTPS origin; mobile checkouts
       # then fail before an invoice is created rather than losing the return.
       MOBILE_RETURN_BASE_URL: ${MOBILE_RETURN_BASE_URL:-}
+      MOBILE_TEST_PAYMENTS_ENABLED: ${MOBILE_TEST_PAYMENTS_ENABLED:-false}
+      MOBILE_TEST_PAYMENT_PHONES: ${MOBILE_TEST_PAYMENT_PHONES:-}
       ADMIN_API_TOKEN: ${ADMIN_API_TOKEN:-}
       CLOUD_BASE_URL: ${CLOUD_BASE_URL:-}
       DEFAULT_PAYMENT_PROVIDER: ${DEFAULT_PAYMENT_PROVIDER:-mock}

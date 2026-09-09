@@ -1726,6 +1726,10 @@ func (s *Server) handleQR(w http.ResponseWriter, r *http.Request) {
 		tariffs = append(tariffs, t)
 	}
 
+	providers := s.paymentProviderOptions(pc.ClickMerchantID, pc.ClickServiceID, pc.ClickMerchantUserID, pc.ClickSecretKey, pc.PaymeMerchantID, pc.PaymeSecretKey)
+	if s.mobileTestPaymentAllowedRequest(ctx, r) {
+		providers = append(providers, mobileTestPaymentOption())
+	}
 	telegramLink, telegramUsername := s.telegramBotPublicLink(ctx)
 	writeJSON(w, http.StatusOK, map[string]any{
 		"club": map[string]any{
@@ -1748,7 +1752,7 @@ func (s *Server) handleQR(w http.ResponseWriter, r *http.Request) {
 		"qr_type":           qrType,
 		"active_session":    activeSession,
 		"tariffs":           tariffs,
-		"payment_providers": s.paymentProviderOptions(pc.ClickMerchantID, pc.ClickServiceID, pc.ClickMerchantUserID, pc.ClickSecretKey, pc.PaymeMerchantID, pc.PaymeSecretKey),
+		"payment_providers": providers,
 		"telegram": map[string]any{
 			"bot_link":     telegramLink,
 			"bot_username": telegramUsername,
@@ -1916,7 +1920,7 @@ func (s *Server) handleCreateCheckout(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "payment provider must be click or payme")
 		return
 	}
-	if err := s.ensureCheckoutProviderReady(provider, orderSeed); err != nil {
+	if err := s.ensureCheckoutProviderReady(ctx, provider, orderSeed); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
@@ -2050,22 +2054,41 @@ func (s *Server) handleMockPaymentSuccess(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	var amount int64
-	var providerPaymentID *string
-	err := s.db.QueryRow(r.Context(), `
-		SELECT amount_tiyin, provider_payment_id
-		FROM payment_orders
-		WHERE invoice_id = $1
-	`, invoiceID).Scan(&amount, &providerPaymentID)
-	if errors.Is(err, pgx.ErrNoRows) {
+	grantID, err := s.completeMockPayment(r.Context(), invoiceID, "")
+	if errors.Is(err, errMockOrderNotFound) {
 		writeError(w, http.StatusNotFound, "order not found")
 		return
 	}
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
+	writeJSON(w, http.StatusOK, map[string]any{"success": true, "grant_id": grantID})
+}
 
+var errMockOrderNotFound = errors.New("mock order not found")
+
+func (s *Server) completeMockPayment(ctx context.Context, invoiceID, expectedPlayerID string) (string, error) {
+	var amount int64
+	var providerPaymentID *string
+	var provider, playerID string
+	err := s.db.QueryRow(ctx, `
+		SELECT amount_tiyin, provider_payment_id, provider, COALESCE(player_id::text, '')
+		FROM payment_orders
+		WHERE invoice_id = $1
+	`, invoiceID).Scan(&amount, &providerPaymentID, &provider, &playerID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", errMockOrderNotFound
+	}
+	if err != nil {
+		return "", err
+	}
+	if provider != payments.ProviderMock {
+		return "", errors.New("order is not a test payment")
+	}
+	if expectedPlayerID != "" && playerID != expectedPlayerID {
+		return "", errors.New("test payment belongs to another profile")
+	}
 	paymentUUID := "mock_" + randomHex(12)
 	if providerPaymentID != nil && *providerPaymentID != "" {
 		paymentUUID = *providerPaymentID
@@ -2076,7 +2099,7 @@ func (s *Server) handleMockPaymentSuccess(w http.ResponseWriter, r *http.Request
 		"amount":     amount,
 		"mock":       true,
 	})
-	grantID, err := s.applyPaymentSuccess(r.Context(), paymentSuccess{
+	return s.applyPaymentSuccess(ctx, paymentSuccess{
 		Provider:          payments.ProviderMock,
 		AmountTiyin:       amount,
 		InvoiceID:         invoiceID,
@@ -2086,11 +2109,6 @@ func (s *Server) handleMockPaymentSuccess(w http.ResponseWriter, r *http.Request
 		PS:                "mock",
 		CardPAN:           "mock",
 	}, rawPayload)
-	if err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
-		return
-	}
-	writeJSON(w, http.StatusOK, map[string]any{"success": true, "grant_id": grantID})
 }
 
 func (s *Server) handleClickPrepare(w http.ResponseWriter, r *http.Request) {
@@ -8060,7 +8078,43 @@ func (s *Server) paymentProviderOptions(clickMerchantID, clickServiceID, clickMe
 	return providers
 }
 
-func (s *Server) ensureCheckoutProviderReady(provider string, seed checkoutSeed) error {
+func mobileTestPaymentOption() map[string]any {
+	return map[string]any{
+		"provider":   payments.ProviderMock,
+		"label":      "Тестовая оплата",
+		"configured": true,
+		"sandbox":    true,
+		"message":    "Только для разрешённого тестового профиля",
+	}
+}
+
+func (s *Server) mobileTestPaymentAllowed(player playerIdentity) bool {
+	if !s.cfg.MobileTestPaymentsEnabled || player.Phone == "" {
+		return false
+	}
+	for _, allowed := range s.cfg.MobileTestPaymentPhones {
+		if player.Phone == allowed {
+			return true
+		}
+	}
+	return false
+}
+
+func (s *Server) mobileTestPaymentAllowedRequest(ctx context.Context, r *http.Request) bool {
+	token := mobileBearer(r)
+	if token == "" {
+		return false
+	}
+	player, err := s.mobilePlayer(ctx, s.db, token)
+	return err == nil && s.mobileTestPaymentAllowed(player)
+}
+
+func (s *Server) mobileTestPaymentAllowedContext(ctx context.Context) bool {
+	op, ok := ctx.Value(mobileOperationKey{}).(mobileOperationContext)
+	return ok && s.mobileTestPaymentAllowed(playerIdentity{ID: op.Player, Phone: op.Phone})
+}
+
+func (s *Server) ensureCheckoutProviderReady(ctx context.Context, provider string, seed checkoutSeed) error {
 	switch provider {
 	case payments.ProviderPayme:
 		if s.onlinePaymentsDisabledForNode() {
@@ -8079,7 +8133,7 @@ func (s *Server) ensureCheckoutProviderReady(provider string, seed checkoutSeed)
 			return errors.New(message)
 		}
 	case payments.ProviderMock:
-		if !s.cfg.MockPaymentsEnabled {
+		if !s.cfg.MockPaymentsEnabled && !s.mobileTestPaymentAllowedContext(ctx) {
 			return errors.New("Тестовая оплата отключена")
 		}
 	}

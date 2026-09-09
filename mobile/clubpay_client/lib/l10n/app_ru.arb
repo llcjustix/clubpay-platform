@@ -53,6 +53,7 @@
   "payme": "Payme",
   "click": "Click",
   "mock": "Тестовая оплата",
+  "testPayAndStart": "Тестово оплатить и запустить",
   "noProviders": "Оплата сейчас недоступна",
   "pay": "Оплатить",
   "clubBalance": "Ваше время в этом клубе",

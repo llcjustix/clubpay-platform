@@ -179,6 +179,9 @@ class AppLocalizationsRu extends AppLocalizations {
   String get mock => 'Тестовая оплата';
 
   @override
+  String get testPayAndStart => 'Тестово оплатить и запустить';
+
+  @override
   String get noProviders => 'Оплата сейчас недоступна';
 
   @override
