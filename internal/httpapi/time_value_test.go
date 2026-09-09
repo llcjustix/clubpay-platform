@@ -218,4 +218,25 @@ func TestZoneValueIntegration(t *testing.T) {
 	if err := pool.QueryRow(ctx, `SELECT status='ended' FROM game_access_grants WHERE id=$1`, eventGrant).Scan(&ended); err != nil || !ended {
 		t.Fatalf("event grant not ended: %v %v", ended, err)
 	}
+
+	// A release made before the fallback can be repaired on the next balance
+	// refresh without issuing the same return twice.
+	legacyGrant := createEarlyEndGrant("legacy-end-without-remaining")
+	if _, err := pool.Exec(ctx, `UPDATE game_access_grants SET status='ended',ended_at=now(),end_reason='client_left',remaining_seconds=0,remaining_minutes=0 WHERE id=$1`, legacyGrant); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.reconcileMissingProfileRemainders(ctx, player); err != nil {
+		t.Fatal(err)
+	}
+	var repaired int
+	if err := pool.QueryRow(ctx, `SELECT remaining_seconds FROM game_access_grants WHERE id=$1`, legacyGrant).Scan(&repaired); err != nil || repaired < 3500 || repaired > 3600 {
+		t.Fatalf("legacy remainder was not restored: %d %v", repaired, err)
+	}
+	if err := s.reconcileMissingProfileRemainders(ctx, player); err != nil {
+		t.Fatal(err)
+	}
+	var returns int
+	if err := pool.QueryRow(ctx, `SELECT COUNT(*) FROM player_time_ledger WHERE game_access_grant_id=$1 AND kind='session_remaining'`, legacyGrant).Scan(&returns); err != nil || returns != 1 {
+		t.Fatalf("legacy remainder duplicated: %d %v", returns, err)
+	}
 }

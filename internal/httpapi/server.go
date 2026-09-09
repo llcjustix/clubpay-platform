@@ -6157,6 +6157,70 @@ func (s *Server) remainingSecondsForAcceptedGrant(ctx context.Context, grantID s
 	return remaining
 }
 
+// reconcileMissingProfileRemainders repairs sessions ended by an older Agent
+// that confirmed a manual end without reporting remaining_seconds. The planned
+// end and the recorded end time provide an exact upper bound; expired sessions
+// and sessions already returned to the profile are deliberately excluded.
+func (s *Server) reconcileMissingProfileRemainders(ctx context.Context, playerID string) error {
+	tx, err := s.db.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+
+	rows, err := tx.Query(ctx, `
+		SELECT g.id::text, g.club_id::text, COALESCE(g.payment_order_id::text, ''),
+			GREATEST(CEIL(EXTRACT(EPOCH FROM (g.planned_ends_at - g.ended_at)))::int, 0)
+		FROM game_access_grants g
+		WHERE g.player_id=$1
+		  AND g.status='ended'
+		  AND g.remaining_seconds=0
+		  AND g.planned_ends_at IS NOT NULL
+		  AND g.ended_at IS NOT NULL
+		  AND g.planned_ends_at > g.ended_at
+		  AND LOWER(COALESCE(g.end_reason,'')) NOT IN ('time_expired','time_up','time_expires','timeout')
+		  AND NOT EXISTS (
+			SELECT 1 FROM player_time_ledger l
+			WHERE l.idempotency_key='session-return:' || g.id::text
+		  )
+		FOR UPDATE OF g
+	`, playerID)
+	if err != nil {
+		return err
+	}
+	type missingRemainder struct {
+		grantID, clubID, paymentOrderID string
+		seconds                         int
+	}
+	missing := make([]missingRemainder, 0)
+	for rows.Next() {
+		var grantID, clubID, paymentOrderID string
+		var seconds int
+		if err := rows.Scan(&grantID, &clubID, &paymentOrderID, &seconds); err != nil {
+			rows.Close()
+			return err
+		}
+		missing = append(missing, missingRemainder{grantID, clubID, paymentOrderID, seconds})
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return err
+	}
+	rows.Close()
+	for _, grant := range missing {
+		if grant.seconds <= 0 {
+			continue
+		}
+		if err := s.recordPlayerTime(ctx, tx, playerID, grant.clubID, grant.seconds, "session_remaining", grant.grantID, grant.paymentOrderID, "session-return:"+grant.grantID); err != nil {
+			return err
+		}
+		if _, err := tx.Exec(ctx, `UPDATE game_access_grants SET remaining_seconds=$2,remaining_minutes=$3 WHERE id=$1`, grant.grantID, grant.seconds, secondsToMinutesCeil(grant.seconds)); err != nil {
+			return err
+		}
+	}
+	return tx.Commit(ctx)
+}
+
 func (s *Server) finishGrant(ctx context.Context, grantID, reason string, remainingSeconds int) (map[string]any, error) {
 	if grantID == "" {
 		return nil, fmt.Errorf("grant_id is required")

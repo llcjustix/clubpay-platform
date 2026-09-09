@@ -450,6 +450,14 @@ func (s *Server) handleMobileBalances(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	// Releases before the Agent remainder fallback could end an early profile
+	// session with zero seconds when the Agent omitted that field. Repair only
+	// those provably early, non-expired sessions once; the ledger key makes a
+	// refresh safe and prevents crediting the same grant twice.
+	if err := s.reconcileMissingProfileRemainders(r.Context(), p.ID); err != nil {
+		mobileInternal(w)
+		return
+	}
 	rows, err := s.queryMaps(r.Context(), `
  WITH owned AS (
   SELECT club_id FROM player_club_balances WHERE player_id=$1
