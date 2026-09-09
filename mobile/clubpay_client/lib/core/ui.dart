@@ -3,6 +3,7 @@ import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:intl/intl.dart';
 import 'package:url_launcher/url_launcher.dart';
 import '../l10n/generated/app_localizations.dart';
 import 'providers.dart';
@@ -14,6 +15,12 @@ extension LocalizedContext on BuildContext {
 
 String timeLabel(BuildContext context, int seconds) =>
     context.l.duration(seconds ~/ 3600, (seconds % 3600) ~/ 60, seconds % 60);
+
+String moneyLabel(BuildContext context, int amount) {
+  final locale = Localizations.localeOf(context).toLanguageTag();
+  return '${NumberFormat.decimalPattern(locale).format(amount)} ${context.l.currencySuffix}';
+}
+
 String errorLabel(BuildContext context, Object error) {
   final l = context.l;
   if (error is DioException) {
@@ -115,7 +122,7 @@ class AppPage extends StatelessWidget {
                     title,
                     style: Theme.of(context).textTheme.headlineLarge,
                   ),
-              ),
+                ),
               ...children,
             ],
           ),

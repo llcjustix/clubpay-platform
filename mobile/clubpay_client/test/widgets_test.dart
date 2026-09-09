@@ -45,7 +45,7 @@ void main() {
     );
   });
   for (final locale in ['ru', 'uz']) {
-    testWidgets('$locale empty balance and exact seconds', (tester) async {
+    testWidgets('$locale shows club game balance in sums', (tester) async {
       await tester.pumpWidget(
         localized(const BalanceList(balances: []), locale),
       );
@@ -53,8 +53,8 @@ void main() {
       expect(
         find.text(
           locale == 'ru'
-              ? 'У вас пока нет игрового времени'
-              : 'Hozircha o‘yin vaqtingiz yo‘q',
+              ? 'Игрового баланса пока нет'
+              : 'Hozircha o‘yin balansi yo‘q',
         ),
         findsOneWidget,
       );
@@ -62,8 +62,8 @@ void main() {
         localized(
           const BalanceList(
             balances: [
-              ClubBalance('one', 'Club One', 3661),
-              ClubBalance('two', 'Club Two', 0),
+              ClubBalance('one', 'Club One', 3661, 15000),
+              ClubBalance('two', 'Club Two', 0, 0),
             ],
           ),
           locale,
@@ -73,9 +73,10 @@ void main() {
       expect(find.text('Club One'), findsOneWidget);
       expect(find.text('Club Two'), findsOneWidget);
       expect(
-        find.text(locale == 'ru' ? '1 ч 1 мин 1 с' : '1 soat 1 daq 1 son'),
-        findsOneWidget,
+        find.textContaining(locale == 'ru' ? 'сум' : 'so‘m'),
+        findsNWidgets(2),
       );
+      expect(find.text(locale == 'ru' ? '0 сум' : '0 so‘m'), findsOneWidget);
     });
   }
   testWidgets('Language switch persists and changes auth strings', (

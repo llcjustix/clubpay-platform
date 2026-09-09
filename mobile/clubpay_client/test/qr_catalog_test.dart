@@ -84,7 +84,7 @@ void main() {
         overrides: [
           apiProvider.overrideWithValue(api),
           balancesProvider.overrideWith(
-            (_) async => [const ClubBalance('live', 'Live Club', 7200)],
+            (_) async => [const ClubBalance('live', 'Live Club', 7200, 30000)],
           ),
         ],
         child: localized(const ComputerScreen(token: 'pc_live')),

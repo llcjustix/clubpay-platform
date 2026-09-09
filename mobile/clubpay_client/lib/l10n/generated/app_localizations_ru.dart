@@ -87,7 +87,7 @@ class AppLocalizationsRu extends AppLocalizations {
   String get perClub => 'Время хранится отдельно в каждом клубе.';
 
   @override
-  String get emptyBalance => 'У вас пока нет игрового времени';
+  String get emptyBalance => 'Игрового баланса пока нет';
 
   @override
   String get emptyBalanceHelp =>
@@ -335,7 +335,7 @@ class AppLocalizationsRu extends AppLocalizations {
 
   @override
   String get timeReturnsHere =>
-      'Отсканируйте QR в клубе. После игры здесь появится клуб и сохранённый остаток.';
+      'Отсканируйте QR компьютера в клубе. После игры здесь появится сохранённый баланс.';
 
   @override
   String get howItWorks => 'Как это работает';
@@ -424,15 +424,19 @@ class AppLocalizationsRu extends AppLocalizations {
   String get clubGameBalance => 'Игровой баланс';
 
   @override
-  String get clubBalanceHelp => 'Доступен в любой зоне';
+  String get currencySuffix => 'сум';
+
+  @override
+  String get clubBalanceHelp =>
+      'Используйте его для игрового времени в этом клубе';
 
   @override
   String get clubBalanceHomeHelp =>
-      'Точное время для выбранного ПК появится после сканирования QR.';
+      'После сканирования QR покажем, на сколько времени хватит баланса на этом ПК.';
 
   @override
   String get zoneConversionHelp =>
-      'Один остаток на клуб. Доступное время пересчитывается по цене выбранной зоны.';
+      'В другой зоне доступное время может отличаться.';
 
   @override
   String get clubOffline => 'Клуб сейчас не на связи';

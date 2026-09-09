@@ -14,34 +14,50 @@ class ClubBalance {
   const ClubBalance(
     this.clubId,
     this.clubName,
-    this.seconds, {
+    this.seconds,
+    this.balanceUzs, {
     this.zones = const [],
     this.updatedAt,
     this.online = true,
     this.stale = false,
   });
   final String clubId, clubName;
-  final int seconds;
+  final int seconds, balanceUzs;
   final List<ZoneBalance> zones;
   final DateTime? updatedAt;
   final bool online, stale;
   int secondsForZone(String name) =>
       zones.where((z) => z.name == name).firstOrNull?.seconds ??
       (zones.isEmpty ? seconds : 0);
+
   factory ClubBalance.fromJson(
     Map<String, dynamic> json, {
     bool stale = false,
-  }) => ClubBalance(
-    json['club_id'] as String,
-    json['club_name'] as String,
-    (json['seconds_balance'] as num).toInt(),
-    zones: ((json['zones'] as List?) ?? [])
+  }) {
+    final seconds = (json['seconds_balance'] as num).toInt();
+    final zones = ((json['zones'] as List?) ?? [])
         .map((z) => ZoneBalance.fromJson(Map<String, dynamic>.from(z)))
-        .toList(),
-    updatedAt: DateTime.tryParse(json['updated_at'] as String? ?? ''),
-    online: json['club_online'] != false,
-    stale: stale,
-  );
+        .toList();
+    return ClubBalance(
+      json['club_id'] as String,
+      json['club_name'] as String,
+      seconds,
+      (json['balance_uzs'] as num?)?.toInt() ??
+          _estimateBalanceUzs(seconds, zones),
+      zones: zones,
+      updatedAt: DateTime.tryParse(json['updated_at'] as String? ?? ''),
+      online: json['club_online'] != false,
+      stale: stale,
+    );
+  }
+
+  static int _estimateBalanceUzs(int seconds, List<ZoneBalance> zones) {
+    if (seconds <= 0 || zones.isEmpty) return 0;
+    final referencePrice = zones
+        .map((zone) => zone.hourlyPriceTiyin)
+        .reduce((lowest, price) => price < lowest ? price : lowest);
+    return (seconds * referencePrice / 360000).round();
+  }
 }
 
 class TimeLedgerEntry {

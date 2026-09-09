@@ -9,7 +9,7 @@
 | `POST /api/mobile/auth/refresh` | `{refresh_token,device_id}` → новая пара токенов |
 | `POST /api/mobile/auth/logout` | `{refresh_token,device_id}` → отзыв сессии, 204 |
 | `GET /api/mobile/me` | id, phone, first_name текущего игрока |
-| `GET /api/mobile/balances` | `{balances:[{club_id,club_name,seconds_balance}]}`; пустой массив при отсутствии остатков |
+| `GET /api/mobile/balances` | `{balances:[{club_id,club_name,balance_uzs,seconds_balance}]}`; пустой массив при отсутствии остатков |
 | `GET /api/mobile/orders/{invoice_id}` | Только свой заказ: status, grant_status, pc_label, duration_seconds, session_seconds, checkout_url, grant_id, planned_ends_at |
 | `GET /api/mobile/sessions/{grant_id}` | Только собственный grant; статус и длительность без Controller/Agent credentials |
 | `GET /api/mobile/operations/{key}` | Результат идемпотентной операции, invoice_id/grant_id, http_status/response |
@@ -86,16 +86,17 @@ rate-limit buckets и токенов отозванных/истёкших се�
 
 `GET /api/mobile/balances` возвращает клубы, в которых у игрока есть остаток,
 заказ или игровая сессия. Для каждого клуба: `club_id`, `club_name`,
-`seconds_balance` (совместимая проекция в базовой цене), `updated_at`,
-`controller_synced_at`, `club_online` и `zones`:
+`balance_uzs` (игровой баланс в сумах), `seconds_balance` (совместимая проекция в базовой цене),
+`updated_at`, `controller_synced_at`, `club_online` и `zones`:
 
 ```json
 {"id":"zone-id","name":"VIP","hourly_price_tiyin":3000000,"seconds_available":1800}
 ```
 
-В Flutter показываются эквиваленты `zones`, а не общий счётчик секунд.
-Это альтернативы одного клубного остатка, их нельзя складывать. Клубная
-принадлежность сохраняется; между разными клубами время не переносится.
+В Flutter на главной показывается один игровой баланс клуба в сумах. После
+сканирования QR приложение показывает, на сколько времени его хватит для
+выбранного ПК. Эквиваленты `zones` — альтернативы одного остатка, их нельзя
+складывать. Между разными клубами баланс не переносится.
 
 Миграция `012_zone_time_value.sql` добавляет целочисленные единицы стоимости
 `time_value_units = seconds × hourly_price_tiyin`. Это внутренняя оценка

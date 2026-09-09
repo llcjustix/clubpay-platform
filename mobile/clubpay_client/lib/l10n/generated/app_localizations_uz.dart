@@ -88,7 +88,7 @@ class AppLocalizationsUz extends AppLocalizations {
   String get perClub => 'Vaqt har bir klubda alohida saqlanadi.';
 
   @override
-  String get emptyBalance => 'Hozircha o‘yin vaqtingiz yo‘q';
+  String get emptyBalance => 'Hozircha o‘yin balansi yo‘q';
 
   @override
   String get emptyBalanceHelp =>
@@ -336,7 +336,7 @@ class AppLocalizationsUz extends AppLocalizations {
 
   @override
   String get timeReturnsHere =>
-      'Klubdagi QR kodni skanerlang. O‘yindan keyin klub va saqlangan qoldiq shu yerda ko‘rinadi.';
+      'Klubdagi kompyuter QR kodini skanerlang. O‘yindan keyin saqlangan balans shu yerda ko‘rinadi.';
 
   @override
   String get howItWorks => 'Bu qanday ishlaydi';
@@ -425,15 +425,18 @@ class AppLocalizationsUz extends AppLocalizations {
   String get clubGameBalance => 'O‘yin balansi';
 
   @override
-  String get clubBalanceHelp => 'Istalgan zonada foydalanish mumkin';
+  String get currencySuffix => 'so‘m';
+
+  @override
+  String get clubBalanceHelp => 'Uni shu klubdagi o‘yin vaqti uchun ishlating';
 
   @override
   String get clubBalanceHomeHelp =>
-      'Tanlangan kompyuter uchun aniq vaqt QR skanerlangandan keyin ko‘rinadi.';
+      'QR skanerlangandan keyin bu kompyuterda balans qancha vaqtga yetishini ko‘rsatamiz.';
 
   @override
   String get zoneConversionHelp =>
-      'Har bir klub uchun bitta qoldiq. Vaqt tanlangan zona narxiga qarab qayta hisoblanadi.';
+      'Boshqa zonada mavjud vaqt boshqacha bo‘lishi mumkin.';
 
   @override
   String get clubOffline => 'Klub hozir tarmoqqa ulanmagan';

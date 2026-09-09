@@ -463,6 +463,7 @@ func (s *Server) handleMobileBalances(w http.ResponseWriter, r *http.Request) {
   FROM owned o JOIN clubs c ON c.id=o.club_id LEFT JOIN player_club_balances b ON b.club_id=c.id AND b.player_id=$1
  )
  SELECT b.club_id,b.club_name,b.seconds_balance,b.updated_at,b.controller_synced_at,b.club_online,
+  GREATEST(0,ROUND(b.units::numeric/360000))::bigint AS balance_uzs,
   COALESCE((SELECT jsonb_agg(jsonb_build_object('id',z.id,'name',z.name,'hourly_price_tiyin',z.hourly_price_tiyin,'seconds_available',b.units/z.hourly_price_tiyin) ORDER BY z.sort_order,z.name) FROM zones z WHERE z.club_id=b.club_id AND z.status<>'deleted' AND z.hourly_price_tiyin>0),'[]'::jsonb) AS zones
  FROM balances b ORDER BY b.club_name`, p.ID, strings.EqualFold(s.cfg.NodeMode, "cloud"))
 	if err != nil {

@@ -127,7 +127,7 @@ void main() {
       await tester.pumpAndSettle();
       expect(find.byKey(const ValueKey('bottom-qr')), findsOneWidget);
       expect(find.text('Мои клубы'), findsOneWidget);
-      expect(find.text('У вас пока нет игрового времени'), findsOneWidget);
+      expect(find.text('Игрового баланса пока нет'), findsOneWidget);
       await tester.tap(find.byKey(const ValueKey('bottom-qr')));
       await tester.pumpAndSettle();
       await tester.tap(find.text('Scan fixture'));

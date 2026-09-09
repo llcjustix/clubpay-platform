@@ -67,7 +67,7 @@ void main() {
       await tester.pumpAndSettle();
       await tester.tap(find.text('Войти'));
       await tester.pumpAndSettle();
-      expect(find.text('У вас пока нет игрового времени'), findsOneWidget);
+      expect(find.text('Игрового баланса пока нет'), findsOneWidget);
       await tester.pumpWidget(const SizedBox.shrink());
     },
   );

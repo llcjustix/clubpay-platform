@@ -49,7 +49,7 @@ class BalanceList extends StatelessWidget {
                       color: ClubColors.orange,
                       title: context.l.clubGameBalance,
                       subtitle: context.l.clubBalanceHelp,
-                      trailing: Text(timeLabel(context, balance.seconds)),
+                      trailing: Text(moneyLabel(context, balance.balanceUzs)),
                     ),
                   ],
                 ),

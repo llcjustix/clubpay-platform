@@ -14,6 +14,7 @@ Map<String, dynamic> balance() => {
   'club_id': 'pilot',
   'club_name': 'Pilot Network',
   'seconds_balance': 3600,
+  'balance_uzs': 15000,
   'updated_at': '2026-09-09T10:00:00Z',
   'club_online': true,
   'zones': [
@@ -53,6 +54,7 @@ void main() {
       final repo = ProfileRepository(api, playerId: 'one');
       final fresh = (await repo.balances()).single;
       expect(fresh.secondsForZone('VIP'), 1800);
+      expect(fresh.balanceUzs, 15000);
       expect(fresh.stale, isFalse);
       online = false;
       final cached = (await repo.balances()).single;
@@ -112,9 +114,11 @@ void main() {
       expect(find.text('Standard'), findsNothing);
       expect(find.text('VIP'), findsNothing);
       expect(
-        find.text(language == 'ru' ? '1 ч 0 мин 0 с' : '1 soat 0 daq 0 son'),
+        find.textContaining(language == 'ru' ? 'сум' : 'so‘m'),
         findsOneWidget,
       );
+      expect(find.text('1 ч 0 мин 0 с'), findsNothing);
+      expect(find.text('1 soat 0 daq 0 son'), findsNothing);
       expect(tester.takeException(), isNull);
     });
   }

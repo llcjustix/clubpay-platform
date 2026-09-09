@@ -245,7 +245,7 @@ abstract class AppLocalizations {
   /// No description provided for @emptyBalance.
   ///
   /// In ru, this message translates to:
-  /// **'У вас пока нет игрового времени'**
+  /// **'Игрового баланса пока нет'**
   String get emptyBalance;
 
   /// No description provided for @emptyBalanceHelp.
@@ -701,7 +701,7 @@ abstract class AppLocalizations {
   /// No description provided for @timeReturnsHere.
   ///
   /// In ru, this message translates to:
-  /// **'Отсканируйте QR в клубе. После игры здесь появится клуб и сохранённый остаток.'**
+  /// **'Отсканируйте QR компьютера в клубе. После игры здесь появится сохранённый баланс.'**
   String get timeReturnsHere;
 
   /// No description provided for @howItWorks.
@@ -860,22 +860,28 @@ abstract class AppLocalizations {
   /// **'Игровой баланс'**
   String get clubGameBalance;
 
+  /// No description provided for @currencySuffix.
+  ///
+  /// In ru, this message translates to:
+  /// **'сум'**
+  String get currencySuffix;
+
   /// No description provided for @clubBalanceHelp.
   ///
   /// In ru, this message translates to:
-  /// **'Доступен в любой зоне'**
+  /// **'Используйте его для игрового времени в этом клубе'**
   String get clubBalanceHelp;
 
   /// No description provided for @clubBalanceHomeHelp.
   ///
   /// In ru, this message translates to:
-  /// **'Точное время для выбранного ПК появится после сканирования QR.'**
+  /// **'После сканирования QR покажем, на сколько времени хватит баланса на этом ПК.'**
   String get clubBalanceHomeHelp;
 
   /// No description provided for @zoneConversionHelp.
   ///
   /// In ru, this message translates to:
-  /// **'Один остаток на клуб. Доступное время пересчитывается по цене выбранной зоны.'**
+  /// **'В другой зоне доступное время может отличаться.'**
   String get zoneConversionHelp;
 
   /// No description provided for @clubOffline.

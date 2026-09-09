@@ -268,8 +268,12 @@ func TestMobileIntegration(t *testing.T) {
 		t.Fatal(err)
 	}
 	balances = expect(200, "GET", "/api/mobile/balances", access, "", nil)
-	if balances["balances"].([]any)[0].(map[string]any)["seconds_balance"] != float64(725) {
+	balance := balances["balances"].([]any)[0].(map[string]any)
+	if balance["seconds_balance"] != float64(725) {
 		t.Fatal("seconds changed")
+	}
+	if amount, ok := balance["balance_uzs"].(float64); !ok || amount <= 0 {
+		t.Fatalf("missing monetary club balance: %#v", balance["balance_uzs"])
 	}
 	body := map[string]any{"qr_token": qr, "tariff_block_id": tariff, "payment_provider": "mock"}
 	publicQR := expect(200, "GET", "/api/qr/"+qr, "", "", nil)
