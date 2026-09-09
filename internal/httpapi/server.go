@@ -8092,6 +8092,12 @@ func (s *Server) mobileTestPaymentAllowed(player playerIdentity) bool {
 	if !s.cfg.MobileTestPaymentsEnabled || player.Phone == "" {
 		return false
 	}
+	// During the closed mobile beta an empty allowlist deliberately enables the
+	// flow for every verified mobile profile. The provider is still absent from
+	// public QR/web responses and can be switched off with one deploy variable.
+	if len(s.cfg.MobileTestPaymentPhones) == 0 {
+		return true
+	}
 	for _, allowed := range s.cfg.MobileTestPaymentPhones {
 		if player.Phone == allowed {
 			return true

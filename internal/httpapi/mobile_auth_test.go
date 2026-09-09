@@ -55,6 +55,19 @@ func TestMobileInputAndSecrets(t *testing.T) {
 	}
 }
 
+func TestMobileTestPaymentAccess(t *testing.T) {
+	profile := playerIdentity{Phone: "+998901234567"}
+	if !(&Server{cfg: config.Config{MobileTestPaymentsEnabled: true}}).mobileTestPaymentAllowed(profile) {
+		t.Fatal("an empty beta allowlist must enable test payments for every verified mobile profile")
+	}
+	if (&Server{cfg: config.Config{MobileTestPaymentsEnabled: false}}).mobileTestPaymentAllowed(profile) {
+		t.Fatal("disabled beta test payments must remain unavailable")
+	}
+	if (&Server{cfg: config.Config{MobileTestPaymentsEnabled: true}}).mobileTestPaymentAllowed(playerIdentity{}) {
+		t.Fatal("profiles without a verified phone must not access test payments")
+	}
+}
+
 // Uses an isolated schema in an explicitly configured disposable PostgreSQL DB.
 // Telegram HTTP calls are intercepted; no real messages or payments are sent.
 func TestMobileIntegration(t *testing.T) {
