@@ -222,7 +222,7 @@ func TestZoneValueIntegration(t *testing.T) {
 	// A release made before the fallback can be repaired on the next balance
 	// refresh without issuing the same return twice.
 	legacyGrant := createEarlyEndGrant("legacy-end-without-remaining")
-	if _, err := pool.Exec(ctx, `UPDATE game_access_grants SET status='ended',ended_at=now(),end_reason='client_left',remaining_seconds=0,remaining_minutes=0 WHERE id=$1`, legacyGrant); err != nil {
+	if _, err := pool.Exec(ctx, `UPDATE game_access_grants SET status='ended',planned_ends_at=NULL,ended_at=now(),end_reason='client_left',remaining_seconds=0,remaining_minutes=0 WHERE id=$1`, legacyGrant); err != nil {
 		t.Fatal(err)
 	}
 	if err := s.reconcileMissingProfileRemainders(ctx, player); err != nil {

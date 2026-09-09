@@ -6170,14 +6170,27 @@ func (s *Server) reconcileMissingProfileRemainders(ctx context.Context, playerID
 
 	rows, err := tx.Query(ctx, `
 		SELECT g.id::text, g.club_id::text, COALESCE(g.payment_order_id::text, ''),
-			GREATEST(CEIL(EXTRACT(EPOCH FROM (g.planned_ends_at - g.ended_at)))::int, 0)
+			GREATEST(CEIL(EXTRACT(EPOCH FROM (
+				COALESCE(
+					g.planned_ends_at,
+					g.accepted_at + make_interval(secs => g.duration_seconds),
+					g.accepted_at + make_interval(mins => g.duration_minutes),
+					g.created_at + make_interval(secs => g.duration_seconds),
+					g.created_at + make_interval(mins => g.duration_minutes)
+				) - g.ended_at
+			)))::int, 0)
 		FROM game_access_grants g
 		WHERE g.player_id=$1
 		  AND g.status='ended'
 		  AND g.remaining_seconds=0
-		  AND g.planned_ends_at IS NOT NULL
 		  AND g.ended_at IS NOT NULL
-		  AND g.planned_ends_at > g.ended_at
+		  AND COALESCE(
+			g.planned_ends_at,
+			g.accepted_at + make_interval(secs => g.duration_seconds),
+			g.accepted_at + make_interval(mins => g.duration_minutes),
+			g.created_at + make_interval(secs => g.duration_seconds),
+			g.created_at + make_interval(mins => g.duration_minutes)
+		  ) > g.ended_at
 		  AND LOWER(COALESCE(g.end_reason,'')) NOT IN ('time_expired','time_up','time_expires','timeout')
 		  AND NOT EXISTS (
 			SELECT 1 FROM player_time_ledger l
@@ -6475,6 +6488,13 @@ func (s *Server) processTelegramUpdate(ctx context.Context, update telegramUpdat
 			return nil, fmt.Errorf("mobile Telegram authorization unavailable")
 		}
 		return map[string]any{"success": true}, nil
+	}
+	// A bare /start has no mobile challenge token. Do not let a contact sent
+	// after it fall into the legacy voucher-binding flow: that used to say the
+	// phone was linked but never issued the mobile login OTP.
+	if phone == "" && strings.TrimSpace(message.Text) == "/start" {
+		_ = s.sendTelegramMessage(ctx, chatID, "Для входа вернитесь в ClubPay и нажмите «Открыть Telegram». Ссылка из приложения запустит подтверждение номера и пришлёт код.")
+		return map[string]any{"success": true, "status": "mobile_link_required"}, nil
 	}
 	if phone == "" && strings.HasPrefix(startPayload, "auth_") {
 		knownPlayer, returnURL, err := s.claimTelegramPlayerAuthChallenge(ctx, startPayload, chatID)

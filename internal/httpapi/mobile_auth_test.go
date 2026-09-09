@@ -169,6 +169,21 @@ func TestMobileIntegration(t *testing.T) {
 		return code
 	}
 	ch := challenge("+998901234567")
+	// A manually typed /start has no signed mobile challenge. It must not
+	// attach a later contact to the legacy voucher flow and falsely claim that
+	// a mobile login was completed.
+	mu.Lock()
+	delivered = ""
+	mu.Unlock()
+	if _, err = s.processTelegramUpdate(ctx, telegramUpdate{Message: telegramMessage{Text: "/start", Chat: telegramChat{ID: 700}, From: telegramUser{ID: 700}}}); err != nil {
+		t.Fatal(err)
+	}
+	mu.Lock()
+	bareStartMessage := delivered
+	mu.Unlock()
+	if !strings.Contains(bareStartMessage, "Открыть Telegram") || strings.Contains(bareStartMessage, "Номер привязан") {
+		t.Fatalf("bare start entered the legacy flow: %q", bareStartMessage)
+	}
 	// Wrong contact and forwarded contact cannot verify the requested phone.
 	msg := telegramMessage{Text: "/start " + ch, Chat: telegramChat{ID: 77}, From: telegramUser{ID: 77}}
 	if _, err = s.processTelegramUpdate(ctx, telegramUpdate{Message: msg}); err != nil {
