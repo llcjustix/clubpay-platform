@@ -209,6 +209,9 @@ func (s *Server) Routes() http.Handler {
 	}
 	mux.HandleFunc("GET /api/edge/snapshot", s.handleEdgeSnapshot)
 	mux.HandleFunc("POST /api/edge/events", s.handleEdgeEvents)
+	mux.HandleFunc("POST /api/edge/pc-commands", s.handleEdgePCCommandEnqueue)
+	mux.HandleFunc("GET /api/edge/pc-commands", s.handleEdgePCCommandList)
+	mux.HandleFunc("POST /api/edge/pc-commands/{command_id}/complete", s.handleEdgePCCommandComplete)
 	mux.HandleFunc("GET /api/admin/catalog", s.handleAdminCatalog)
 	mux.HandleFunc("GET /api/admin/pcs", s.handleAdminPCs)
 	mux.HandleFunc("POST /api/admin/pcs/{pc_id}/wake", s.handleAdminPCWake)
@@ -3360,6 +3363,11 @@ func (s *Server) syncEdgeOnce(ctx context.Context) error {
 		s.finishEdgeSyncRun(ctx, pullID, "success", "", nil)
 		return nil
 	}
+	// A Manager queues PC control actions in Cloud.  Execute them here, on the
+	// only Controller that owns the Agent WebSocket, before publishing the next
+	// snapshot. This also makes the new state visible to the Manager in this
+	// same synchronization pass.
+	s.processPendingEdgePCCommands(ctx, clubID)
 	runID, _ := s.startEdgeSyncRun(ctx, nodeID, clubID, "push")
 	snapshot, err := s.edgeSnapshotData(ctx, clubID, true)
 	if err != nil {
@@ -3727,6 +3735,9 @@ func (s *Server) postCloudJSON(ctx context.Context, path string, body any, resul
 	if s.cfg.EdgeSyncToken != "" {
 		req.Header.Set("Authorization", "Bearer "+s.cfg.EdgeSyncToken)
 		req.Header.Set("X-Edge-Token", s.cfg.EdgeSyncToken)
+	}
+	if nodeID := s.edgeNodeID(); nodeID != "" {
+		req.Header.Set("X-Edge-Node-ID", nodeID)
 	}
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
@@ -5013,11 +5024,10 @@ func (s *Server) handleAdminPCStatus(w http.ResponseWriter, r *http.Request) {
 	}
 	var externalPCID string
 	err = s.db.QueryRow(r.Context(), `
-		UPDATE pc_refs
-		SET status_cache = $1
-		WHERE id = $2
-		RETURNING club_id, external_pc_id
-	`, req.Status, pcID).Scan(&clubID, &externalPCID)
+		SELECT external_pc_id
+		FROM pc_refs
+		WHERE id = $1 AND club_id = $2 AND status_cache <> 'deleted'
+	`, pcID, clubID).Scan(&externalPCID)
 	if errors.Is(err, pgx.ErrNoRows) {
 		writeError(w, http.StatusNotFound, "pc not found")
 		return
@@ -5026,39 +5036,46 @@ func (s *Server) handleAdminPCStatus(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	// The Manager is intentionally a read-only cache: an Agent connects to the
+	// primary Controller, not to the Manager.  Updating this local cache before
+	// a command reached the Agent made the UI briefly claim "sleeping", then
+	// flip back on its next Cloud pull. Queue the request instead; the primary
+	// Controller applies it and publishes the actual Agent state.
+	if s.managerNodeMode() {
+		commandID, err := s.enqueuePrimaryPCCommand(r.Context(), edgePCCommand{
+			ClubID:        clubID,
+			PCID:          pcID,
+			ExternalPCID:  externalPCID,
+			DesiredStatus: req.Status,
+			Reason:        req.Reason,
+		})
+		if err != nil {
+			writeError(w, http.StatusBadGateway, "command could not reach the primary Controller: "+err.Error())
+			return
+		}
+		metadata, _ := json.Marshal(map[string]any{"status": req.Status, "reason": req.Reason, "command_id": commandID})
+		_, _ = s.db.Exec(r.Context(), `
+			INSERT INTO audit_logs (club_id, action, entity_type, entity_id, metadata)
+			VALUES ($1, 'admin_pc_status_queued', 'pc_ref', $2, $3)
+		`, clubID, pcID, metadata)
+		writeJSON(w, http.StatusAccepted, map[string]any{"success": true, "pc_id": pcID, "status": "queued", "command_id": commandID})
+		return
+	}
+
+	if err := s.applyPCStatusCommand(r.Context(), externalPCID, req.Status, req.Reason); err != nil {
+		writeError(w, http.StatusConflict, "PC command failed: "+err.Error())
+		return
+	}
+	if _, err := s.db.Exec(r.Context(), `UPDATE pc_refs SET status_cache = $1 WHERE id = $2 AND club_id = $3`, req.Status, pcID, clubID); err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
 	metadata, _ := json.Marshal(map[string]any{"status": req.Status, "reason": req.Reason})
 	_, _ = s.db.Exec(r.Context(), `
 		INSERT INTO audit_logs (club_id, action, entity_type, entity_id, metadata)
 		VALUES ($1, 'admin_pc_status', 'pc_ref', $2, $3)
 	`, clubID, pcID, metadata)
-
-	coreWarning := ""
-	switch req.Status {
-	case "available":
-		if err := s.core.SetRepair(r.Context(), externalPCID, false); err != nil {
-			coreWarning = err.Error()
-		}
-		if err := s.core.Unlock(r.Context(), externalPCID, defaultString(req.Reason, "admin_available")); err != nil && coreWarning == "" {
-			coreWarning = err.Error()
-		}
-	case "sleeping":
-		if err := s.core.Sleep(r.Context(), externalPCID); err != nil {
-			coreWarning = err.Error()
-		}
-	case "maintenance":
-		if err := s.core.SetRepair(r.Context(), externalPCID, true); err != nil {
-			coreWarning = err.Error()
-		}
-	case "blocked":
-		if err := s.core.Lock(r.Context(), externalPCID, defaultString(req.Reason, "admin_block")); err != nil {
-			coreWarning = err.Error()
-		}
-	}
-	response := map[string]any{"success": true, "pc_id": pcID, "status": req.Status}
-	if coreWarning != "" {
-		response["core_warning"] = coreWarning
-	}
-	writeJSON(w, http.StatusOK, response)
+	writeJSON(w, http.StatusOK, map[string]any{"success": true, "pc_id": pcID, "status": req.Status})
 }
 
 // handleAdminPCWake uses the same server-owned, authenticated LAN relay as a

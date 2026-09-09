@@ -1370,10 +1370,15 @@ function AdminPage({ auth, selectedClubID, currentPath, onClubChange, onLogout }
   }
 
   async function setPCStatus(pcID: string, status: string) {
-    await api(`/api/admin/pcs/${pcID}/status`, {
+    const result = await api<{ status?: string }>(`/api/admin/pcs/${pcID}/status`, {
       method: 'POST',
       body: JSON.stringify({ status, reason: 'admin_panel' }),
     });
+    if (result.status === 'queued') {
+      setMessage(status === 'sleeping'
+        ? 'Команда выключения отправлена основному Controller.'
+        : 'Команда отправлена основному Controller.');
+    }
     refresh();
   }
 
@@ -1644,6 +1649,8 @@ function AdminPage({ auth, selectedClubID, currentPath, onClubChange, onLogout }
                     <div className="table-actions">
                       {pc.status === 'sleeping' ? (
                         <Button size="sm" variant="success" icon={<Power size={14} />} onClick={() => wakePC(pc.id)}>Включить</Button>
+                      ) : pc.status === 'available' ? (
+                        <Button size="sm" variant="secondary" icon={<Power size={14} />} onClick={() => setPCStatus(pc.id, 'sleeping')}>Выключить</Button>
                       ) : pc.status === 'occupied' && activeGrant ? (
                         <Button size="sm" variant="secondary" icon={<Power size={14} />} onClick={() => openEndSession(activeGrant)}>Завершить</Button>
                       ) : (
@@ -1673,6 +1680,8 @@ function AdminPage({ auth, selectedClubID, currentPath, onClubChange, onLogout }
                 <div className="mobile-pc-actions">
                   {pc.status === 'sleeping' ? (
                     <Button size="sm" variant="success" icon={<Power size={14} />} onClick={() => wakePC(pc.id)}>Включить компьютер</Button>
+                  ) : pc.status === 'available' ? (
+                    <Button size="sm" variant="secondary" icon={<Power size={14} />} onClick={() => setPCStatus(pc.id, 'sleeping')}>Выключить компьютер</Button>
                   ) : pc.status === 'occupied' && activeGrant ? (
                     <Button size="sm" variant="secondary" icon={<Power size={14} />} onClick={() => openEndSession(activeGrant)}>Завершить сессию</Button>
                   ) : (
