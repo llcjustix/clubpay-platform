@@ -422,7 +422,14 @@ class AppLocalizationsUz extends AppLocalizations {
   String get myClubs => 'Mening klublarim';
 
   @override
-  String get yourTime => 'O‘yin vaqtingiz';
+  String get clubGameBalance => 'O‘yin balansi';
+
+  @override
+  String get clubBalanceHelp => 'Istalgan zonada foydalanish mumkin';
+
+  @override
+  String get clubBalanceHomeHelp =>
+      'Tanlangan kompyuter uchun aniq vaqt QR skanerlangandan keyin ko‘rinadi.';
 
   @override
   String get zoneConversionHelp =>

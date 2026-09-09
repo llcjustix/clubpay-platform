@@ -44,17 +44,13 @@ class BalanceList extends StatelessWidget {
                           ? context.l.balanceStale
                           : (!balance.online ? context.l.clubOffline : null),
                     ),
-                    if (balance.zones.isEmpty)
-                      SettingsRow(
-                        title: context.l.yourTime,
-                        trailing: Text(timeLabel(context, balance.seconds)),
-                      )
-                    else
-                      for (final zone in balance.zones)
-                        SettingsRow(
-                          title: zone.name,
-                          trailing: Text(timeLabel(context, zone.seconds)),
-                        ),
+                    SettingsRow(
+                      icon: CupertinoIcons.clock_fill,
+                      color: ClubColors.orange,
+                      title: context.l.clubGameBalance,
+                      subtitle: context.l.clubBalanceHelp,
+                      trailing: Text(timeLabel(context, balance.seconds)),
+                    ),
                   ],
                 ),
                 if (balance.updatedAt != null)
@@ -253,7 +249,7 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen>
           Padding(
             padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
             child: Text(
-              l.zoneConversionHelp,
+              l.clubBalanceHomeHelp,
               style: const TextStyle(fontSize: 13, color: ClubColors.muted),
             ),
           ),

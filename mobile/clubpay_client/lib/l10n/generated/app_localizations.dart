@@ -854,11 +854,23 @@ abstract class AppLocalizations {
   /// **'Мои клубы'**
   String get myClubs;
 
-  /// No description provided for @yourTime.
+  /// No description provided for @clubGameBalance.
   ///
   /// In ru, this message translates to:
-  /// **'Ваше время'**
-  String get yourTime;
+  /// **'Игровой баланс'**
+  String get clubGameBalance;
+
+  /// No description provided for @clubBalanceHelp.
+  ///
+  /// In ru, this message translates to:
+  /// **'Доступен в любой зоне'**
+  String get clubBalanceHelp;
+
+  /// No description provided for @clubBalanceHomeHelp.
+  ///
+  /// In ru, this message translates to:
+  /// **'Точное время для выбранного ПК появится после сканирования QR.'**
+  String get clubBalanceHomeHelp;
 
   /// No description provided for @zoneConversionHelp.
   ///

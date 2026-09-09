@@ -421,7 +421,14 @@ class AppLocalizationsRu extends AppLocalizations {
   String get myClubs => 'Мои клубы';
 
   @override
-  String get yourTime => 'Ваше время';
+  String get clubGameBalance => 'Игровой баланс';
+
+  @override
+  String get clubBalanceHelp => 'Доступен в любой зоне';
+
+  @override
+  String get clubBalanceHomeHelp =>
+      'Точное время для выбранного ПК появится после сканирования QR.';
 
   @override
   String get zoneConversionHelp =>

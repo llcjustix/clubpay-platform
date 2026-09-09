@@ -81,7 +81,7 @@ void main() {
     await expectLater(repo.balances(), throwsA(isA<DioException>()));
   });
   for (final language in ['ru', 'uz']) {
-    testWidgets('$language club and zone list fits large text at 320px', (
+    testWidgets('$language club balance fits large text at 320px', (
       tester,
     ) async {
       await tester.binding.setSurfaceSize(const Size(320, 1000));
@@ -105,10 +105,14 @@ void main() {
       );
       await tester.pumpAndSettle();
       expect(find.text('Pilot Network'), findsOneWidget);
-      expect(find.text('Standard'), findsOneWidget);
-      expect(find.text('VIP'), findsOneWidget);
       expect(
-        find.text(language == 'ru' ? '0 ч 30 мин 0 с' : '0 soat 30 daq 0 son'),
+        find.text(language == 'ru' ? 'Игровой баланс' : 'O‘yin balansi'),
+        findsOneWidget,
+      );
+      expect(find.text('Standard'), findsNothing);
+      expect(find.text('VIP'), findsNothing);
+      expect(
+        find.text(language == 'ru' ? '1 ч 0 мин 0 с' : '1 soat 0 daq 0 son'),
         findsOneWidget,
       );
       expect(tester.takeException(), isNull);
