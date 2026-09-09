@@ -3114,6 +3114,13 @@ func (s *Server) processCoreEvent(ctx context.Context, req coreEventRequest) (ma
 			remainingSeconds = intFromPayload(req.Payload, "remaining_minutes") * 60
 		}
 		reason := defaultString(stringFromPayload(req.Payload, "reason"), "core_event")
+		// Older Agent builds can omit remaining_seconds on a manual end event.
+		// Do not erase a player's balance in that case: the accepted grant's
+		// planned end is the authoritative fallback. A time-expired event keeps
+		// its explicit zero remainder.
+		if remainingSeconds <= 0 && sessionEndMayHaveRemainder(reason) {
+			remainingSeconds = s.remainingSecondsForAcceptedGrant(ctx, grantID)
+		}
 		result, err = s.finishGrant(ctx, grantID, reason, remainingSeconds)
 	case "session_failed", "command_failed":
 		message := defaultString(stringFromPayload(req.Payload, "message"), "core command failed")
@@ -5436,7 +5443,14 @@ func (s *Server) handleAgentEndSession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	result, err := s.finishGrant(r.Context(), grantID, "client_left", endResult.RemainingSeconds)
+	remainingSeconds := endResult.RemainingSeconds
+	if remainingSeconds <= 0 {
+		// A client-initiated end is always early by intent. Some Agents confirm
+		// the command but omit remaining_seconds, so derive it from the active
+		// ClubPay grant before marking the session ended.
+		remainingSeconds = s.remainingSecondsForAcceptedGrant(r.Context(), grantID)
+	}
+	result, err := s.finishGrant(r.Context(), grantID, "client_left", remainingSeconds)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
@@ -6106,6 +6120,41 @@ func (s *Server) redeemVoucherToPC(ctx context.Context, req redeemVoucherRequest
 		"success": true, "voucher_id": voucherID, "grant_id": grantID, "core_session_id": coreSessionID,
 		"minutes_left": minutes, "seconds_left": seconds, "status": "redeemed",
 	}, nil
+}
+
+func sessionEndMayHaveRemainder(reason string) bool {
+	switch strings.ToLower(strings.TrimSpace(reason)) {
+	case "time_expired", "time_up", "time_expires", "timeout":
+		return false
+	default:
+		return true
+	}
+}
+
+func (s *Server) remainingSecondsForAcceptedGrant(ctx context.Context, grantID string) int {
+	if strings.TrimSpace(grantID) == "" {
+		return 0
+	}
+	var remaining int
+	err := s.db.QueryRow(ctx, `
+		SELECT GREATEST(
+		  CEIL(EXTRACT(EPOCH FROM (
+		    COALESCE(
+		      planned_ends_at,
+		      accepted_at + make_interval(secs => duration_seconds),
+		      accepted_at + make_interval(mins => duration_minutes),
+		      now()
+		    ) - now()
+		  )))::int,
+		  0
+		)
+		FROM game_access_grants
+		WHERE id = $1 AND status = 'accepted'
+	`, grantID).Scan(&remaining)
+	if err != nil {
+		return 0
+	}
+	return remaining
 }
 
 func (s *Server) finishGrant(ctx context.Context, grantID, reason string, remainingSeconds int) (map[string]any, error) {

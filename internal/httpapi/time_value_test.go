@@ -1,9 +1,12 @@
 package httpapi
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"math"
+	"net/http/httptest"
 	"os"
 	"testing"
 
@@ -154,5 +157,65 @@ func TestZoneValueIntegration(t *testing.T) {
 	var rate int64
 	if err = pool.QueryRow(ctx, `SELECT time_value_rate FROM game_access_grants WHERE id=$1`, original).Scan(&rate); err != nil || rate != 1500000 {
 		t.Fatal(fmt.Sprint(rate, err))
+	}
+
+	createEarlyEndGrant := func(coreSessionID string) string {
+		var id string
+		if err := pool.QueryRow(ctx, `
+			INSERT INTO game_access_grants (
+				club_id, pc_ref_id, player_id, duration_minutes, duration_seconds,
+				status, source, core_session_id, accepted_at, planned_ends_at
+			)
+			VALUES ($1,$2,$3,60,3600,'accepted','online_payment',$4,now(),now()+interval '1 hour')
+			RETURNING id
+		`, club, pc, player, coreSessionID).Scan(&id); err != nil {
+			t.Fatal(err)
+		}
+		return id
+	}
+
+	var externalPCID string
+	if err := pool.QueryRow(ctx, `SELECT external_pc_id FROM pc_refs WHERE id=$1`, pc).Scan(&externalPCID); err != nil {
+		t.Fatal(err)
+	}
+	// The mock Agent confirms end_session without remaining_seconds. A manual
+	// Agent endpoint must still return the unused profile time.
+	agentGrant := createEarlyEndGrant("agent-end-without-remaining")
+	body, _ := json.Marshal(agentEndSessionRequest{ExternalPCID: externalPCID, CoreSessionID: "agent-end-without-remaining"})
+	req := httptest.NewRequest("POST", "/api/core/agent/session/end", bytes.NewReader(body))
+	res := httptest.NewRecorder()
+	s.handleAgentEndSession(res, req)
+	if res.Code != 200 {
+		t.Fatalf("agent early end: %d %s", res.Code, res.Body.String())
+	}
+	var agentResult map[string]any
+	if err := json.Unmarshal(res.Body.Bytes(), &agentResult); err != nil {
+		t.Fatal(err)
+	}
+	if remaining, _ := agentResult["remaining_seconds"].(float64); remaining < 3500 || remaining > 3600 {
+		t.Fatalf("agent end lost remaining time: %#v", agentResult)
+	}
+	var ended bool
+	if err := pool.QueryRow(ctx, `SELECT status='ended' FROM game_access_grants WHERE id=$1`, agentGrant).Scan(&ended); err != nil || !ended {
+		t.Fatalf("agent grant not ended: %v %v", ended, err)
+	}
+
+	// The asynchronous session_ended event has the same fallback when an older
+	// Agent omits the remainder from its payload.
+	eventGrant := createEarlyEndGrant("event-end-without-remaining")
+	eventResult, status, err := s.processCoreEvent(ctx, coreEventRequest{
+		EventID:       "session-ended-without-remaining",
+		EventType:     "session_ended",
+		CoreSessionID: "event-end-without-remaining",
+		Payload:       map[string]any{"reason": "client_left"},
+	})
+	if err != nil || status != 200 {
+		t.Fatalf("session_ended event: status=%d result=%#v err=%v", status, eventResult, err)
+	}
+	if remaining, _ := eventResult["remaining_seconds"].(int); remaining < 3500 || remaining > 3600 {
+		t.Fatalf("event end lost remaining time: %#v", eventResult)
+	}
+	if err := pool.QueryRow(ctx, `SELECT status='ended' FROM game_access_grants WHERE id=$1`, eventGrant).Scan(&ended); err != nil || !ended {
+		t.Fatalf("event grant not ended: %v %v", ended, err)
 	}
 }
