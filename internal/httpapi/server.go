@@ -3070,7 +3070,19 @@ func (s *Server) processCoreEvent(ctx context.Context, req coreEventRequest) (ma
 			SET status = 'start_failed', last_error = $1
 			WHERE id = NULLIF($2, '')::uuid OR core_session_id = $3
 		`, message, req.GrantID, req.CoreSessionID)
-	case "heartbeat", "time_low":
+	case "heartbeat":
+		// A heartbeat is not merely diagnostic: it is the authoritative live
+		// state sent by a connected Agent. In particular, Windows can reject or
+		// immediately resume a sleep request (common on VMs). Without accepting
+		// this state, a prior "sleeping" command remained stuck in the Manager
+		// even though the Agent was visibly online and available.
+		status := normalizeCoreStatus(defaultString(stringFromPayload(req.Payload, "status"), stringFromPayload(req.Payload, "pc_state")))
+		if req.ExternalPCID != "" && isKnownPCStatus(status) {
+			_, err = s.db.Exec(ctx, `UPDATE pc_refs SET status_cache = $1 WHERE external_pc_id = $2`, status, req.ExternalPCID)
+		} else {
+			processStatus = "ignored"
+		}
+	case "time_low":
 		processStatus = "ignored"
 	default:
 		processStatus = "ignored"
