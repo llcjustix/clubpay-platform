@@ -455,6 +455,9 @@ class AppLocalizationsUz extends AppLocalizations {
   }
 
   @override
+  String get zeroMinutes => '0 daq';
+
+  @override
   String get balancePending => 'Qoldiq yangilanmoqda…';
 
   @override

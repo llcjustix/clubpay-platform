@@ -40,7 +40,7 @@ Widget localized(Widget home) => MaterialApp(
 
 void main() {
   test(
-    'Actual ClubPay URL parses; public lookup never sends local credentials',
+    'Actual ClubPay URL sends a mobile token when the player is signed in',
     () async {
       const token =
           'pc_9fa6a7d6ec327a8242fed53307b021b8d67593f9cf3664563e5d09d539801b94';
@@ -50,7 +50,7 @@ void main() {
         vault,
         dio: stubDio((r) async {
           expect(r.path, '/api/qr/$token');
-          expect(r.headers['Authorization'], isNull);
+          expect(r.headers['Authorization'], 'Bearer mob_a_local');
           return (200, livePc());
         }),
       );

@@ -455,6 +455,9 @@ class AppLocalizationsRu extends AppLocalizations {
   }
 
   @override
+  String get zeroMinutes => '0 мин';
+
+  @override
   String get balancePending => 'Обновляем остаток…';
 
   @override

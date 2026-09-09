@@ -176,6 +176,7 @@
       }
     }
   },
+  "zeroMinutes": "0 daq",
   "balancePending": "Qoldiq yangilanmoqda…",
   "useBalance": "Vaqtdan foydalanish",
   "balanceInZone": "{zone} zonasida mavjud",

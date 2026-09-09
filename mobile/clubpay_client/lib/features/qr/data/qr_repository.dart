@@ -9,11 +9,7 @@ class QrRepository {
     if (token == null) throw const FormatException('invalid_qr');
     return QrComputer.fromJson(
       token,
-      await api.request(
-        'GET',
-        '/api/qr/${Uri.encodeComponent(token)}',
-        auth: false,
-      ),
+      await api.request('GET', '/api/qr/${Uri.encodeComponent(token)}'),
     );
   }
 }

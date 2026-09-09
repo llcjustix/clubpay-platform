@@ -47,8 +47,8 @@ class _ComputerScreenState extends ConsumerState<ComputerScreen> {
     }
     setState(() => _busy = true);
     final repo = ref.read(paymentRepositoryProvider);
-    final provider = _provider ??
-        pc.providers.where((p) => p.available).firstOrNull?.id;
+    final provider =
+        _provider ?? pc.providers.where((p) => p.available).firstOrNull?.id;
     try {
       await repo.begin(
         token: pc.token,
@@ -238,7 +238,9 @@ class _ComputerScreenState extends ConsumerState<ComputerScreen> {
                 ),
               ActionButton(
                 label: selectedProvider == 'mock' ? l.testPayAndStart : l.pay,
-                icon: selectedProvider == 'mock' ? Icons.play_arrow : Icons.open_in_new,
+                icon: selectedProvider == 'mock'
+                    ? Icons.play_arrow
+                    : Icons.open_in_new,
                 busy: _busy,
                 onPressed:
                     pc.canStart &&
@@ -258,7 +260,9 @@ class _ComputerScreenState extends ConsumerState<ComputerScreen> {
                   gap,
                   balances.when(
                     data: (_) => Text(
-                      timeLabel(context, seconds),
+                      seconds <= 0
+                          ? l.zeroMinutes
+                          : timeLabel(context, seconds),
                       style: Theme.of(context).textTheme.headlineSmall,
                     ),
                     loading: () => Text(l.balancePending),

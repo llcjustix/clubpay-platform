@@ -908,6 +908,12 @@ abstract class AppLocalizations {
   /// **'Обновлено: {time}'**
   String balanceUpdated(String time);
 
+  /// No description provided for @zeroMinutes.
+  ///
+  /// In ru, this message translates to:
+  /// **'0 мин'**
+  String get zeroMinutes;
+
   /// No description provided for @balancePending.
   ///
   /// In ru, this message translates to:

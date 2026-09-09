@@ -176,6 +176,7 @@
       }
     }
   },
+  "zeroMinutes": "0 мин",
   "balancePending": "Обновляем остаток…",
   "useBalance": "Использовать время",
   "balanceInZone": "Доступно в зоне {zone}",
