@@ -131,7 +131,9 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen>
     return AppPage(
       title: widget.profile ? l.profile : l.appName,
       largeTitle: !widget.profile,
-      bottom: ClubNavigation(profile: widget.profile),
+      bottom: widget.profile
+          ? _ProfileBottom(loggingOut: _loggingOut, onLogout: _logout)
+          : const ClubNavigation(profile: false),
       children: [
         if (widget.profile) ...[
           const SizedBox(height: 12),
@@ -161,44 +163,6 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen>
                       : l.uzbek,
                 ),
                 onTap: () => _showLanguage(context),
-              ),
-              SettingsRow(
-                icon: CupertinoIcons.clock_fill,
-                color: ClubColors.orange,
-                title: l.gameTime,
-                onTap: () => context.go('/home'),
-              ),
-            ],
-          ),
-          const SizedBox(height: 32),
-          SettingsGroup(
-            children: [
-              SettingsRow(
-                icon: CupertinoIcons.info,
-                color: const Color(0xff8e8e93),
-                title: l.aboutApp,
-                trailing: Text(l.appName),
-              ),
-            ],
-          ),
-          const SizedBox(height: 32),
-          SettingsGroup(
-            inset: 16,
-            children: [
-              SizedBox(
-                width: double.infinity,
-                child: CupertinoButton(
-                  onPressed: _loggingOut ? null : _logout,
-                  child: _loggingOut
-                      ? const CupertinoActivityIndicator()
-                      : Text(
-                          l.logout,
-                          style: const TextStyle(
-                            color: ClubColors.red,
-                            fontSize: 17,
-                          ),
-                        ),
-                ),
               ),
             ],
           ),
@@ -314,6 +278,44 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen>
           ),
         ),
       );
+}
+
+class _ProfileBottom extends StatelessWidget {
+  const _ProfileBottom({required this.loggingOut, required this.onLogout});
+  final bool loggingOut;
+  final VoidCallback onLogout;
+
+  @override
+  Widget build(BuildContext context) => DecoratedBox(
+    decoration: const BoxDecoration(
+      color: ClubColors.background,
+      border: Border(top: BorderSide(color: ClubColors.elevated, width: .5)),
+    ),
+    child: Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 480),
+          child: SizedBox(
+            width: double.infinity,
+            child: CupertinoButton(
+              onPressed: loggingOut ? null : onLogout,
+              child: loggingOut
+                  ? const CupertinoActivityIndicator()
+                  : Text(
+                      context.l.logout,
+                      style: const TextStyle(
+                        color: ClubColors.red,
+                        fontSize: 17,
+                      ),
+                    ),
+            ),
+          ),
+        ),
+        const ClubNavigation(profile: true),
+      ],
+    ),
+  );
 }
 
 class _AccountAvatar extends StatelessWidget {
