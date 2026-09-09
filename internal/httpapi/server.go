@@ -3012,6 +3012,14 @@ func (s *Server) processCoreEvent(ctx context.Context, req coreEventRequest) (ma
 				WHERE external_pc_id = $1
 			`, req.ExternalPCID)
 		}
+		// The WebSocket agent_online contract has no state field.  Ask the
+		// connected Agent for its real state after this event returns instead of
+		// preserving an old "sleeping" cache value from before a reboot.  This
+		// must run asynchronously: the WebSocket read loop needs to remain free
+		// to receive get_status' command result.
+		if req.ExternalPCID != "" {
+			go s.refreshConnectedPCStatus(req.ExternalPCID)
+		}
 	case "agent_offline", "controller_offline":
 		if req.ExternalPCID != "" {
 			_, err = s.db.Exec(ctx, `UPDATE pc_refs SET status_cache = 'offline' WHERE external_pc_id = $1`, req.ExternalPCID)
@@ -8237,6 +8245,19 @@ func (s *Server) sessionGraceDuration() time.Duration {
 
 func sessionExtendQRActive(boundGrantID, activeGrantID string, expiresAt *time.Time, now time.Time) bool {
 	return boundGrantID != "" && boundGrantID == activeGrantID && expiresAt != nil && expiresAt.After(now)
+}
+
+func (s *Server) refreshConnectedPCStatus(externalPCID string) {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	status, err := s.core.GetPCStatus(ctx, externalPCID)
+	if err != nil || !status.AgentOnline || !isKnownPCStatus(status.Status) {
+		return
+	}
+	result, err := s.db.Exec(ctx, `UPDATE pc_refs SET status_cache = $1 WHERE external_pc_id = $2`, status.Status, externalPCID)
+	if err == nil && result.RowsAffected() > 0 {
+		s.syncAfterCoreEvent("pc_status_changed")
+	}
 }
 
 func isKnownPCStatus(status string) bool {
