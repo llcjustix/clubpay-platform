@@ -6,7 +6,6 @@ import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../core/providers.dart';
 import '../../../core/ui.dart';
-import '../../../core/dev_mode.dart';
 import '../domain/auth_models.dart';
 
 class AuthScreen extends ConsumerStatefulWidget {
@@ -81,7 +80,6 @@ class _AuthScreenState extends ConsumerState<AuthScreen> {
   Widget build(BuildContext context) {
     final l = context.l;
     final expired = _challenge?.expiresAt.isBefore(DateTime.now()) ?? false;
-    final developmentOtp = _challenge?.developmentOtp;
     return AppPage(
       title: l.appName,
       children: [
@@ -115,7 +113,7 @@ class _AuthScreenState extends ConsumerState<AuthScreen> {
         Text(
           _challenge == null
               ? l.intro
-              : (developmentOtp == null ? l.telegramHelp : l.localOtpHelp),
+              : l.telegramHelp,
           style: Theme.of(context).textTheme.bodyLarge,
         ),
         const SizedBox(height: 32),
@@ -134,7 +132,7 @@ class _AuthScreenState extends ConsumerState<AuthScreen> {
           ActionButton(label: l.continueLabel, onPressed: _start, busy: _busy),
           gap,
           Text(
-            localOtpTestMode ? l.localSignInHelp : l.signInHelp,
+            l.signInHelp,
             style: Theme.of(context).textTheme.bodySmall,
           ),
         ] else ...[
@@ -144,28 +142,21 @@ class _AuthScreenState extends ConsumerState<AuthScreen> {
                 normalizeUzPhone(_phone.text)!,
                 style: Theme.of(context).textTheme.titleLarge,
               ),
-              if (developmentOtp != null) ...[
-                gap,
-                Text(l.localOtpLabel),
-                SelectableText(
-                  developmentOtp,
-                  style: Theme.of(context).textTheme.headlineMedium,
-                ),
-              ] else
-                ActionButton(
-                  label: l.openTelegram,
-                  icon: Icons.open_in_new,
-                  onPressed: expired
-                      ? null
-                      : () async {
-                          try {
-                            await openExternal(_challenge!.telegramLink);
-                          } catch (e) {
-                            if (context.mounted) showFailure(context, e);
-                          }
-                        },
-                  secondary: true,
-                ),
+              gap,
+              ActionButton(
+                label: l.openTelegram,
+                icon: Icons.open_in_new,
+                onPressed: expired
+                    ? null
+                    : () async {
+                        try {
+                          await openExternal(_challenge!.telegramLink);
+                        } catch (e) {
+                          if (context.mounted) showFailure(context, e);
+                        }
+                      },
+                secondary: true,
+              ),
             ],
           ),
           TextField(
@@ -178,7 +169,7 @@ class _AuthScreenState extends ConsumerState<AuthScreen> {
             ],
             onChanged: (_) => setState(() {}),
             decoration: InputDecoration(
-              labelText: developmentOtp == null ? l.otp : l.localOtpInput,
+              labelText: l.otp,
             ),
             onSubmitted: (_) =>
                 !_busy && !expired && _otp.text.length == 6 ? _verify() : null,

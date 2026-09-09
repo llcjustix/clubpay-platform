@@ -1,5 +1,3 @@
-import '../../../core/dev_mode.dart';
-
 class Player {
   const Player({
     required this.id,
@@ -32,19 +30,14 @@ class AuthChallenge {
   const AuthChallenge(
     this.token,
     this.telegramLink,
-    this.expiresAt, {
-    this.developmentOtp,
-  });
+    this.expiresAt,
+  );
   final String token, telegramLink;
-  final String? developmentOtp;
   final DateTime expiresAt;
   factory AuthChallenge.fromJson(Map<String, dynamic> json) => AuthChallenge(
     json['challenge'] as String,
     json['telegram_link'] as String,
     DateTime.parse(json['expires_at'] as String),
-    developmentOtp: localOtpTestMode
-        ? json['development_otp'] as String?
-        : null,
   );
 }
 

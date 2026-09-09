@@ -309,26 +309,6 @@ class AppLocalizationsRu extends AppLocalizations {
       'Подтверждение номера через Telegram. Ваши остатки времени будут доступны после входа.';
 
   @override
-  String get localTestBanner => 'Локальный тестовый стенд · OTP без Telegram';
-
-  @override
-  String get localSignInHelp =>
-      'Для проверки первого входа код появится на следующем экране. Можно использовать тестовый номер +998 90 000 00 01.';
-
-  @override
-  String get localOtpHelp =>
-      'Введите одноразовый код из карточки ниже. Он действует 3 минуты. Отправка контакта и доставка через Telegram здесь имитируются.';
-
-  @override
-  String get localOtpLabel => 'Ваш одноразовый тестовый код';
-
-  @override
-  String get localOtpInput => 'Код для тестового входа';
-
-  @override
-  String get testMode => 'Тестовый режим';
-
-  @override
   String get readyToPlay => 'Готовы играть?';
 
   @override

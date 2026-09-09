@@ -6,7 +6,6 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:url_launcher/url_launcher.dart';
 import '../l10n/generated/app_localizations.dart';
 import 'providers.dart';
-import 'dev_mode.dart';
 import 'club_theme.dart';
 
 extension LocalizedContext on BuildContext {
@@ -116,24 +115,8 @@ class AppPage extends StatelessWidget {
                     title,
                     style: Theme.of(context).textTheme.headlineLarge,
                   ),
-                ),
+              ),
               ...children,
-              if (localOtpTestMode)
-                Padding(
-                  padding: const EdgeInsets.only(top: 24),
-                  child: Center(
-                    child: Tooltip(
-                      message: context.l.localTestBanner,
-                      child: Text(
-                        context.l.testMode,
-                        style: const TextStyle(
-                          fontSize: 12,
-                          color: ClubColors.muted,
-                        ),
-                      ),
-                    ),
-                  ),
-                ),
             ],
           ),
         ),

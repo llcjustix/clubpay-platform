@@ -3,10 +3,8 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:clubpay_client/core/api_client.dart';
 import 'package:clubpay_client/core/app.dart';
-import 'package:clubpay_client/core/dev_mode.dart';
 import 'package:clubpay_client/core/providers.dart';
 import 'package:clubpay_client/core/secure_store.dart';
-import 'package:clubpay_client/features/auth/domain/auth_models.dart';
 import 'helpers.dart';
 
 Map<String, dynamic> challenge() => {
@@ -19,15 +17,8 @@ Map<String, dynamic> challenge() => {
 };
 
 void main() {
-  test('Sandbox code requires explicit debug mode and loopback API', () {
-    expect(
-      AuthChallenge.fromJson(challenge()).developmentOtp,
-      localOtpTestMode ? '018910' : isNull,
-    );
-  });
-
   testWidgets(
-    'Local OTP is labelled and entered manually before profile access',
+    'The app always directs the player to Telegram and never displays an API OTP',
     (tester) async {
       await tester.binding.setSurfaceSize(const Size(600, 1800));
       addTearDown(() => tester.binding.setSurfaceSize(null));
@@ -65,12 +56,12 @@ void main() {
         ),
       );
       await tester.pumpAndSettle();
-      expect(find.text('Тестовый режим'), findsOneWidget);
       await tester.enterText(find.byType(TextField), '+998900000001');
       await tester.tap(find.text('Продолжить'));
       await tester.pumpAndSettle();
-      expect(find.text('018910'), findsOneWidget);
-      expect(find.text('Открыть Telegram'), findsNothing);
+      expect(find.text('018910'), findsNothing);
+      expect(find.text('Открыть Telegram'), findsOneWidget);
+      expect(find.text('Код из Telegram'), findsOneWidget);
       expect(verified, isFalse);
       await tester.enterText(find.byType(TextField), '018910');
       await tester.pumpAndSettle();
@@ -79,6 +70,5 @@ void main() {
       expect(find.text('У вас пока нет игрового времени'), findsOneWidget);
       await tester.pumpWidget(const SizedBox.shrink());
     },
-    skip: !localOtpTestMode,
   );
 }

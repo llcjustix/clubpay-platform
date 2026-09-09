@@ -650,42 +650,6 @@ abstract class AppLocalizations {
   /// **'Подтверждение номера через Telegram. Ваши остатки времени будут доступны после входа.'**
   String get signInHelp;
 
-  /// No description provided for @localTestBanner.
-  ///
-  /// In ru, this message translates to:
-  /// **'Локальный тестовый стенд · OTP без Telegram'**
-  String get localTestBanner;
-
-  /// No description provided for @localSignInHelp.
-  ///
-  /// In ru, this message translates to:
-  /// **'Для проверки первого входа код появится на следующем экране. Можно использовать тестовый номер +998 90 000 00 01.'**
-  String get localSignInHelp;
-
-  /// No description provided for @localOtpHelp.
-  ///
-  /// In ru, this message translates to:
-  /// **'Введите одноразовый код из карточки ниже. Он действует 3 минуты. Отправка контакта и доставка через Telegram здесь имитируются.'**
-  String get localOtpHelp;
-
-  /// No description provided for @localOtpLabel.
-  ///
-  /// In ru, this message translates to:
-  /// **'Ваш одноразовый тестовый код'**
-  String get localOtpLabel;
-
-  /// No description provided for @localOtpInput.
-  ///
-  /// In ru, this message translates to:
-  /// **'Код для тестового входа'**
-  String get localOtpInput;
-
-  /// No description provided for @testMode.
-  ///
-  /// In ru, this message translates to:
-  /// **'Тестовый режим'**
-  String get testMode;
-
   /// No description provided for @readyToPlay.
   ///
   /// In ru, this message translates to:

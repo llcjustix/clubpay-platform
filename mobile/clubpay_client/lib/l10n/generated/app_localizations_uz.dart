@@ -310,26 +310,6 @@ class AppLocalizationsUz extends AppLocalizations {
       'Raqam Telegram orqali tasdiqlanadi. Saqlangan vaqtingiz kirganingizdan keyin ko‘rinadi.';
 
   @override
-  String get localTestBanner => 'Mahalliy sinov muhiti · Telegramsiz OTP';
-
-  @override
-  String get localSignInHelp =>
-      'Birinchi kirishni tekshirish uchun kod keyingi ekranda ko‘rinadi. +998 90 000 00 01 sinov raqamidan foydalanishingiz mumkin.';
-
-  @override
-  String get localOtpHelp =>
-      'Quyidagi kartadagi bir martalik kodni kiriting. U 3 daqiqa amal qiladi. Kontakt yuborish va Telegram orqali yetkazish bu yerda taqlid qilinadi.';
-
-  @override
-  String get localOtpLabel => 'Bir martalik sinov kodingiz';
-
-  @override
-  String get localOtpInput => 'Sinov uchun kirish kodi';
-
-  @override
-  String get testMode => 'Sinov rejimi';
-
-  @override
   String get readyToPlay => 'O‘ynashga tayyormisiz?';
 
   @override
