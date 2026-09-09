@@ -210,6 +210,32 @@ func TestMobileIntegration(t *testing.T) {
 	if len(balances["balances"].([]any)) != 0 {
 		t.Fatal("fake balance")
 	}
+	// A previously confirmed bot contact receives a new mobile OTP directly
+	// from a signed app link; it must not fall through to voucher delivery.
+	knownPhone := "+998906666666"
+	knownChat := int64(66)
+	if _, err = pool.Exec(ctx, `INSERT INTO telegram_users(phone,chat_id,status) VALUES($1,$2,'active')`, knownPhone, fmt.Sprint(knownChat)); err != nil {
+		t.Fatal(err)
+	}
+	ch = challenge(knownPhone)
+	mu.Lock()
+	delivered = ""
+	mu.Unlock()
+	msg = telegramMessage{Text: "/start " + ch, Chat: telegramChat{ID: knownChat}, From: telegramUser{ID: knownChat, FirstName: "Known Player"}}
+	if _, err = s.processTelegramUpdate(ctx, telegramUpdate{Message: msg}); err != nil {
+		t.Fatal(err)
+	}
+	mu.Lock()
+	knownMessage := delivered
+	mu.Unlock()
+	if !strings.Contains(knownMessage, "Код входа ClubPay") || strings.Contains(knownMessage, "Ваш ваучер") {
+		t.Fatalf("known mobile binding did not receive an OTP: %q", knownMessage)
+	}
+	knownOTP := regexp.MustCompile(`[0-9]{6}`).FindString(knownMessage)
+	if knownOTP == "" {
+		t.Fatal("known mobile binding received no OTP digits")
+	}
+	expect(200, "POST", "/api/mobile/auth/verify", "", "", map[string]any{"challenge": ch, "device_id": device, "otp": knownOTP})
 	var rawStored int
 	_ = pool.QueryRow(ctx, `SELECT count(*) FROM mobile_tokens WHERE token_hash=$1 OR token_hash=$2`, access, refresh).Scan(&rawStored)
 	if rawStored != 0 {

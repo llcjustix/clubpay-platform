@@ -173,6 +173,26 @@ func (s *Server) processMobileTelegram(ctx context.Context, message telegramMess
 		if tag.RowsAffected() == 0 {
 			return true, s.sendTelegramMessage(ctx, chat, "Ссылка устарела. Создайте новый запрос в ClubPay. / Havola eskirgan. ClubPay’da qayta urinib ko‘ring.")
 		}
+		// A user who already confirmed this exact phone with the same bot does
+		// not need to share the contact on every device sign-in. Treat that
+		// existing bot binding as the contact confirmation and issue the OTP
+		// immediately. This also keeps legacy voucher handling out of the
+		// mobile authorization conversation.
+		var boundPhone string
+		err = s.db.QueryRow(ctx, `SELECT u.phone
+			FROM telegram_users u
+			JOIN mobile_auth_challenges c ON c.phone = u.phone
+			WHERE c.token_hash = $1 AND u.chat_id = $2 AND u.status = 'active'`, hashToken(payload), chat).Scan(&boundPhone)
+		if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+			return true, err
+		}
+		if err == nil {
+			message.Contact = telegramContact{
+				PhoneNumber: boundPhone,
+				UserID:      message.From.ID,
+			}
+			return s.processMobileTelegram(ctx, message, "")
+		}
 		return true, s.sendTelegramMessageWithMarkup(ctx, chat, "Подтвердите номер из приложения своим контактом. / Ilovadagi raqamni o‘z kontaktingiz bilan tasdiqlang.", telegramContactKeyboard())
 	}
 	if message.Contact.PhoneNumber == "" {
