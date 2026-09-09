@@ -76,7 +76,12 @@ void main() {
         find.textContaining(locale == 'ru' ? 'сум' : 'so‘m'),
         findsNWidgets(2),
       );
-      expect(find.text(locale == 'ru' ? '0 сум' : '0 so‘m'), findsOneWidget);
+      expect(
+        find.text(
+          locale == 'ru' ? 'Игровой баланс: 0 сум' : 'O‘yin balansi: 0 so‘m',
+        ),
+        findsOneWidget,
+      );
     });
   }
   testWidgets('Language switch persists and changes auth strings', (

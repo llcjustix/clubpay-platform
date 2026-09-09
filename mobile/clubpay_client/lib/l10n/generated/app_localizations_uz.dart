@@ -425,6 +425,11 @@ class AppLocalizationsUz extends AppLocalizations {
   String get clubGameBalance => 'O‘yin balansi';
 
   @override
+  String clubGameBalanceWithAmount(String amount) {
+    return 'O‘yin balansi: $amount';
+  }
+
+  @override
   String get currencySuffix => 'so‘m';
 
   @override

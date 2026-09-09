@@ -108,7 +108,9 @@ void main() {
       await tester.pumpAndSettle();
       expect(find.text('Pilot Network'), findsOneWidget);
       expect(
-        find.text(language == 'ru' ? 'Игровой баланс' : 'O‘yin balansi'),
+        find.textContaining(
+          language == 'ru' ? 'Игровой баланс:' : 'O‘yin balansi:',
+        ),
         findsOneWidget,
       );
       expect(find.text('Standard'), findsNothing);

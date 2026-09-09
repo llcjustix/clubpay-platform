@@ -154,6 +154,14 @@
   "liveCatalogPreviewHelp": "Данные компьютера получены из рабочего клуба. Вы вошли в тестовый профиль: здесь можно посмотреть ПК и тарифы, но реальные оплаты и остатки времени недоступны.",
   "myClubs": "Мои клубы",
   "clubGameBalance": "Игровой баланс",
+  "clubGameBalanceWithAmount": "Игровой баланс: {amount}",
+    "@clubGameBalanceWithAmount": {
+      "placeholders": {
+        "amount": {
+          "type": "String"
+        }
+      }
+    },
   "currencySuffix": "сум",
   "clubBalanceHelp": "Используйте его для игрового времени в этом клубе",
   "clubBalanceHomeHelp": "После сканирования QR покажем, на сколько времени хватит баланса на этом ПК.",

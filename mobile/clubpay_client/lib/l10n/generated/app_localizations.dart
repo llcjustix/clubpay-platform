@@ -860,6 +860,12 @@ abstract class AppLocalizations {
   /// **'Игровой баланс'**
   String get clubGameBalance;
 
+  /// No description provided for @clubGameBalanceWithAmount.
+  ///
+  /// In ru, this message translates to:
+  /// **'Игровой баланс: {amount}'**
+  String clubGameBalanceWithAmount(String amount);
+
   /// No description provided for @currencySuffix.
   ///
   /// In ru, this message translates to:

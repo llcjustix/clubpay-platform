@@ -47,9 +47,10 @@ class BalanceList extends StatelessWidget {
                     SettingsRow(
                       icon: CupertinoIcons.clock_fill,
                       color: ClubColors.orange,
-                      title: context.l.clubGameBalance,
+                      title: context.l.clubGameBalanceWithAmount(
+                        moneyLabel(context, balance.balanceUzs),
+                      ),
                       subtitle: context.l.clubBalanceHelp,
-                      trailing: Text(moneyLabel(context, balance.balanceUzs)),
                     ),
                   ],
                 ),

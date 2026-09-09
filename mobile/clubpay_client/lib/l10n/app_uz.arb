@@ -154,6 +154,14 @@
   "liveCatalogPreviewHelp": "Kompyuter ma’lumotlari haqiqiy klubdan olindi. Siz sinov profilidasiz: kompyuter va tariflarni ko‘rish mumkin, haqiqiy to‘lov va qolgan vaqt esa mavjud emas.",
   "myClubs": "Mening klublarim",
   "clubGameBalance": "O‘yin balansi",
+  "clubGameBalanceWithAmount": "O‘yin balansi: {amount}",
+    "@clubGameBalanceWithAmount": {
+      "placeholders": {
+        "amount": {
+          "type": "String"
+        }
+      }
+    },
   "currencySuffix": "so‘m",
   "clubBalanceHelp": "Uni shu klubdagi o‘yin vaqti uchun ishlating",
   "clubBalanceHomeHelp": "QR skanerlangandan keyin bu kompyuterda balans qancha vaqtga yetishini ko‘rsatamiz.",

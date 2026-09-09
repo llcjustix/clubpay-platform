@@ -424,6 +424,11 @@ class AppLocalizationsRu extends AppLocalizations {
   String get clubGameBalance => 'Игровой баланс';
 
   @override
+  String clubGameBalanceWithAmount(String amount) {
+    return 'Игровой баланс: $amount';
+  }
+
+  @override
   String get currencySuffix => 'сум';
 
   @override
