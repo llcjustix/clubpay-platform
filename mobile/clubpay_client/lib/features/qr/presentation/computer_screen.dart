@@ -28,6 +28,9 @@ class _ComputerScreenState extends ConsumerState<ComputerScreen> {
 
   void _load() {
     _future = ref.read(qrRepositoryProvider).resolve(widget.token);
+    // The returned balance can be created by an Agent event while this screen
+    // is open. Always request the current profile balance with the PC details.
+    ref.invalidate(balancesProvider);
   }
 
   @override

@@ -6159,8 +6159,9 @@ func (s *Server) remainingSecondsForAcceptedGrant(ctx context.Context, grantID s
 
 // reconcileMissingProfileRemainders repairs sessions ended by an older Agent
 // that confirmed a manual end without reporting remaining_seconds. The planned
-// end and the recorded end time provide an exact upper bound; expired sessions
-// and sessions already returned to the profile are deliberately excluded.
+// end and the recorded end time provide an exact upper bound. A controller may
+// label an early end as time_expired, so the timestamps are authoritative; a
+// session is only eligible when its planned end was still in the future.
 func (s *Server) reconcileMissingProfileRemainders(ctx context.Context, playerID string) error {
 	tx, err := s.db.Begin(ctx)
 	if err != nil {
@@ -6192,7 +6193,6 @@ func (s *Server) reconcileMissingProfileRemainders(ctx context.Context, playerID
 			g.created_at + make_interval(secs => g.duration_seconds),
 			g.created_at + make_interval(mins => g.duration_minutes)
 		  ) > g.ended_at
-		  AND LOWER(COALESCE(g.end_reason,'')) NOT IN ('time_expired','time_up','time_expires','timeout')
 		  AND NOT EXISTS (
 			SELECT 1 FROM player_time_ledger l
 			WHERE l.idempotency_key='session-return:' || g.id::text

@@ -244,4 +244,18 @@ func TestZoneValueIntegration(t *testing.T) {
 	if err := pool.QueryRow(ctx, `SELECT COUNT(*) FROM player_time_ledger WHERE game_access_grant_id=$1 AND kind='session_remaining'`, legacyGrant).Scan(&returns); err != nil || returns != 1 {
 		t.Fatalf("legacy remainder duplicated: %d %v", returns, err)
 	}
+
+	// Some controller releases incorrectly label a manually stopped session as
+	// time_expired. Its recorded timestamp is still before the planned end, so
+	// it must be restored exactly once as well.
+	expiredLabelGrant := createEarlyEndGrant("legacy-end-labelled-expired")
+	if _, err := pool.Exec(ctx, `UPDATE game_access_grants SET status='ended',ended_at=now(),end_reason='time_expired',remaining_seconds=0,remaining_minutes=0 WHERE id=$1`, expiredLabelGrant); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.reconcileMissingProfileRemainders(ctx, player); err != nil {
+		t.Fatal(err)
+	}
+	if err := pool.QueryRow(ctx, `SELECT remaining_seconds FROM game_access_grants WHERE id=$1`, expiredLabelGrant).Scan(&repaired); err != nil || repaired < 3500 || repaired > 3600 {
+		t.Fatalf("early session labelled expired was not restored: %d %v", repaired, err)
+	}
 }
