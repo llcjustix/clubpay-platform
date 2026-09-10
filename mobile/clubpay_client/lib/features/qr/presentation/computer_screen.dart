@@ -182,7 +182,57 @@ class _ComputerScreenState extends ConsumerState<ComputerScreen> {
                   ),
               ],
             ),
-            const SizedBox(height: 32),
+            if (!pc.previewOnly) ...[
+              const SizedBox(height: 28),
+              InfoCard(
+                accent: true,
+                children: [
+                  Text(
+                    l.balanceInZone(pc.zone),
+                    style: Theme.of(context).textTheme.titleMedium,
+                  ),
+                  gap,
+                  balances.when(
+                    data: (_) => Text(
+                      seconds <= 0
+                          ? l.zeroMinutes
+                          : timeLabel(context, seconds),
+                      style: Theme.of(context).textTheme.headlineSmall,
+                    ),
+                    loading: () => Text(l.balancePending),
+                    error: (e, _) => Text(errorLabel(context, e)),
+                  ),
+                  if (club?.stale == true || club?.online == false) ...[
+                    const SizedBox(height: 8),
+                    Text(
+                      club?.stale == true ? l.balanceStale : l.clubOffline,
+                      style: const TextStyle(
+                        color: ClubColors.muted,
+                        fontSize: 13,
+                      ),
+                    ),
+                  ],
+                  const SizedBox(height: 8),
+                  Text(
+                    l.zoneConversionHelp,
+                    style: const TextStyle(
+                      color: ClubColors.muted,
+                      fontSize: 13,
+                    ),
+                  ),
+                  if (seconds > 0)
+                    ActionButton(
+                      label: l.useBalance,
+                      icon: Icons.play_arrow,
+                      busy: _busy,
+                      onPressed: pc.canStart && balanceUsable && !_busy
+                          ? () => _submit(pc, true)
+                          : null,
+                    ),
+                ],
+              ),
+            ],
+            const SizedBox(height: 8),
             SectionCaption(pc.previewOnly ? l.gameTime : l.packages),
             SettingsGroup(
               inset: 16,
@@ -251,54 +301,6 @@ class _ComputerScreenState extends ConsumerState<ComputerScreen> {
                         (selectedTariff != null || _amount.text.isNotEmpty)
                     ? () => _submit(pc, false)
                     : null,
-              ),
-              const SizedBox(height: 28),
-              InfoCard(
-                accent: true,
-                children: [
-                  Text(
-                    l.balanceInZone(pc.zone),
-                    style: Theme.of(context).textTheme.titleMedium,
-                  ),
-                  gap,
-                  balances.when(
-                    data: (_) => Text(
-                      seconds <= 0
-                          ? l.zeroMinutes
-                          : timeLabel(context, seconds),
-                      style: Theme.of(context).textTheme.headlineSmall,
-                    ),
-                    loading: () => Text(l.balancePending),
-                    error: (e, _) => Text(errorLabel(context, e)),
-                  ),
-                  if (club?.stale == true || club?.online == false) ...[
-                    const SizedBox(height: 8),
-                    Text(
-                      club?.stale == true ? l.balanceStale : l.clubOffline,
-                      style: const TextStyle(
-                        color: ClubColors.muted,
-                        fontSize: 13,
-                      ),
-                    ),
-                  ],
-                  const SizedBox(height: 8),
-                  Text(
-                    l.zoneConversionHelp,
-                    style: const TextStyle(
-                      color: ClubColors.muted,
-                      fontSize: 13,
-                    ),
-                  ),
-                  if (seconds > 0)
-                    ActionButton(
-                      label: l.useBalance,
-                      icon: Icons.play_arrow,
-                      onPressed: pc.canStart && balanceUsable && !_busy
-                          ? () => _submit(pc, true)
-                          : null,
-                      secondary: true,
-                    ),
-                ],
               ),
             ],
           ],
