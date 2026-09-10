@@ -125,8 +125,9 @@ type Adapter interface {
 // returning an available PC.  This lets local development exercise the same
 // sleep -> wake -> Agent reconnect -> start flow that a club Controller uses.
 type MockAdapter struct {
-	mu  sync.Mutex
-	pcs map[string]mockPC
+	mu            sync.Mutex
+	pcs           map[string]mockPC
+	endedSessions map[string]int
 }
 
 type mockPC struct {
@@ -136,7 +137,7 @@ type mockPC struct {
 }
 
 func NewMockAdapter() *MockAdapter {
-	return &MockAdapter{pcs: make(map[string]mockPC)}
+	return &MockAdapter{pcs: make(map[string]mockPC), endedSessions: make(map[string]int)}
 }
 
 func (a *MockAdapter) state(externalPCID string) mockPC {
@@ -201,12 +202,22 @@ func (a *MockAdapter) ExtendSession(ctx context.Context, coreSessionID string, c
 }
 
 func (a *MockAdapter) EndSession(ctx context.Context, coreSessionID string, cmd EndSessionCommand) (EndSessionResult, error) {
+	a.mu.Lock()
+	a.endedSessions[coreSessionID]++
+	a.mu.Unlock()
 	now := time.Now().UTC()
 	return EndSessionResult{
 		Status:        "ended",
 		CoreSessionID: coreSessionID,
 		EndedAt:       &now,
 	}, nil
+}
+
+// EndCount is small test-only observability for Controller handoff flows.
+func (a *MockAdapter) EndCount(coreSessionID string) int {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return a.endedSessions[coreSessionID]
 }
 
 func (a *MockAdapter) Lock(ctx context.Context, externalPCID, reason string) error {

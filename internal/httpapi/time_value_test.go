@@ -273,3 +273,121 @@ func TestZoneValueIntegration(t *testing.T) {
 		t.Fatalf("early session labelled expired was not restored: %d %v", repaired, err)
 	}
 }
+
+func TestPlayerSessionHandoffIntegration(t *testing.T) {
+	raw := os.Getenv("MOBILE_TEST_DATABASE_URL")
+	if raw == "" {
+		t.Skip("requires disposable PostgreSQL")
+	}
+	ctx := context.Background()
+	admin, err := pgxpool.New(ctx, raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer admin.Close()
+	schema := "handoff_test_" + randomHex(6)
+	if _, err = admin.Exec(ctx, `CREATE SCHEMA `+schema); err != nil {
+		t.Fatal(err)
+	}
+	defer admin.Exec(ctx, `DROP SCHEMA `+schema+` CASCADE`)
+	cfg, err := pgxpool.ParseConfig(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg.ConnConfig.RuntimeParams["search_path"] = schema + ",public"
+	pool, err := pgxpool.NewWithConfig(ctx, cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer pool.Close()
+	if err = clubdb.RunMigrations(ctx, pool, "../../migrations"); err != nil {
+		t.Fatal(err)
+	}
+
+	var club, firstPC, secondPC, firstExternal, secondExternal, player string
+	if err = pool.QueryRow(ctx, `
+		SELECT p.club_id, p.id, p.external_pc_id
+		FROM pc_refs p
+		ORDER BY p.number
+		LIMIT 1
+	`).Scan(&club, &firstPC, &firstExternal); err != nil {
+		t.Fatal(err)
+	}
+	if err = pool.QueryRow(ctx, `
+		SELECT p.id, p.external_pc_id
+		FROM pc_refs p
+		WHERE p.club_id=$1 AND p.id<>$2
+		ORDER BY p.number
+		LIMIT 1
+	`, club, firstPC).Scan(&secondPC, &secondExternal); err != nil {
+		t.Fatal(err)
+	}
+	if err = pool.QueryRow(ctx, `INSERT INTO players(phone) VALUES('+998900000077') RETURNING id`).Scan(&player); err != nil {
+		t.Fatal(err)
+	}
+	var previousGrant, nextGrant string
+	if err = pool.QueryRow(ctx, `
+		INSERT INTO game_access_grants (
+			club_id, pc_ref_id, player_id, duration_minutes, duration_seconds,
+			status, source, core_session_id, accepted_at, planned_ends_at, grace_ends_at
+		) VALUES ($1,$2,$3,60,3600,'accepted','online_payment','old-player-session',now(),now()+interval '1 hour',now()+interval '1 hour')
+		RETURNING id
+	`, club, firstPC, player).Scan(&previousGrant); err != nil {
+		t.Fatal(err)
+	}
+	if err = pool.QueryRow(ctx, `
+		INSERT INTO game_access_grants (
+			club_id, pc_ref_id, player_id, duration_minutes, duration_seconds, status, source
+		) VALUES ($1,$2,$3,30,1800,'pending','online_payment')
+		RETURNING id
+	`, club, secondPC, player).Scan(&nextGrant); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = pool.Exec(ctx, `UPDATE pc_refs SET status_cache='occupied' WHERE id=$1`, firstPC); err != nil {
+		t.Fatal(err)
+	}
+
+	mock := core.NewMockAdapter()
+	controller := NewServer(config.Config{NodeMode: "edge", SessionGraceSeconds: 180}, pool, mock)
+	if !controller.startPendingEdgeGrants(ctx, club) {
+		t.Fatal("controller did not start the new player session")
+	}
+	if mock.EndCount("old-player-session") != 1 {
+		t.Fatalf("previous Agent session was not closed: %d", mock.EndCount("old-player-session"))
+	}
+	var oldStatus, oldReason, nextStatus string
+	var remainder int
+	if err = pool.QueryRow(ctx, `SELECT status, end_reason, remaining_seconds FROM game_access_grants WHERE id=$1`, previousGrant).Scan(&oldStatus, &oldReason, &remainder); err != nil {
+		t.Fatal(err)
+	}
+	if oldStatus != "ended" || oldReason != "player_switched_pc" || remainder <= 0 {
+		t.Fatalf("previous grant was not safely returned: %s %s %d", oldStatus, oldReason, remainder)
+	}
+	if err = pool.QueryRow(ctx, `SELECT status FROM game_access_grants WHERE id=$1`, nextGrant).Scan(&nextStatus); err != nil {
+		t.Fatal(err)
+	}
+	if nextStatus != "accepted" {
+		t.Fatalf("new player grant did not start: %s", nextStatus)
+	}
+	var activeSessions int
+	if err = pool.QueryRow(ctx, `
+		SELECT count(*) FROM game_access_grants
+		WHERE player_id=$1 AND status='accepted' AND parent_grant_id IS NULL
+		  AND COALESCE(grace_ends_at,planned_ends_at)>now()
+	`, player).Scan(&activeSessions); err != nil {
+		t.Fatal(err)
+	}
+	if activeSessions != 1 {
+		t.Fatalf("player has %d active sessions, want 1", activeSessions)
+	}
+	var firstStatus, secondStatus string
+	if err = pool.QueryRow(ctx, `SELECT status_cache FROM pc_refs WHERE id=$1`, firstPC).Scan(&firstStatus); err != nil {
+		t.Fatal(err)
+	}
+	if err = pool.QueryRow(ctx, `SELECT status_cache FROM pc_refs WHERE id=$1`, secondPC).Scan(&secondStatus); err != nil {
+		t.Fatal(err)
+	}
+	if firstStatus != "available" || secondStatus != "occupied" {
+		t.Fatalf("PC handoff mismatch: %s=%s, %s=%s", firstExternal, firstStatus, secondExternal, secondStatus)
+	}
+}

@@ -3549,7 +3549,7 @@ func (s *Server) startPendingEdgeGrants(ctx context.Context, clubID string) bool
 	}
 	rows, err := s.db.Query(ctx, `
 		SELECT g.id, g.pc_ref_id, p.external_pc_id, g.duration_minutes, g.duration_seconds,
-		       COALESCE(g.payment_order_id::text, '')
+		       COALESCE(g.payment_order_id::text, ''), COALESCE(g.player_id::text, '')
 		FROM game_access_grants g
 		JOIN pc_refs p ON p.id = g.pc_ref_id
 		WHERE g.club_id = $1
@@ -3573,9 +3573,9 @@ func (s *Server) startPendingEdgeGrants(ctx context.Context, clubID string) bool
 	started := false
 	activeByPC := make(map[string]activeGrantRow)
 	for rows.Next() {
-		var grantID, pcID, externalPCID, paymentOrderID string
+		var grantID, pcID, externalPCID, paymentOrderID, playerID string
 		var durationMinutes, durationSeconds int
-		if err := rows.Scan(&grantID, &pcID, &externalPCID, &durationMinutes, &durationSeconds, &paymentOrderID); err != nil {
+		if err := rows.Scan(&grantID, &pcID, &externalPCID, &durationMinutes, &durationSeconds, &paymentOrderID, &playerID); err != nil {
 			continue
 		}
 		if durationSeconds <= 0 {
@@ -3601,6 +3601,13 @@ func (s *Server) startPendingEdgeGrants(ctx context.Context, clubID string) bool
 			if err := s.mergeGrantIntoActiveSession(ctx, grantID, active, clubID, pcID, externalPCID, durationSeconds, paymentOrderID); err == nil {
 				started = true
 			}
+			continue
+		}
+		// A player can move to another PC from the mobile app, but must never
+		// keep two live sessions. Finish the old Agent session first;
+		// finishGrant returns its unused time to the same profile balance.
+		if err := s.handoffPlayerSession(ctx, playerID, pcID); err != nil {
+			_, _ = s.db.Exec(ctx, `UPDATE game_access_grants SET last_error = $1 WHERE id = $2`, err.Error(), grantID)
 			continue
 		}
 
@@ -3658,6 +3665,74 @@ func (s *Server) startPendingEdgeGrants(ctx context.Context, clubID string) bool
 		started = true
 	}
 	return started
+}
+
+// handoffPlayerSession closes every other active root session for a player in
+// this club before the Controller starts a new one. It is called from the
+// primary Controller's serialized edge-sync loop, so two pending purchases
+// cannot race each other into separate live Agent sessions.
+func (s *Server) handoffPlayerSession(ctx context.Context, playerID, targetPCID string) error {
+	if strings.TrimSpace(playerID) == "" {
+		return nil
+	}
+	rows, err := s.db.Query(ctx, `
+		SELECT g.id, COALESCE(g.core_session_id, ''), p.external_pc_id
+		FROM game_access_grants g
+		JOIN pc_refs p ON p.id = g.pc_ref_id
+		LEFT JOIN payment_orders po ON po.id = g.payment_order_id
+		WHERE COALESCE(g.player_id, po.player_id) = $1
+		  AND g.pc_ref_id <> $2
+		  AND g.parent_grant_id IS NULL
+		  AND g.status = 'accepted'
+		  AND COALESCE(
+			g.grace_ends_at,
+			g.planned_ends_at,
+			g.accepted_at + make_interval(secs => g.duration_seconds),
+			g.accepted_at + make_interval(mins => g.duration_minutes)
+		  ) > now()
+		ORDER BY g.accepted_at DESC NULLS LAST, g.created_at DESC
+	`, playerID, targetPCID)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+
+	type activePlayerSession struct{ grantID, coreSessionID, externalPCID string }
+	var sessions []activePlayerSession
+	for rows.Next() {
+		var session activePlayerSession
+		if err := rows.Scan(&session.grantID, &session.coreSessionID, &session.externalPCID); err != nil {
+			return err
+		}
+		sessions = append(sessions, session)
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+
+	for _, session := range sessions {
+		if session.coreSessionID == "" {
+			return fmt.Errorf("active player session is missing core_session_id")
+		}
+		remaining := s.remainingSecondsForAcceptedGrant(ctx, session.grantID)
+		result, err := s.core.EndSession(ctx, session.coreSessionID, core.EndSessionCommand{
+			RequestID:    "switch_pc_" + session.grantID + "_" + randomHex(4),
+			ExternalPCID: session.externalPCID,
+			Reason:       "CLIENT_LEFT",
+			EndedBy:      map[string]string{"type": "player", "id": playerID},
+			CreatedAt:    time.Now().UTC().Format(time.RFC3339),
+		})
+		if err != nil {
+			return fmt.Errorf("could not close the previous player session: %w", err)
+		}
+		if result.RemainingSeconds > 0 {
+			remaining = result.RemainingSeconds
+		}
+		if _, err := s.finishGrant(ctx, session.grantID, "player_switched_pc", remaining); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // mergeGrantIntoActiveSession converts another paid root grant into an

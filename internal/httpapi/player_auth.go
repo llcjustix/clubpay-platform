@@ -561,6 +561,15 @@ func (s *Server) redeemPlayerBalanceToPC(ctx context.Context, req redeemPlayerBa
 	if mobile && !s.edgeNodeMode() {
 		return map[string]any{"success": true, "grant_id": grantID, "seconds_used": seconds}, nil
 	}
+	if !extending {
+		// In the rare direct-Controller mobile path, apply the same one-player /
+		// one-PC rule as the normal Cloud → primary Controller flow.
+		if err := s.handoffPlayerSession(ctx, player.ID, pcID); err != nil {
+			s.deactivateSessionExtendQR(ctx, grantID)
+			s.refundPlayerBalance(ctx, player.ID, clubID, seconds, grantID, err.Error())
+			return nil, err
+		}
+	}
 	start, err := s.core.StartSession(ctx, core.StartSessionCommand{RequestID: "start_" + grantID, GrantID: grantID, ClubID: clubID, PCID: pcID, PCExternalID: externalPCID, DurationSeconds: seconds, DurationMinutes: minutes, GraceSeconds: s.cfg.SessionGraceSeconds, Source: "player_balance", ExtendURL: extendURL, CreatedAt: time.Now().UTC().Format(time.RFC3339)})
 	if err != nil {
 		s.deactivateSessionExtendQR(ctx, grantID)
