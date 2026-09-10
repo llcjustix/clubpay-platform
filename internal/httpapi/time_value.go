@@ -131,10 +131,18 @@ func (s *Server) repairProfileBalanceProjection(ctx context.Context, playerID st
 	}
 	defer tx.Rollback(ctx)
 	rows, err := tx.Query(ctx, `
-		SELECT club_id::text, GREATEST(COALESCE(SUM(time_value_delta), 0), 0)
-		FROM player_time_ledger
-		WHERE player_id=$1
-		GROUP BY club_id
+		SELECT l.club_id::text,
+		       GREATEST(COALESCE(SUM(COALESCE(
+		         NULLIF(l.time_value_delta, 0),
+		         l.seconds_delta::bigint * COALESCE(
+		           b.reference_price_tiyin,
+		           (SELECT MIN(z.hourly_price_tiyin) FROM zones z WHERE z.club_id=l.club_id AND z.status<>'deleted')
+		         )
+		       )), 0), 0)
+		FROM player_time_ledger l
+		LEFT JOIN player_club_balances b ON b.player_id=l.player_id AND b.club_id=l.club_id
+		WHERE l.player_id=$1
+		GROUP BY l.club_id
 	`, playerID)
 	if err != nil {
 		return err
