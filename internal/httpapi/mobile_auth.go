@@ -458,6 +458,10 @@ func (s *Server) handleMobileBalances(w http.ResponseWriter, r *http.Request) {
 		mobileInternal(w)
 		return
 	}
+	if err := s.repairProfileBalanceProjection(r.Context(), p.ID); err != nil {
+		mobileInternal(w)
+		return
+	}
 	rows, err := s.queryMaps(r.Context(), `
  WITH owned AS (
   SELECT club_id FROM player_club_balances WHERE player_id=$1

@@ -119,6 +119,66 @@ func (s *Server) recordTimeValue(ctx context.Context, tx pgx.Tx, playerID, clubI
 	return err
 }
 
+// repairProfileBalanceProjection restores the fast balance projection from the
+// immutable ledger. Edge snapshots may arrive after a cloud-side session end
+// without the new ledger entry; they must never make already returned profile
+// time disappear. We only raise a projection to the confirmed net ledger
+// value, so a newer local debit is never undone.
+func (s *Server) repairProfileBalanceProjection(ctx context.Context, playerID string) error {
+	tx, err := s.db.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+	rows, err := tx.Query(ctx, `
+		SELECT club_id::text, GREATEST(COALESCE(SUM(time_value_delta), 0), 0)
+		FROM player_time_ledger
+		WHERE player_id=$1
+		GROUP BY club_id
+	`, playerID)
+	if err != nil {
+		return err
+	}
+	type projection struct {
+		clubID string
+		units  int64
+	}
+	projections := make([]projection, 0)
+	for rows.Next() {
+		var item projection
+		if err := rows.Scan(&item.clubID, &item.units); err != nil {
+			rows.Close()
+			return err
+		}
+		projections = append(projections, item)
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return err
+	}
+	rows.Close()
+	for _, item := range projections {
+		if item.units == 0 {
+			continue
+		}
+		current, reference, err := s.lockTimeValue(ctx, tx, playerID, item.clubID)
+		if err != nil {
+			return err
+		}
+		if current >= item.units {
+			continue
+		}
+		seconds, err := timeAtRate(item.units, reference)
+		if err != nil {
+			return err
+		}
+		if _, err := tx.Exec(ctx, `UPDATE player_club_balances SET time_value_units=$3,seconds_balance=$4,updated_at=now() WHERE player_id=$1 AND club_id=$2`, playerID, item.clubID, item.units, seconds); err != nil {
+			return err
+		}
+	}
+	return tx.Commit(ctx)
+}
+
 // Pending checkouts retain their captured rate even if an operator edits prices
 // before the provider callback arrives.
 func (s *Server) balanceSecondsForGrant(ctx context.Context, tx pgx.Tx, playerID, clubID, pcID, grantID string) (int, error) {

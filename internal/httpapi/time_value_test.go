@@ -154,6 +154,17 @@ func TestZoneValueIntegration(t *testing.T) {
 	if currentUnits() != originalUnits+1500000 {
 		t.Fatal("snapshot changed credit")
 	}
+	// The balance row is a projection. If a stale edge snapshot overwrites it,
+	// the immutable ledger restores the credited time on the next profile read.
+	if _, err = pool.Exec(ctx, `UPDATE player_club_balances SET seconds_balance=0,time_value_units=0 WHERE player_id=$1 AND club_id=$2`, player, club); err != nil {
+		t.Fatal(err)
+	}
+	if err = s.repairProfileBalanceProjection(ctx, player); err != nil {
+		t.Fatal(err)
+	}
+	if currentUnits() != originalUnits+1500000 {
+		t.Fatal("ledger did not restore a stale balance projection")
+	}
 	var rate int64
 	if err = pool.QueryRow(ctx, `SELECT time_value_rate FROM game_access_grants WHERE id=$1`, original).Scan(&rate); err != nil || rate != 1500000 {
 		t.Fatal(fmt.Sprint(rate, err))
