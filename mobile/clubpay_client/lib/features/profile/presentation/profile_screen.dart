@@ -336,7 +336,7 @@ Future<void> showClubGuide(BuildContext context) => showModalBottomSheet<void>(
           const SizedBox(height: 24),
           for (final step in [
             (
-              CupertinoIcons.qrcode,
+              CupertinoIcons.building_2_fill,
               ClubColors.blue,
               context.l.guideScan,
               context.l.guideScanHelp,

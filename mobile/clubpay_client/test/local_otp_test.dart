@@ -40,8 +40,8 @@ void main() {
             case '/api/mobile/me':
               expect(verified, isTrue);
               return (200, {'id': 'local', 'phone': '+998900000001'});
-            case '/api/mobile/balances':
-              return (200, {'balances': []});
+            case '/api/mobile/clubs':
+              return (200, {'clubs': []});
           }
           fail('Unexpected API call ${request.path}');
         }),
@@ -63,11 +63,11 @@ void main() {
       expect(find.text('Открыть Telegram'), findsOneWidget);
       expect(find.text('Код из Telegram'), findsOneWidget);
       expect(verified, isFalse);
-      await tester.enterText(find.byType(TextField), '018910');
+      await tester.enterText(find.byType(TextField).last, '018910');
       await tester.pumpAndSettle();
       await tester.tap(find.text('Войти'));
       await tester.pumpAndSettle();
-      expect(find.text('Игрового баланса пока нет'), findsOneWidget);
+      expect(find.text('Выберите компьютерный клуб'), findsOneWidget);
       await tester.pumpWidget(const SizedBox.shrink());
     },
   );

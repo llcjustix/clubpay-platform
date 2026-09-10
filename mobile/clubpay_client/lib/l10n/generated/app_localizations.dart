@@ -713,13 +713,13 @@ abstract class AppLocalizations {
   /// No description provided for @guideScan.
   ///
   /// In ru, this message translates to:
-  /// **'Сканируйте QR на ПК'**
+  /// **'Выберите клуб и компьютер'**
   String get guideScan;
 
   /// No description provided for @guideScanHelp.
   ///
   /// In ru, this message translates to:
-  /// **'Выберите свободный компьютер в клубе и нажмите кнопку QR внизу приложения.'**
+  /// **'Найдите клуб, выберите зону и свободный компьютер.'**
   String get guideScanHelp;
 
   /// No description provided for @guideChoose.
@@ -937,6 +937,60 @@ abstract class AppLocalizations {
   /// In ru, this message translates to:
   /// **'Не удалось получить остаток. Попробуйте обновить.'**
   String get balanceUnknown;
+
+  /// No description provided for @clubSearchTitle.
+  ///
+  /// In ru, this message translates to:
+  /// **'Выберите компьютерный клуб'**
+  String get clubSearchTitle;
+
+  /// No description provided for @clubSearchHint.
+  ///
+  /// In ru, this message translates to:
+  /// **'Название клуба или адрес'**
+  String get clubSearchHint;
+
+  /// No description provided for @clubSearchEmpty.
+  ///
+  /// In ru, this message translates to:
+  /// **'Клубы не найдены. Попробуйте изменить запрос.'**
+  String get clubSearchEmpty;
+
+  /// No description provided for @clubSelectZonePc.
+  ///
+  /// In ru, this message translates to:
+  /// **'Выберите зону и свободный ПК'**
+  String get clubSelectZonePc;
+
+  /// No description provided for @clubOfflineDetail.
+  ///
+  /// In ru, this message translates to:
+  /// **'Клуб сейчас не на связи. Список ПК может быть неактуальным.'**
+  String get clubOfflineDetail;
+
+  /// No description provided for @freePcs.
+  ///
+  /// In ru, this message translates to:
+  /// **'{count} свободных'**
+  String freePcs(int count);
+
+  /// No description provided for @noConnection.
+  ///
+  /// In ru, this message translates to:
+  /// **'Нет связи'**
+  String get noConnection;
+
+  /// No description provided for @selectThisPc.
+  ///
+  /// In ru, this message translates to:
+  /// **'Свободен — выбрать этот ПК'**
+  String get selectThisPc;
+
+  /// No description provided for @clubNoZones.
+  ///
+  /// In ru, this message translates to:
+  /// **'В этом клубе пока нет доступных зон.'**
+  String get clubNoZones;
 }
 
 class _AppLocalizationsDelegate

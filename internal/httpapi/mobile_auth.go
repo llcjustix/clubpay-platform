@@ -483,3 +483,90 @@ func (s *Server) handleMobileBalances(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, 200, map[string]any{"balances": rows})
 }
+
+// handleMobileClubs is the signed-in player catalog. QR codes remain an
+// internal routing detail: the client chooses a visible PC and receives its
+// opaque static token only for the existing checkout flow.
+func (s *Server) handleMobileClubs(w http.ResponseWriter, r *http.Request) {
+	if _, ok := s.requireMobile(w, r); !ok {
+		return
+	}
+	query := strings.TrimSpace(r.URL.Query().Get("q"))
+	if len([]rune(query)) > 80 {
+		writeError(w, http.StatusBadRequest, "search query is too long")
+		return
+	}
+	rows, err := s.queryMaps(r.Context(), `
+		SELECT c.id AS club_id,c.name AS club_name,COALESCE(c.address,'') AS address,
+		  COALESCE(c.controller_synced_at>now()-interval '45 seconds',false) AS club_online,
+		  COUNT(*) FILTER (WHERE p.status_cache IN ('available','sleeping'))::int AS available_pcs
+		FROM clubs c
+		JOIN pc_refs p ON p.club_id=c.id AND p.status_cache<>'deleted'
+		JOIN zones z ON z.id=p.zone_id AND z.status='active'
+		WHERE c.status='active'
+		  AND ($1='' OR c.name ILIKE '%' || $1 || '%' OR COALESCE(c.address,'') ILIKE '%' || $1 || '%')
+		GROUP BY c.id,c.name,c.address,c.controller_synced_at
+		ORDER BY (COUNT(*) FILTER (WHERE p.status_cache IN ('available','sleeping'))) DESC,c.name
+		LIMIT 50
+	`, query)
+	if err != nil {
+		mobileInternal(w)
+		return
+	}
+	if rows == nil {
+		rows = []map[string]any{}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"clubs": rows})
+}
+
+func (s *Server) handleMobileClub(w http.ResponseWriter, r *http.Request) {
+	if _, ok := s.requireMobile(w, r); !ok {
+		return
+	}
+	clubID := strings.TrimSpace(r.PathValue("club_id"))
+	if clubID == "" {
+		writeError(w, http.StatusBadRequest, "club_id is required")
+		return
+	}
+	var club map[string]any
+	rows, err := s.queryMaps(r.Context(), `
+		SELECT c.id AS club_id,c.name AS club_name,COALESCE(c.address,'') AS address,
+		  COALESCE(c.controller_synced_at>now()-interval '45 seconds',false) AS club_online
+		FROM clubs c WHERE c.id=$1 AND c.status='active'
+	`, clubID)
+	if err != nil {
+		mobileInternal(w)
+		return
+	}
+	if len(rows) == 0 {
+		writeError(w, http.StatusNotFound, "club not found")
+		return
+	}
+	club = rows[0]
+	zones, err := s.queryMaps(r.Context(), `
+		SELECT z.id AS zone_id,z.name AS zone_name,z.sort_order,z.hourly_price_tiyin/100 AS hourly_price_uzs,
+		  COALESCE(jsonb_agg(jsonb_build_object(
+			'id',p.id,'label',p.label,'number',p.number,'status',p.status_cache,
+			'qr_token',COALESCE(q.public_token,'')
+		  ) ORDER BY p.number,p.label) FILTER (WHERE p.id IS NOT NULL),'[]'::jsonb) AS pcs
+		FROM zones z
+		LEFT JOIN pc_refs p ON p.zone_id=z.id AND p.status_cache<>'deleted'
+		LEFT JOIN LATERAL (
+			SELECT public_token FROM qr_codes
+			WHERE pc_ref_id=p.id AND type='static_pc' AND status='active'
+			ORDER BY created_at DESC LIMIT 1
+		) q ON true
+		WHERE z.club_id=$1 AND z.status='active'
+		GROUP BY z.id,z.name,z.sort_order,z.hourly_price_tiyin
+		ORDER BY z.sort_order,z.name
+	`, clubID)
+	if err != nil {
+		mobileInternal(w)
+		return
+	}
+	if zones == nil {
+		zones = []map[string]any{}
+	}
+	club["zones"] = zones
+	writeJSON(w, http.StatusOK, map[string]any{"club": club})
+}

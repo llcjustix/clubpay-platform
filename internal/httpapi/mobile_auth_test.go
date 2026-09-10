@@ -272,6 +272,33 @@ func TestMobileIntegration(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if _, err = pool.Exec(ctx, `UPDATE clubs SET controller_synced_at=now() WHERE id=$1`, club); err != nil {
+		t.Fatal(err)
+	}
+	// The mobile catalog is the public selection path. It exposes only the
+	// signed-in user's visible club/zone/PC data; the opaque QR token merely
+	// preserves the existing checkout protocol after the player picks a PC.
+	expect(401, "GET", "/api/mobile/clubs", "", "", nil)
+	catalog := expect(200, "GET", "/api/mobile/clubs", access, "", nil)
+	clubs := catalog["clubs"].([]any)
+	foundClub := false
+	for _, item := range clubs {
+		if item.(map[string]any)["club_id"] == club {
+			foundClub = true
+			break
+		}
+	}
+	if !foundClub {
+		t.Fatalf("mobile club catalog missing fixture club: %#v", catalog)
+	}
+	detail := expect(200, "GET", "/api/mobile/clubs/"+club, access, "", nil)
+	zones := detail["club"].(map[string]any)["zones"].([]any)
+	if len(zones) == 0 || len(zones[0].(map[string]any)["pcs"].([]any)) == 0 {
+		t.Fatalf("mobile club detail missing PCs: %#v", detail)
+	}
+	if zones[0].(map[string]any)["pcs"].([]any)[0].(map[string]any)["qr_token"] == "" {
+		t.Fatalf("mobile club PC did not retain a checkout token: %#v", detail)
+	}
 	tx, err := pool.Begin(ctx)
 	if err != nil {
 		t.Fatal(err)

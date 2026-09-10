@@ -129,8 +129,8 @@
   "tapQrBelow": "Pastdagi QR tugmasini bosing va kamerani bo‘sh kompyuterning QR kodiga qarating.",
   "timeReturnsHere": "Klubdagi kompyuter QR kodini skanerlang. O‘yindan keyin saqlangan balans shu yerda ko‘rinadi.",
   "howItWorks": "Bu qanday ishlaydi",
-  "guideScan": "Kompyuter QR kodini skanerlang",
-  "guideScanHelp": "Klubda bo‘sh kompyuterni tanlang va ilova pastidagi QR tugmasini bosing.",
+  "guideScan": "Klub va kompyuterni tanlang",
+  "guideScanHelp": "Klubni toping, zonani va bo‘sh kompyuterni tanlang.",
   "guideChoose": "O‘yin vaqtini tanlang",
   "guideChooseHelp": "Vaqt sotib oling yoki shu klubdagi qoldiqdan foydalaning. Boshqa zonada vaqt uning narxiga qarab qayta hisoblanadi.",
   "guidePlay": "O‘ynang. Qolgan vaqt saqlanadi",
@@ -155,13 +155,13 @@
   "myClubs": "Mening klublarim",
   "clubGameBalance": "O‘yin balansi",
   "clubGameBalanceWithAmount": "O‘yin balansi: {amount}",
-    "@clubGameBalanceWithAmount": {
-      "placeholders": {
-        "amount": {
-          "type": "String"
-        }
+  "@clubGameBalanceWithAmount": {
+    "placeholders": {
+      "amount": {
+        "type": "String"
       }
-    },
+    }
+  },
   "currencySuffix": "so‘m",
   "clubBalanceHelp": "Uni shu klubdagi o‘yin vaqti uchun ishlating",
   "clubBalanceHomeHelp": "QR skanerlangandan keyin bu kompyuterda balans qancha vaqtga yetishini ko‘rsatamiz.",
@@ -187,5 +187,21 @@
       }
     }
   },
-  "balanceUnknown": "Qoldiqni olish imkonsiz. Yangilab ko‘ring."
+  "balanceUnknown": "Qoldiqni olish imkonsiz. Yangilab ko‘ring.",
+  "clubSearchTitle": "Kompyuter klubini tanlang",
+  "clubSearchHint": "Klub nomi yoki manzili",
+  "clubSearchEmpty": "Klublar topilmadi. So‘rovni o‘zgartirib ko‘ring.",
+  "clubSelectZonePc": "Zonani va bo‘sh kompyuterni tanlang",
+  "clubOfflineDetail": "Klub hozir aloqada emas. Kompyuterlar ro‘yxati eskirgan bo‘lishi mumkin.",
+  "freePcs": "{count} ta bo‘sh",
+  "@freePcs": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "noConnection": "Aloqa yo‘q",
+  "selectThisPc": "Bo‘sh — shu kompyuterni tanlash",
+  "clubNoZones": "Bu klubda hozircha mavjud zonalar yo‘q."
 }

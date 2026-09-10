@@ -342,11 +342,11 @@ class AppLocalizationsUz extends AppLocalizations {
   String get howItWorks => 'Bu qanday ishlaydi';
 
   @override
-  String get guideScan => 'Kompyuter QR kodini skanerlang';
+  String get guideScan => 'Klub va kompyuterni tanlang';
 
   @override
   String get guideScanHelp =>
-      'Klubda bo‘sh kompyuterni tanlang va ilova pastidagi QR tugmasini bosing.';
+      'Klubni toping, zonani va bo‘sh kompyuterni tanlang.';
 
   @override
   String get guideChoose => 'O‘yin vaqtini tanlang';
@@ -470,4 +470,35 @@ class AppLocalizationsUz extends AppLocalizations {
 
   @override
   String get balanceUnknown => 'Qoldiqni olish imkonsiz. Yangilab ko‘ring.';
+
+  @override
+  String get clubSearchTitle => 'Kompyuter klubini tanlang';
+
+  @override
+  String get clubSearchHint => 'Klub nomi yoki manzili';
+
+  @override
+  String get clubSearchEmpty =>
+      'Klublar topilmadi. So‘rovni o‘zgartirib ko‘ring.';
+
+  @override
+  String get clubSelectZonePc => 'Zonani va bo‘sh kompyuterni tanlang';
+
+  @override
+  String get clubOfflineDetail =>
+      'Klub hozir aloqada emas. Kompyuterlar ro‘yxati eskirgan bo‘lishi mumkin.';
+
+  @override
+  String freePcs(int count) {
+    return '$count ta bo‘sh';
+  }
+
+  @override
+  String get noConnection => 'Aloqa yo‘q';
+
+  @override
+  String get selectThisPc => 'Bo‘sh — shu kompyuterni tanlash';
+
+  @override
+  String get clubNoZones => 'Bu klubda hozircha mavjud zonalar yo‘q.';
 }

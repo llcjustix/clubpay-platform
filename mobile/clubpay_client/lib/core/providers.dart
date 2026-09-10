@@ -4,7 +4,6 @@ import '../features/auth/data/auth_repository.dart';
 import '../features/auth/domain/auth_models.dart';
 import '../features/profile/data/profile_repository.dart';
 import '../features/profile/domain/club_balance.dart';
-import '../features/qr/domain/qr_models.dart';
 import '../features/qr/data/qr_repository.dart';
 import '../features/payment/data/payment_repository.dart';
 import 'api_client.dart';
@@ -47,7 +46,6 @@ class AuthController extends AsyncNotifier<Player?> {
 
   Future<void> logout() async {
     await ref.read(authRepositoryProvider).logout();
-    ref.invalidate(selectedQrProvider);
     ref.invalidate(balancesProvider);
     state = const AsyncData(null);
   }
@@ -61,16 +59,6 @@ final balancesProvider = FutureProvider<List<ClubBalance>>((ref) async {
     playerId: player.id,
   ).balances();
 });
-final selectedQrProvider = NotifierProvider<SelectedQr, QrComputer?>(
-  SelectedQr.new,
-);
-
-class SelectedQr extends Notifier<QrComputer?> {
-  @override
-  QrComputer? build() => null;
-  void select(QrComputer value) => state = value;
-}
-
 final localeProvider = NotifierProvider<LocaleController, Locale>(
   LocaleController.new,
 );

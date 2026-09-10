@@ -341,11 +341,11 @@ class AppLocalizationsRu extends AppLocalizations {
   String get howItWorks => 'Как это работает';
 
   @override
-  String get guideScan => 'Сканируйте QR на ПК';
+  String get guideScan => 'Выберите клуб и компьютер';
 
   @override
   String get guideScanHelp =>
-      'Выберите свободный компьютер в клубе и нажмите кнопку QR внизу приложения.';
+      'Найдите клуб, выберите зону и свободный компьютер.';
 
   @override
   String get guideChoose => 'Выберите игровое время';
@@ -471,4 +471,34 @@ class AppLocalizationsRu extends AppLocalizations {
   @override
   String get balanceUnknown =>
       'Не удалось получить остаток. Попробуйте обновить.';
+
+  @override
+  String get clubSearchTitle => 'Выберите компьютерный клуб';
+
+  @override
+  String get clubSearchHint => 'Название клуба или адрес';
+
+  @override
+  String get clubSearchEmpty => 'Клубы не найдены. Попробуйте изменить запрос.';
+
+  @override
+  String get clubSelectZonePc => 'Выберите зону и свободный ПК';
+
+  @override
+  String get clubOfflineDetail =>
+      'Клуб сейчас не на связи. Список ПК может быть неактуальным.';
+
+  @override
+  String freePcs(int count) {
+    return '$count свободных';
+  }
+
+  @override
+  String get noConnection => 'Нет связи';
+
+  @override
+  String get selectThisPc => 'Свободен — выбрать этот ПК';
+
+  @override
+  String get clubNoZones => 'В этом клубе пока нет доступных зон.';
 }

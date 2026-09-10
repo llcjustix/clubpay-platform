@@ -1,4 +1,3 @@
-import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -11,8 +10,6 @@ import 'package:clubpay_client/features/profile/domain/club_balance.dart';
 import 'package:clubpay_client/features/qr/data/qr_repository.dart';
 import 'package:clubpay_client/features/qr/domain/qr_models.dart';
 import 'package:clubpay_client/features/qr/presentation/computer_screen.dart';
-import 'package:clubpay_client/features/qr/presentation/qr_screen.dart';
-import 'package:clubpay_client/features/qr/presentation/scanner_view.dart';
 import 'package:clubpay_client/l10n/generated/app_localizations.dart';
 import 'helpers.dart';
 
@@ -98,63 +95,4 @@ void main() {
     expect(find.text('Ваше время в этом клубе'), findsNothing);
     expect(find.text('2 ч 0 мин 0 с'), findsNothing);
   });
-
-  testWidgets(
-    'Catalog outage is distinct from expired QR; retry preserves scan',
-    (tester) async {
-      await tester.binding.setSurfaceSize(const Size(390, 844));
-      addTearDown(() => tester.binding.setSurfaceSize(null));
-      var requests = 0;
-      final dio = Dio(BaseOptions(baseUrl: 'http://localhost:8088'));
-      dio.interceptors.add(
-        InterceptorsWrapper(
-          onRequest: (r, h) {
-            requests++;
-            expect(r.path, '/api/qr/pc_live');
-            h.reject(
-              DioException(
-                requestOptions: r,
-                type: DioExceptionType.badResponse,
-                response: Response(
-                  requestOptions: r,
-                  statusCode: 503,
-                  data: {'error': 'qr_catalog_unavailable'},
-                ),
-              ),
-            );
-          },
-        ),
-      );
-      await tester.pumpWidget(
-        ProviderScope(
-          overrides: [
-            apiProvider.overrideWithValue(
-              ApiClient(SessionVault(MemoryStore()), dio: dio),
-            ),
-            scannerBuilderProvider.overrideWithValue(
-              (onCode) => Center(
-                child: TextButton(
-                  onPressed: () => onCode('pc_live'),
-                  child: const Text('Simulate scan'),
-                ),
-              ),
-            ),
-          ],
-          child: localized(const QrScreen()),
-        ),
-      );
-      await tester.pumpAndSettle();
-      await tester.tap(find.text('Simulate scan'));
-      await tester.pumpAndSettle();
-      expect(
-        find.textContaining('сервер клуба сейчас недоступен'),
-        findsOneWidget,
-      );
-      expect(find.textContaining('Вход через Telegram'), findsNothing);
-      await tester.tap(find.byKey(const ValueKey('retry-qr')));
-      await tester.pumpAndSettle();
-      expect(requests, 2);
-      expect(tester.takeException(), isNull);
-    },
-  );
 }

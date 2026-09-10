@@ -1,11 +1,7 @@
-import 'dart:typed_data';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:image/image.dart' as img;
-import 'package:zxing2/qrcode.dart';
 import 'package:clubpay_client/core/api_client.dart';
 import 'package:clubpay_client/core/secure_store.dart';
 import 'package:clubpay_client/features/auth/domain/auth_models.dart';
-import 'package:clubpay_client/features/qr/data/qr_image_decoder.dart';
 import 'package:clubpay_client/features/qr/data/qr_repository.dart';
 import 'package:clubpay_client/features/qr/domain/qr_models.dart';
 import 'package:clubpay_client/features/payment/data/payment_repository.dart';
@@ -49,33 +45,6 @@ void main() {
     final pc = await QrRepository(api).resolve('http://192.168.1.2/qr/pc_test');
     expect(pc.canStart, isTrue);
     expect(pc.tariffs, isEmpty);
-  });
-  test('Image QR decoding works without native scanner', () {
-    final matrix = Encoder.encode(
-      'pc_fixture_qr',
-      ErrorCorrectionLevel.m,
-    ).matrix!;
-    final size = (matrix.width + 8) * 8;
-    final picture = img.Image(width: size, height: size);
-    img.fill(picture, color: img.ColorRgb8(255, 255, 255));
-    for (var y = 0; y < matrix.height; y++) {
-      for (var x = 0; x < matrix.width; x++) {
-        if (matrix.get(x, y) == 1) {
-          img.fillRect(
-            picture,
-            x1: (x + 4) * 8,
-            y1: (y + 4) * 8,
-            x2: (x + 5) * 8 - 1,
-            y2: (y + 5) * 8 - 1,
-            color: img.ColorRgb8(0, 0, 0),
-          );
-        }
-      }
-    }
-    expect(
-      decodeQrImage(Uint8List.fromList(img.encodePng(picture))),
-      'pc_fixture_qr',
-    );
   });
   test('Paid order without accepted grant remains starting', () {
     expect(
@@ -186,7 +155,12 @@ void main() {
         if (request.path == '/api/checkouts') {
           checkoutCalls++;
           expect(request.data['payment_provider'], 'mock');
-          return (201, {'order': {'invoice_id': 'cp_test_payment'}});
+          return (
+            201,
+            {
+              'order': {'invoice_id': 'cp_test_payment'},
+            },
+          );
         }
         if (request.path ==
             '/api/mobile/payments/test/success/cp_test_payment') {

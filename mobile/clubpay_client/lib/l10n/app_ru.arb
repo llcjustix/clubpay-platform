@@ -129,8 +129,8 @@
   "tapQrBelow": "Нажмите кнопку QR внизу и наведите камеру на QR свободного ПК.",
   "timeReturnsHere": "Отсканируйте QR компьютера в клубе. После игры здесь появится сохранённый баланс.",
   "howItWorks": "Как это работает",
-  "guideScan": "Сканируйте QR на ПК",
-  "guideScanHelp": "Выберите свободный компьютер в клубе и нажмите кнопку QR внизу приложения.",
+  "guideScan": "Выберите клуб и компьютер",
+  "guideScanHelp": "Найдите клуб, выберите зону и свободный компьютер.",
   "guideChoose": "Выберите игровое время",
   "guideChooseHelp": "Купите время или используйте остаток этого клуба. В другой зоне время пересчитается по её цене.",
   "guidePlay": "Играйте. Остаток сохранится",
@@ -155,13 +155,13 @@
   "myClubs": "Мои клубы",
   "clubGameBalance": "Игровой баланс",
   "clubGameBalanceWithAmount": "Игровой баланс: {amount}",
-    "@clubGameBalanceWithAmount": {
-      "placeholders": {
-        "amount": {
-          "type": "String"
-        }
+  "@clubGameBalanceWithAmount": {
+    "placeholders": {
+      "amount": {
+        "type": "String"
       }
-    },
+    }
+  },
   "currencySuffix": "сум",
   "clubBalanceHelp": "Используйте его для игрового времени в этом клубе",
   "clubBalanceHomeHelp": "После сканирования QR покажем, на сколько времени хватит баланса на этом ПК.",
@@ -187,5 +187,21 @@
       }
     }
   },
-  "balanceUnknown": "Не удалось получить остаток. Попробуйте обновить."
+  "balanceUnknown": "Не удалось получить остаток. Попробуйте обновить.",
+  "clubSearchTitle": "Выберите компьютерный клуб",
+  "clubSearchHint": "Название клуба или адрес",
+  "clubSearchEmpty": "Клубы не найдены. Попробуйте изменить запрос.",
+  "clubSelectZonePc": "Выберите зону и свободный ПК",
+  "clubOfflineDetail": "Клуб сейчас не на связи. Список ПК может быть неактуальным.",
+  "freePcs": "{count} свободных",
+  "@freePcs": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "noConnection": "Нет связи",
+  "selectThisPc": "Свободен — выбрать этот ПК",
+  "clubNoZones": "В этом клубе пока нет доступных зон."
 }

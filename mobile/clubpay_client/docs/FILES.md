@@ -94,7 +94,7 @@ Build, .dart_tool и ephemeral runtime files исключены .gitignore.
 - `mobile/clubpay_client/lib/features/qr/domain/qr_models.dart`
 - `mobile/clubpay_client/lib/features/qr/presentation/computer_screen.dart`
 - `mobile/clubpay_client/lib/features/qr/presentation/qr_screen.dart`
-- `mobile/clubpay_client/lib/features/qr/presentation/scanner_view.dart`
+- `mobile/clubpay_client/lib/features/catalog/presentation/club_browser_screen.dart`
 - `mobile/clubpay_client/lib/l10n/app_ru.arb`
 - `mobile/clubpay_client/lib/l10n/app_uz.arb`
 - `mobile/clubpay_client/lib/l10n/generated/app_localizations.dart`

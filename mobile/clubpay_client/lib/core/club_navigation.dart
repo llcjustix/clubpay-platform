@@ -1,7 +1,6 @@
 import 'dart:ui';
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import 'package:go_router/go_router.dart';
 import 'club_theme.dart';
 import 'ui.dart';
@@ -37,37 +36,6 @@ class ClubNavigation extends StatelessWidget {
                         label: context.l.home,
                         selected: !profile,
                         onTap: () => context.go('/home'),
-                      ),
-                    ),
-                    Expanded(
-                      child: Center(
-                        heightFactor: 1,
-                        child: Semantics(
-                          button: true,
-                          label: context.l.scan,
-                          child: Tooltip(
-                            message: context.l.scan,
-                            child: FilledButton(
-                              key: const ValueKey('bottom-qr'),
-                              onPressed: () {
-                                HapticFeedback.selectionClick();
-                                context.push('/scan');
-                              },
-                              style: FilledButton.styleFrom(
-                                fixedSize: const Size.square(56),
-                                minimumSize: const Size.square(56),
-                                padding: EdgeInsets.zero,
-                                shape: const CircleBorder(),
-                              ),
-                              child: const ExcludeSemantics(
-                                child: Icon(
-                                  CupertinoIcons.qrcode_viewfinder,
-                                  size: 26,
-                                ),
-                              ),
-                            ),
-                          ),
-                        ),
                       ),
                     ),
                     Expanded(

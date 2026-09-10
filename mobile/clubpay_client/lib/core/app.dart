@@ -2,8 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import '../features/auth/presentation/auth_screen.dart';
+import '../features/catalog/presentation/club_browser_screen.dart';
 import '../features/profile/presentation/profile_screen.dart';
-import '../features/qr/presentation/qr_screen.dart';
 import '../features/qr/presentation/computer_screen.dart';
 import '../features/payment/presentation/session_screen.dart';
 import '../l10n/generated/app_localizations.dart';
@@ -54,14 +54,16 @@ final routerProvider = Provider<GoRouter>((ref) {
       GoRoute(path: '/', builder: (_, _) => const SplashScreen()),
       GoRoute(path: '/splash', builder: (_, _) => const SplashScreen()),
       GoRoute(path: '/auth', builder: (_, _) => const AuthScreen()),
-      GoRoute(path: '/home', builder: (_, _) => const ProfileScreen()),
+      GoRoute(path: '/home', builder: (_, _) => const ClubBrowserScreen()),
       GoRoute(
         path: '/profile',
         builder: (_, _) => const ProfileScreen(profile: true),
       ),
+      GoRoute(path: '/scan', redirect: (_, _) => '/home'),
       GoRoute(
-        path: '/scan',
-        builder: (_, s) => QrScreen(intent: s.uri.queryParameters['intent']),
+        path: '/clubs/:clubId',
+        builder: (_, s) =>
+            ClubDetailScreen(clubId: s.pathParameters['clubId']!),
       ),
       GoRoute(
         path: '/computer/:token',
