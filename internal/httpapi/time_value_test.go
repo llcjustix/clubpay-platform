@@ -220,9 +220,14 @@ func TestZoneValueIntegration(t *testing.T) {
 	}
 
 	// A release made before the fallback can be repaired on the next balance
-	// refresh without issuing the same return twice.
+	// refresh without issuing the same return twice. Older payment grants may
+	// miss player_id, so ownership is recovered from the order.
 	legacyGrant := createEarlyEndGrant("legacy-end-without-remaining")
-	if _, err := pool.Exec(ctx, `UPDATE game_access_grants SET status='ended',planned_ends_at=NULL,ended_at=now(),end_reason='client_left',remaining_seconds=0,remaining_minutes=0 WHERE id=$1`, legacyGrant); err != nil {
+	var legacyOrder string
+	if err := pool.QueryRow(ctx, `INSERT INTO payment_orders(invoice_id,club_id,pc_ref_id,player_id,amount_tiyin,duration_minutes,duration_seconds) VALUES('legacy-order',$1,$2,$3,100000,60,3600) RETURNING id`, club, pc, player).Scan(&legacyOrder); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `UPDATE game_access_grants SET player_id=NULL,payment_order_id=$2,status='ended',planned_ends_at=NULL,ended_at=now(),end_reason='client_left',remaining_seconds=0,remaining_minutes=0 WHERE id=$1`, legacyGrant, legacyOrder); err != nil {
 		t.Fatal(err)
 	}
 	if err := s.reconcileMissingProfileRemainders(ctx, player); err != nil {

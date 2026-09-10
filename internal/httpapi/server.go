@@ -657,7 +657,7 @@ func (s *Server) handleControllerActivation(w http.ResponseWriter, r *http.Reque
 		SELECT club_id::text, node_mode
 		FROM controller_activation_codes
 		WHERE code_hash = $1 AND consumed_at IS NULL AND expires_at > now()
-		FOR UPDATE
+		FOR UPDATE OF g
 	`, hashToken(code)).Scan(&clubID, &nodeMode)
 	if errors.Is(err, pgx.ErrNoRows) {
 		writeError(w, http.StatusUnauthorized, "activation code is invalid or expired")
@@ -6169,7 +6169,7 @@ func (s *Server) reconcileMissingProfileRemainders(ctx context.Context, playerID
 	defer tx.Rollback(ctx)
 
 	rows, err := tx.Query(ctx, `
-		SELECT g.id::text, g.club_id::text, COALESCE(g.payment_order_id::text, ''),
+		SELECT g.id::text, g.club_id::text, COALESCE(g.payment_order_id::text, ''), COALESCE(g.returned_voucher_id::text, ''),
 			GREATEST(CEIL(EXTRACT(EPOCH FROM (
 				COALESCE(
 					g.planned_ends_at,
@@ -6180,7 +6180,8 @@ func (s *Server) reconcileMissingProfileRemainders(ctx context.Context, playerID
 				) - g.ended_at
 			)))::int, 0)
 		FROM game_access_grants g
-		WHERE g.player_id=$1
+		LEFT JOIN payment_orders po ON po.id=g.payment_order_id
+		WHERE COALESCE(g.player_id, po.player_id)=$1
 		  AND g.status='ended'
 		  AND g.remaining_seconds=0
 		  AND g.ended_at IS NOT NULL
@@ -6202,18 +6203,18 @@ func (s *Server) reconcileMissingProfileRemainders(ctx context.Context, playerID
 		return err
 	}
 	type missingRemainder struct {
-		grantID, clubID, paymentOrderID string
-		seconds                         int
+		grantID, clubID, paymentOrderID, returnedVoucherID string
+		seconds                                            int
 	}
 	missing := make([]missingRemainder, 0)
 	for rows.Next() {
-		var grantID, clubID, paymentOrderID string
+		var grantID, clubID, paymentOrderID, returnedVoucherID string
 		var seconds int
-		if err := rows.Scan(&grantID, &clubID, &paymentOrderID, &seconds); err != nil {
+		if err := rows.Scan(&grantID, &clubID, &paymentOrderID, &returnedVoucherID, &seconds); err != nil {
 			rows.Close()
 			return err
 		}
-		missing = append(missing, missingRemainder{grantID, clubID, paymentOrderID, seconds})
+		missing = append(missing, missingRemainder{grantID, clubID, paymentOrderID, returnedVoucherID, seconds})
 	}
 	if err := rows.Err(); err != nil {
 		rows.Close()
@@ -6226,6 +6227,14 @@ func (s *Server) reconcileMissingProfileRemainders(ctx context.Context, playerID
 		}
 		if err := s.recordPlayerTime(ctx, tx, playerID, grant.clubID, grant.seconds, "session_remaining", grant.grantID, grant.paymentOrderID, "session-return:"+grant.grantID); err != nil {
 			return err
+		}
+		if grant.returnedVoucherID != "" {
+			// Older releases created a private fallback voucher because the grant
+			// lacked player_id. Once it is restored to that verified profile, mark
+			// the unredeemed voucher unusable so the same time cannot be spent twice.
+			if _, err := tx.Exec(ctx, `UPDATE vouchers SET status='redeemed',redeemed_at=now() WHERE id=$1 AND status='active' AND redeemed_grant_id IS NULL`, grant.returnedVoucherID); err != nil {
+				return err
+			}
 		}
 		if _, err := tx.Exec(ctx, `UPDATE game_access_grants SET remaining_seconds=$2,remaining_minutes=$3 WHERE id=$1`, grant.grantID, grant.seconds, secondsToMinutesCeil(grant.seconds)); err != nil {
 			return err
@@ -6263,10 +6272,11 @@ func (s *Server) finishGrant(ctx context.Context, grantID, reason string, remain
 	var playerID *string
 	var paymentOrderID, returnedVoucherID *string
 	err = tx.QueryRow(ctx, `
-		SELECT club_id, pc_ref_id, player_id, payment_order_id, returned_voucher_id
-		FROM game_access_grants
-		WHERE id = $1
-		FOR UPDATE
+		SELECT g.club_id, g.pc_ref_id, COALESCE(g.player_id, po.player_id), g.payment_order_id, g.returned_voucher_id
+		FROM game_access_grants g
+		LEFT JOIN payment_orders po ON po.id=g.payment_order_id
+		WHERE g.id = $1
+		FOR UPDATE OF g
 	`, grantID).Scan(&clubID, &pcID, &playerID, &paymentOrderID, &returnedVoucherID)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, fmt.Errorf("grant not found")
