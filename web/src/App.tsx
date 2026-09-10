@@ -1543,7 +1543,7 @@ function AdminPage({ auth, selectedClubID, currentPath, onClubChange, onLogout }
               <span>{sourceLabel(grant.source)} · {grantStatusLabel(grant.status)}</span>
               {grant.planned_ends_at && <small>До {formatDateTime(grant.planned_ends_at)}</small>}
               {grant.status === 'ended' && grant.remainder_recorded && (
-                <small>Возвращено в игровой баланс: {formatDurationClock(grant.remaining_seconds || 0)}</small>
+                <small>Возвращено: {formatDurationClock(grant.remaining_seconds || 0)} · баланс профиля: {formatDurationClock(grant.profile_balance_seconds || 0)}</small>
               )}
               {grant.status === 'ended' && !grant.remainder_recorded && (grant.profile_balance_seconds || 0) > 0 && (
                 <small>Игровой баланс профиля: {formatDurationClock(grant.profile_balance_seconds || 0)}</small>
