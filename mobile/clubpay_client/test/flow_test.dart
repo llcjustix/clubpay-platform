@@ -155,7 +155,7 @@ void main() {
     expect(find.text('Test Club'), findsOneWidget);
     await tester.tap(find.text('Test Club'));
     await tester.pumpAndSettle();
-    expect(find.text('Standard'), findsOneWidget);
+    expect(find.text('Standard · 10000 сум/ч'), findsOneWidget);
     await tester.tap(find.text('PC 07'));
     await tester.pumpAndSettle();
     expect(find.text('PC 07'), findsOneWidget);

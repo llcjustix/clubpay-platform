@@ -220,7 +220,9 @@ class _ClubDetailScreenState extends ConsumerState<ClubDetailScreen> {
               ),
             if (!snapshot.data!.online) const SizedBox(height: 20),
             for (final zone in snapshot.data!.zones) ...[
-              SectionCaption(zone.name),
+              SectionCaption(
+                '${zone.name} · ${context.l.zoneHourlyPrice(zone.hourlyPrice)}',
+              ),
               SettingsGroup(
                 children: [
                   for (final pc in zone.computers)

@@ -60,6 +60,7 @@
   "startTime": "{time} vaqtga boshlash",
   "duration": "{hours} soat {minutes} daq {seconds} son",
   "price": "{amount} so‘m",
+  "zoneHourlyPrice": "{amount} so‘m/soat",
   "payment": "To‘lov va sessiya",
   "waitingPayment": "To‘lov kutilmoqda",
   "startingSession": "Sessiya boshlanmoqda",

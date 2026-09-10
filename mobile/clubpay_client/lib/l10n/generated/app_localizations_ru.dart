@@ -206,6 +206,11 @@ class AppLocalizationsRu extends AppLocalizations {
   }
 
   @override
+  String zoneHourlyPrice(int amount) {
+    return '$amount сум/ч';
+  }
+
+  @override
   String get payment => 'Оплата и сессия';
 
   @override

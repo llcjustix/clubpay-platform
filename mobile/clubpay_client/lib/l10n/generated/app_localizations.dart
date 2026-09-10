@@ -458,6 +458,12 @@ abstract class AppLocalizations {
   /// **'{amount} сум'**
   String price(int amount);
 
+  /// No description provided for @zoneHourlyPrice.
+  ///
+  /// In ru, this message translates to:
+  /// **'{amount} сум/ч'**
+  String zoneHourlyPrice(int amount);
+
   /// No description provided for @payment.
   ///
   /// In ru, this message translates to:

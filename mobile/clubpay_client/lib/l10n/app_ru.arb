@@ -87,6 +87,14 @@
       }
     }
   },
+  "zoneHourlyPrice": "{amount} сум/ч",
+  "@zoneHourlyPrice": {
+    "placeholders": {
+      "amount": {
+        "type": "int"
+      }
+    }
+  },
   "payment": "Оплата и сессия",
   "waitingPayment": "Ожидаем оплату",
   "startingSession": "Запускаем сессию",
