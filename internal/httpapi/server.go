@@ -5254,9 +5254,13 @@ func (s *Server) handleAdminGrants(w http.ResponseWriter, r *http.Request) {
 	}
 	rows, err := s.db.Query(r.Context(), `
 		SELECT g.id, g.duration_minutes, g.duration_seconds, g.status, g.core_session_id, g.source, g.accepted_at,
-		       g.planned_ends_at, g.ended_at, g.end_reason, g.remaining_minutes, g.remaining_seconds, g.last_error, g.created_at, p.label
+		       g.planned_ends_at, g.ended_at, g.end_reason, g.remaining_minutes, g.remaining_seconds, g.last_error, g.created_at, p.label,
+		       COALESCE(b.seconds_balance, 0),
+		       EXISTS (SELECT 1 FROM player_time_ledger l WHERE l.idempotency_key='session-return:' || g.id::text)
 		FROM game_access_grants g
 		JOIN pc_refs p ON p.id = g.pc_ref_id
+		LEFT JOIN payment_orders po ON po.id = g.payment_order_id
+		LEFT JOIN player_club_balances b ON b.player_id = COALESCE(g.player_id, po.player_id) AND b.club_id = g.club_id
 		WHERE g.club_id = $1
 		ORDER BY g.created_at DESC
 		LIMIT 50
@@ -5272,11 +5276,13 @@ func (s *Server) handleAdminGrants(w http.ResponseWriter, r *http.Request) {
 		var id, status, source, pcLabel string
 		var coreSessionID, endReason, lastError *string
 		var acceptedAt, plannedEndsAt, endedAt *time.Time
-		var duration, durationSeconds, remainingMinutes, remainingSeconds int
+		var duration, durationSeconds, remainingMinutes, remainingSeconds, profileBalanceSeconds int
+		var remainderRecorded bool
 		var createdAt time.Time
 		if err := rows.Scan(
 			&id, &duration, &durationSeconds, &status, &coreSessionID, &source, &acceptedAt, &plannedEndsAt,
 			&endedAt, &endReason, &remainingMinutes, &remainingSeconds, &lastError, &createdAt, &pcLabel,
+			&profileBalanceSeconds, &remainderRecorded,
 		); err != nil {
 			writeError(w, http.StatusInternalServerError, err.Error())
 			return
@@ -5284,7 +5290,8 @@ func (s *Server) handleAdminGrants(w http.ResponseWriter, r *http.Request) {
 		grants = append(grants, map[string]any{
 			"id": id, "duration_minutes": duration, "duration_seconds": durationSeconds, "status": status, "core_session_id": coreSessionID, "source": source,
 			"accepted_at": acceptedAt, "planned_ends_at": plannedEndsAt, "ended_at": endedAt, "end_reason": endReason,
-			"remaining_minutes": remainingMinutes, "remaining_seconds": remainingSeconds, "last_error": lastError, "created_at": createdAt, "pc_label": pcLabel,
+			"remaining_minutes": remainingMinutes, "remaining_seconds": remainingSeconds, "remainder_recorded": remainderRecorded,
+			"profile_balance_seconds": profileBalanceSeconds, "last_error": lastError, "created_at": createdAt, "pc_label": pcLabel,
 		})
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"grants": grants})

@@ -260,6 +260,8 @@ type Grant = {
   planned_ends_at?: string;
   remaining_minutes: number;
   remaining_seconds?: number;
+  remainder_recorded?: boolean;
+  profile_balance_seconds?: number;
   last_error?: string;
   created_at: string;
 };
@@ -1540,6 +1542,12 @@ function AdminPage({ auth, selectedClubID, currentPath, onClubChange, onLogout }
               <strong>{grant.pc_label}</strong>
               <span>{sourceLabel(grant.source)} · {grantStatusLabel(grant.status)}</span>
               {grant.planned_ends_at && <small>До {formatDateTime(grant.planned_ends_at)}</small>}
+              {grant.status === 'ended' && grant.remainder_recorded && (
+                <small>Возвращено в игровой баланс: {formatDurationClock(grant.remaining_seconds || 0)}</small>
+              )}
+              {grant.status === 'ended' && !grant.remainder_recorded && (grant.profile_balance_seconds || 0) > 0 && (
+                <small>Игровой баланс профиля: {formatDurationClock(grant.profile_balance_seconds || 0)}</small>
+              )}
               {grant.last_error && <small className="danger-text">{grant.last_error}</small>}
             </div>
             <code>{formatDurationClock(grant.duration_seconds || grant.duration_minutes * 60)}</code>
