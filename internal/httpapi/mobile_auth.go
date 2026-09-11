@@ -13,6 +13,7 @@ import (
 	"net"
 	"net/http"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
@@ -151,7 +152,41 @@ func (s *Server) handleMobileChallenge(w http.ResponseWriter, r *http.Request) {
 		mobileInternal(w)
 		return
 	}
+	// A Telegram deep link only carries its `start` payload while Telegram
+	// decides to show its own Start action. Once a player has already opened
+	// the bot, opening the same link merely focuses the existing chat and the
+	// payload is lost. A verified bot binding is enough to deliver the OTP
+	// safely, so do that immediately instead of depending on client-specific
+	// deep-link behaviour.
+	if err := s.deliverMobileOTPToBoundTelegram(r.Context(), token, req.Phone); err != nil {
+		writeError(w, http.StatusServiceUnavailable, "telegram_unavailable")
+		return
+	}
 	writeJSON(w, 201, map[string]any{"challenge": token, "expires_at": expires, "telegram_link": "https://t.me/" + username + "?start=" + token})
+}
+
+// deliverMobileOTPToBoundTelegram completes a challenge only when this exact
+// phone has previously been verified by the same Telegram account. New players
+// still use the signed deep link and share-contact flow below.
+func (s *Server) deliverMobileOTPToBoundTelegram(ctx context.Context, token, phone string) error {
+	var chatIDText, username, firstName string
+	err := s.db.QueryRow(ctx, `SELECT chat_id,COALESCE(username,''),COALESCE(first_name,'')
+		FROM telegram_users WHERE phone=$1 AND status='active'`, phone).Scan(&chatIDText, &username, &firstName)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	chatID, err := strconv.ParseInt(chatIDText, 10, 64)
+	if err != nil || chatID <= 0 {
+		return nil
+	}
+	_, err = s.processMobileTelegram(ctx, telegramMessage{
+		Chat: telegramChat{ID: chatID},
+		From: telegramUser{ID: chatID, Username: username, FirstName: firstName},
+	}, token)
+	return err
 }
 
 // Runs only on updates received from authenticated webhook or Telegram polling.

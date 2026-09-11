@@ -35,7 +35,7 @@ class AppLocalizationsUz extends AppLocalizations {
 
   @override
   String get telegramHelp =>
-      'ClubPay botini oching, o‘z kontaktingizni yuboring va olingan kodni shu yerga kiriting. Kod ko‘pi bilan 3 daqiqa amal qiladi.';
+      'Agar raqam ClubPay botiga ulangan bo‘lsa, kod darhol keladi. Aks holda botni oching va kontaktingizni yuboring. Kodni 3 daqiqa ichida shu yerga kiriting.';
 
   @override
   String get openTelegram => 'Telegramni ochish';

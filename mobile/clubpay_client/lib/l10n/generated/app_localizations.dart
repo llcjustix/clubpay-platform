@@ -149,7 +149,7 @@ abstract class AppLocalizations {
   /// No description provided for @telegramHelp.
   ///
   /// In ru, this message translates to:
-  /// **'Откройте бота ClubPay, отправьте свой контакт и введите полученный код здесь. Код действует не более 3 минут.'**
+  /// **'Если номер уже привязан к боту ClubPay, код придёт сразу. Иначе откройте бота и отправьте свой контакт. Введите код здесь в течение 3 минут.'**
   String get telegramHelp;
 
   /// No description provided for @openTelegram.

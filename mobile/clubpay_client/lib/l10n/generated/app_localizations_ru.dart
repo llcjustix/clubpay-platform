@@ -35,7 +35,7 @@ class AppLocalizationsRu extends AppLocalizations {
 
   @override
   String get telegramHelp =>
-      'Откройте бота ClubPay, отправьте свой контакт и введите полученный код здесь. Код действует не более 3 минут.';
+      'Если номер уже привязан к боту ClubPay, код придёт сразу. Иначе откройте бота и отправьте свой контакт. Введите код здесь в течение 3 минут.';
 
   @override
   String get openTelegram => 'Открыть Telegram';

@@ -8,7 +8,7 @@
   "phoneError": "O‘zbekiston raqamini kiriting: +998 va 9 ta raqam",
   "continueLabel": "Davom etish",
   "telegramTitle": "Raqamni tasdiqlang",
-  "telegramHelp": "ClubPay botini oching, o‘z kontaktingizni yuboring va olingan kodni shu yerga kiriting. Kod ko‘pi bilan 3 daqiqa amal qiladi.",
+  "telegramHelp": "Agar raqam ClubPay botiga ulangan bo‘lsa, kod darhol keladi. Aks holda botni oching va kontaktingizni yuboring. Kodni 3 daqiqa ichida shu yerga kiriting.",
   "openTelegram": "Telegramni ochish",
   "otp": "Telegramdagi kod",
   "verify": "Kirish",

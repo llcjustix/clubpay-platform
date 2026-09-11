@@ -232,14 +232,10 @@ func TestMobileIntegration(t *testing.T) {
 	if _, err = pool.Exec(ctx, `INSERT INTO telegram_users(phone,chat_id,status) VALUES($1,$2,'active')`, knownPhone, fmt.Sprint(knownChat)); err != nil {
 		t.Fatal(err)
 	}
-	ch = challenge(knownPhone)
 	mu.Lock()
 	delivered = ""
 	mu.Unlock()
-	msg = telegramMessage{Text: "/start " + ch, Chat: telegramChat{ID: knownChat}, From: telegramUser{ID: knownChat, FirstName: "Known Player"}}
-	if _, err = s.processTelegramUpdate(ctx, telegramUpdate{Message: msg}); err != nil {
-		t.Fatal(err)
-	}
+	ch = challenge(knownPhone)
 	mu.Lock()
 	knownMessage := delivered
 	mu.Unlock()
