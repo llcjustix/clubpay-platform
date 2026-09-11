@@ -158,11 +158,16 @@ func (s *Server) handleMobileChallenge(w http.ResponseWriter, r *http.Request) {
 	// payload is lost. A verified bot binding is enough to deliver the OTP
 	// safely, so do that immediately instead of depending on client-specific
 	// deep-link behaviour.
+	delivery := "sent"
 	if err := s.deliverMobileOTPToBoundTelegram(r.Context(), token, req.Phone); err != nil {
-		writeError(w, http.StatusServiceUnavailable, "telegram_unavailable")
-		return
+		// Keep the signed Telegram link usable if Telegram temporarily rejects a
+		// proactive message (for example, after a player changes their Telegram
+		// account). The bot can finish the same pending challenge after /start
+		// and a contact confirmation, so a transient send error must not block
+		// the player from logging in.
+		delivery = "open_link"
 	}
-	writeJSON(w, 201, map[string]any{"challenge": token, "expires_at": expires, "telegram_link": "https://t.me/" + username + "?start=" + token})
+	writeJSON(w, 201, map[string]any{"challenge": token, "expires_at": expires, "telegram_link": "https://t.me/" + username + "?start=" + token, "telegram_delivery": delivery})
 }
 
 // deliverMobileOTPToBoundTelegram completes a challenge only when this exact
@@ -231,17 +236,31 @@ func (s *Server) processMobileTelegram(ctx context.Context, message telegramMess
 		return true, s.sendTelegramMessageWithMarkup(ctx, chat, "Подтвердите номер из приложения своим контактом. / Ilovadagi raqamni o‘z kontaktingiz bilan tasdiqlang.", telegramContactKeyboard())
 	}
 	if message.Contact.PhoneNumber == "" {
-		return false, nil
-	}
-	var exists bool
-	err := s.db.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM mobile_auth_challenges WHERE chat_id=$1 AND status='contact' AND expires_at>now())`, chat).Scan(&exists)
-	if err != nil || !exists {
-		return false, err
+		return s.claimPendingMobileChallengeForBoundChat(ctx, message)
 	}
 	if message.Chat.ID <= 0 || message.From.ID != message.Chat.ID || message.Contact.UserID != message.From.ID {
 		return true, nil
 	}
 	phone := "+" + strings.TrimPrefix(normalizePhone(message.Contact.PhoneNumber), "+")
+	if phone == "+" {
+		return true, nil
+	}
+	var exists bool
+	err := s.db.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM mobile_auth_challenges WHERE chat_id=$1 AND status='contact' AND expires_at>now())`, chat).Scan(&exists)
+	if err != nil {
+		return false, err
+	}
+	if !exists {
+		tag, err := s.db.Exec(ctx, `UPDATE mobile_auth_challenges SET chat_id=$1,status='contact'
+			WHERE id=(SELECT id FROM mobile_auth_challenges WHERE phone=$2 AND status='pending' AND expires_at>now() ORDER BY created_at DESC LIMIT 1)
+			  AND status='pending'`, chat, phone)
+		if err != nil {
+			return false, err
+		}
+		if tag.RowsAffected() == 0 {
+			return false, nil
+		}
+	}
 	tx, err := s.db.Begin(ctx)
 	if err != nil {
 		return true, err
@@ -287,6 +306,33 @@ func (s *Server) processMobileTelegram(ctx context.Context, message telegramMess
 		return true, fmt.Errorf("mobile code delivery unavailable")
 	}
 	return true, tx.Commit(ctx)
+}
+
+// claimPendingMobileChallengeForBoundChat is the fallback for Telegram
+// clients that open an existing bot chat but silently drop the deep-link start
+// payload. The stored phone-to-chat binding supplies the same proof a shared
+// contact would, so the pending challenge can safely continue.
+func (s *Server) claimPendingMobileChallengeForBoundChat(ctx context.Context, message telegramMessage) (bool, error) {
+	if message.Chat.ID <= 0 || message.From.ID != message.Chat.ID {
+		return false, nil
+	}
+	chat := fmt.Sprint(message.Chat.ID)
+	var phone string
+	err := s.db.QueryRow(ctx, `UPDATE mobile_auth_challenges c SET chat_id=$1,status='contact'
+		WHERE c.id=(SELECT c2.id FROM mobile_auth_challenges c2
+			JOIN telegram_users u ON u.phone=c2.phone
+			WHERE u.chat_id=$1 AND u.status='active' AND c2.status='pending' AND c2.expires_at>now()
+			ORDER BY c2.created_at DESC LIMIT 1)
+		  AND c.status='pending'
+		RETURNING c.phone`, chat).Scan(&phone)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	message.Contact = telegramContact{PhoneNumber: phone, UserID: message.From.ID}
+	return s.processMobileTelegram(ctx, message, "")
 }
 func mobileIssue(ctx context.Context, tx pgx.Tx, session string, sessionExpiry time.Time) (map[string]any, error) {
 	access, refresh := mobileSecret("mob_a_"), mobileSecret("mob_r_")

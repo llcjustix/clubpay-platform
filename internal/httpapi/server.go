@@ -6581,12 +6581,13 @@ func (s *Server) processTelegramUpdate(ctx context.Context, update telegramUpdat
 		}
 		return map[string]any{"success": true}, nil
 	}
-	// A bare /start has no mobile challenge token. Do not let a contact sent
-	// after it fall into the legacy voucher-binding flow: that used to say the
-	// phone was linked but never issued the mobile login OTP.
+	// Some Telegram clients drop a signed start payload when they focus an
+	// existing chat. Ask for the contact here: processMobileTelegram matches it
+	// only to an unexpired pending challenge for that exact phone before the
+	// legacy voucher flow can see it.
 	if phone == "" && strings.TrimSpace(message.Text) == "/start" {
-		_ = s.sendTelegramMessage(ctx, chatID, "Для входа вернитесь в ClubPay и нажмите «Открыть Telegram». Ссылка из приложения запустит подтверждение номера и пришлёт код.")
-		return map[string]any{"success": true, "status": "mobile_link_required"}, nil
+		_ = s.sendTelegramMessageWithMarkup(ctx, chatID, "Подтвердите номер из приложения своим контактом. После этого бот пришлёт код входа. / Ilovadagi raqamni o‘z kontaktingiz bilan tasdiqlang. Shundan so‘ng bot kirish kodini yuboradi.", telegramContactKeyboard())
+		return map[string]any{"success": true, "status": "mobile_contact_required"}, nil
 	}
 	if phone == "" && strings.HasPrefix(startPayload, "auth_") {
 		knownPlayer, returnURL, err := s.claimTelegramPlayerAuthChallenge(ctx, startPayload, chatID)
