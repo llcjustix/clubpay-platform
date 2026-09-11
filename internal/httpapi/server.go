@@ -6568,9 +6568,10 @@ func (s *Server) processTelegramUpdate(ctx context.Context, update telegramUpdat
 	}
 	chatID := strconv.FormatInt(message.Chat.ID, 10)
 	phone := normalizePhone(message.Contact.PhoneNumber)
+	startText := strings.TrimSpace(message.Text)
 	startPayload := ""
-	if phone == "" && strings.HasPrefix(strings.TrimSpace(message.Text), "/start") {
-		parts := strings.Fields(message.Text)
+	if phone == "" && strings.HasPrefix(startText, "/start") {
+		parts := strings.Fields(startText)
 		if len(parts) > 1 {
 			startPayload = strings.TrimSpace(parts[1])
 		}
@@ -6585,7 +6586,9 @@ func (s *Server) processTelegramUpdate(ctx context.Context, update telegramUpdat
 	// existing chat. Ask for the contact here: processMobileTelegram matches it
 	// only to an unexpired pending challenge for that exact phone before the
 	// legacy voucher flow can see it.
-	if phone == "" && strings.TrimSpace(message.Text) == "/start" {
+	if phone == "" && strings.HasPrefix(startText, "/start") &&
+		!strings.HasPrefix(startPayload, "auth_") &&
+		!strings.HasPrefix(startPayload, "cp_") {
 		_ = s.sendTelegramMessageWithMarkup(ctx, chatID, "Подтвердите номер из приложения своим контактом. После этого бот пришлёт код входа. / Ilovadagi raqamni o‘z kontaktingiz bilan tasdiqlang. Shundan so‘ng bot kirish kodini yuboradi.", telegramContactKeyboard())
 		return map[string]any{"success": true, "status": "mobile_contact_required"}, nil
 	}

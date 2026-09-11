@@ -186,6 +186,21 @@ func TestMobileIntegration(t *testing.T) {
 	if !strings.Contains(bareStartMessage, "Подтвердите номер из приложения") || strings.Contains(bareStartMessage, "Номер привязан") {
 		t.Fatalf("bare start entered the legacy flow: %q", bareStartMessage)
 	}
+	// Telegram clients may attach an opaque start argument even though the
+	// player has just pressed the ordinary Start button. It must still enter
+	// mobile authorization rather than the historical voucher flow.
+	mu.Lock()
+	delivered = ""
+	mu.Unlock()
+	if _, err = s.processTelegramUpdate(ctx, telegramUpdate{Message: telegramMessage{Text: "/start telegram_web", Chat: telegramChat{ID: 702}, From: telegramUser{ID: 702}}}); err != nil {
+		t.Fatal(err)
+	}
+	mu.Lock()
+	parameterStartMessage := delivered
+	mu.Unlock()
+	if !strings.Contains(parameterStartMessage, "Подтвердите номер из приложения") || strings.Contains(parameterStartMessage, "Номер привязан") {
+		t.Fatalf("parameterized start entered the legacy flow: %q", parameterStartMessage)
+	}
 	// A first-time player does not need a signed Telegram start payload: after
 	// one normal /start, their own contact must claim the matching pending
 	// mobile challenge and receive an OTP without entering voucher handling.
