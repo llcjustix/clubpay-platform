@@ -154,6 +154,9 @@ func TestMobileIntegration(t *testing.T) {
 		if _, err := s.processTelegramUpdate(ctx, telegramUpdate{Message: message}); err != nil {
 			t.Fatal(err)
 		}
+		if _, err := s.processTelegramUpdate(ctx, telegramUpdate{Message: message}); err != nil {
+			t.Fatal(err)
+		}
 		message.Text = ""
 		message.Contact = telegramContact{PhoneNumber: phone, UserID: chat}
 		if _, err := s.processTelegramUpdate(ctx, telegramUpdate{Message: message}); err != nil {

@@ -211,6 +211,17 @@ func (s *Server) processMobileTelegram(ctx context.Context, message telegramMess
 			return true, err
 		}
 		if tag.RowsAffected() == 0 {
+			var alreadyClaimed bool
+			err := s.db.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM mobile_auth_challenges
+				WHERE token_hash=$1 AND chat_id=$2 AND status IN ('contact','otp') AND expires_at>now())`, hashToken(payload), chat).Scan(&alreadyClaimed)
+			if err != nil {
+				return true, err
+			}
+			if alreadyClaimed {
+				// Telegram can deliver the same Start action twice while opening a
+				// fresh chat. The first update already owns this challenge.
+				return true, nil
+			}
 			return true, s.sendTelegramMessage(ctx, chat, "Ссылка устарела. Создайте новый запрос в ClubPay. / Havola eskirgan. ClubPay’da qayta urinib ko‘ring.")
 		}
 		// A user who already confirmed this exact phone with the same bot does
@@ -258,7 +269,11 @@ func (s *Server) processMobileTelegram(ctx context.Context, message telegramMess
 			return false, err
 		}
 		if tag.RowsAffected() == 0 {
-			return false, nil
+			// A contact reaches this path only after the mobile authorization
+			// handler. Never fall through to the historical voucher binding: it
+			// would claim that the phone was linked even though no login code can
+			// be issued for it.
+			return true, s.sendTelegramMessage(ctx, chat, "Не нашли активный запрос входа. Вернитесь в ClubPay и нажмите «Получить новый код». / Faol kirish so‘rovi topilmadi. ClubPay’ga qayting va «Yangi kod olish»ni bosing.")
 		}
 	}
 	tx, err := s.db.Begin(ctx)
