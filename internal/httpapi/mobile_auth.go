@@ -114,7 +114,7 @@ func (s *Server) handleMobileChallenge(w http.ResponseWriter, r *http.Request) {
 	for _, b := range []struct {
 		key   string
 		limit int
-	}{{"phone:" + req.Phone, 3}, {"device:" + req.Device, 5}, {"ip:" + host, 30}} {
+	}{{"phone:" + req.Phone, 5}, {"device:" + req.Device, 8}, {"ip:" + host, 30}} {
 		ok, err := s.mobileRate(r.Context(), b.key, b.limit, 15*time.Minute)
 		if err != nil {
 			mobileInternal(w)

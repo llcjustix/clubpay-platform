@@ -6850,20 +6850,31 @@ func (s *Server) sendTelegramMessageWithMarkup(ctx context.Context, chatID, text
 		payloadMap["reply_markup"] = replyMarkup
 	}
 	payload, _ := json.Marshal(payloadMap)
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, "https://api.telegram.org/bot"+s.cfg.TelegramBotToken+"/sendMessage", bytes.NewReader(payload))
-	if err != nil {
-		return err
+	var lastErr error
+	for attempt := 0; attempt < 2; attempt++ {
+		req, err := http.NewRequestWithContext(ctx, http.MethodPost, "https://api.telegram.org/bot"+s.cfg.TelegramBotToken+"/sendMessage", bytes.NewReader(payload))
+		if err == nil {
+			req.Header.Set("Content-Type", "application/json")
+			var resp *http.Response
+			resp, err = http.DefaultClient.Do(req)
+			if err == nil {
+				resp.Body.Close()
+				if resp.StatusCode >= 200 && resp.StatusCode < 300 {
+					return nil
+				}
+				err = fmt.Errorf("telegram send failed: HTTP %d", resp.StatusCode)
+			}
+		}
+		lastErr = err
+		if attempt == 0 {
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			case <-time.After(300 * time.Millisecond):
+			}
+		}
 	}
-	req.Header.Set("Content-Type", "application/json")
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return fmt.Errorf("telegram send failed: HTTP %d", resp.StatusCode)
-	}
-	return nil
+	return lastErr
 }
 
 func (s *Server) createTelegramLink(ctx context.Context, phone string) (string, time.Time, error) {

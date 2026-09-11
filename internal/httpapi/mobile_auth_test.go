@@ -452,7 +452,7 @@ func TestMobileIntegration(t *testing.T) {
 	_, _ = pool.Exec(ctx, `UPDATE mobile_auth_challenges SET otp_expires_at=$2 WHERE token_hash=$1`, hashToken(ch), time.Now().Add(-time.Second))
 	expect(401, "POST", "/api/mobile/auth/verify", "", "", map[string]any{"challenge": ch, "device_id": device, "otp": otp})
 	_, _ = pool.Exec(ctx, `DELETE FROM mobile_rate_limits`)
-	for i := 0; i < 3; i++ {
+	for i := 0; i < 5; i++ {
 		challenge("+998905555555")
 	}
 	expect(429, "POST", "/api/mobile/auth/challenge", "", "", map[string]any{"phone": "+998905555555", "device_id": device})
