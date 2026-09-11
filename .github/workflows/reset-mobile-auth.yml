@@ -1,0 +1,55 @@
+name: Reset mobile test identity
+
+on:
+  workflow_dispatch:
+    inputs:
+      phone:
+        description: "Test phone in +998XXXXXXXXX format"
+        required: true
+        type: string
+
+jobs:
+  reset:
+    runs-on:
+      group: jlearnx runner
+      labels: [self-hosted, docker, jlearnx]
+    permissions:
+      contents: read
+    steps:
+      - name: Validate requested test phone
+        env:
+          PHONE: ${{ inputs.phone }}
+        run: |
+          if [[ ! "$PHONE" =~ ^\+998[0-9]{9}$ ]]; then
+            echo "Phone must use +998XXXXXXXXX format" >&2
+            exit 1
+          fi
+
+      - name: Reset Telegram binding and mobile sessions
+        env:
+          PHONE: ${{ inputs.phone }}
+          DB_HOST: ${{ secrets.DB_HOST }}
+          DB_PORT: ${{ secrets.DB_PORT }}
+          DB_NAME: ${{ secrets.DB_NAME }}
+          DB_USER: ${{ secrets.DB_USER }}
+          DB_PASSWORD: ${{ secrets.DB_PASSWORD }}
+        run: |
+          docker run --rm \
+            -e PGPASSWORD="$DB_PASSWORD" \
+            postgres:16-alpine \
+            psql "host=$DB_HOST port=$DB_PORT dbname=$DB_NAME user=$DB_USER sslmode=disable" \
+              -v ON_ERROR_STOP=1 -v phone="$PHONE" <<'SQL'
+          BEGIN;
+          DELETE FROM telegram_users WHERE phone = :'phone';
+          UPDATE mobile_sessions s
+          SET revoked_at = now()
+          FROM players p
+          WHERE s.player_id = p.id
+            AND p.phone = :'phone'
+            AND s.revoked_at IS NULL;
+          UPDATE mobile_auth_challenges
+          SET status = 'cancelled', otp_hash = NULL, otp_expires_at = NULL
+          WHERE phone = :'phone'
+            AND status IN ('pending', 'contact', 'otp');
+          COMMIT;
+          SQL
