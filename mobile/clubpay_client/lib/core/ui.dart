@@ -62,6 +62,35 @@ Future<void> openExternal(String value) async {
   }
 }
 
+/// Opens the signed Telegram authorization link without losing its start
+/// parameter when the bot chat has already been opened on the device.
+Future<void> openTelegramAuthorization(String value) async {
+  final web = Uri.parse(value);
+  final host = web.host.toLowerCase();
+  final bot = web.pathSegments.isEmpty ? '' : web.pathSegments.first;
+  final start = web.queryParameters['start'];
+  if (web.scheme != 'https' ||
+      (host != 't.me' && host != 'www.t.me') ||
+      bot.isEmpty ||
+      start == null ||
+      start.isEmpty) {
+    throw const FormatException('invalid_telegram_url');
+  }
+
+  final telegram = Uri(
+    scheme: 'tg',
+    host: 'resolve',
+    queryParameters: {'domain': bot, 'start': start},
+  );
+  try {
+    if (await launchUrl(telegram, mode: LaunchMode.externalApplication)) return;
+  } catch (_) {
+    // The Telegram app may not be installed. The universal HTTPS link below
+    // opens Telegram when present and otherwise lets the user install it.
+  }
+  await openExternal(value);
+}
+
 class AppPage extends StatelessWidget {
   const AppPage({
     super.key,

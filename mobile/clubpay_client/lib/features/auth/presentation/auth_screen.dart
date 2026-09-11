@@ -150,7 +150,7 @@ class _AuthScreenState extends ConsumerState<AuthScreen> {
                     ? null
                     : () async {
                         try {
-                          await openExternal(_challenge!.telegramLink);
+                          await openTelegramAuthorization(_challenge!.telegramLink);
                         } catch (e) {
                           if (context.mounted) showFailure(context, e);
                         }
