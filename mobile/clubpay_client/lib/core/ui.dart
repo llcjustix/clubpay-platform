@@ -62,25 +62,24 @@ Future<void> openExternal(String value) async {
   }
 }
 
-/// Opens the signed Telegram authorization link without losing its start
-/// parameter when the bot chat has already been opened on the device.
+/// Opens the ClubPay bot once. Mobile authorization is completed when the
+/// player shares their contact, which is more reliable than a Telegram start
+/// payload on a new chat: Telegram may both consume the payload and still ask
+/// the player to press Start, producing duplicate /start messages.
 Future<void> openTelegramAuthorization(String value) async {
   final web = Uri.parse(value);
   final host = web.host.toLowerCase();
   final bot = web.pathSegments.isEmpty ? '' : web.pathSegments.first;
-  final start = web.queryParameters['start'];
   if (web.scheme != 'https' ||
       (host != 't.me' && host != 'www.t.me') ||
-      bot.isEmpty ||
-      start == null ||
-      start.isEmpty) {
+      bot.isEmpty) {
     throw const FormatException('invalid_telegram_url');
   }
 
   final telegram = Uri(
     scheme: 'tg',
     host: 'resolve',
-    queryParameters: {'domain': bot, 'start': start},
+    queryParameters: {'domain': bot},
   );
   try {
     if (await launchUrl(telegram, mode: LaunchMode.externalApplication)) return;
@@ -88,7 +87,7 @@ Future<void> openTelegramAuthorization(String value) async {
     // The Telegram app may not be installed. The universal HTTPS link below
     // opens Telegram when present and otherwise lets the user install it.
   }
-  await openExternal(value);
+  await openExternal('https://t.me/$bot');
 }
 
 class AppPage extends StatelessWidget {

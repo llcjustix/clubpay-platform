@@ -183,6 +183,34 @@ func TestMobileIntegration(t *testing.T) {
 	if !strings.Contains(bareStartMessage, "Подтвердите номер из приложения") || strings.Contains(bareStartMessage, "Номер привязан") {
 		t.Fatalf("bare start entered the legacy flow: %q", bareStartMessage)
 	}
+	// A first-time player does not need a signed Telegram start payload: after
+	// one normal /start, their own contact must claim the matching pending
+	// mobile challenge and receive an OTP without entering voucher handling.
+	freshPhone := "+998905555556"
+	freshChallenge := challenge(freshPhone)
+	mu.Lock()
+	delivered = ""
+	mu.Unlock()
+	freshMessage := telegramMessage{Text: "/start", Chat: telegramChat{ID: 701}, From: telegramUser{ID: 701}}
+	if _, err = s.processTelegramUpdate(ctx, telegramUpdate{Message: freshMessage}); err != nil {
+		t.Fatal(err)
+	}
+	freshMessage.Text = ""
+	freshMessage.Contact = telegramContact{PhoneNumber: freshPhone, UserID: 701}
+	if _, err = s.processTelegramUpdate(ctx, telegramUpdate{Message: freshMessage}); err != nil {
+		t.Fatal(err)
+	}
+	mu.Lock()
+	freshMessageText := delivered
+	mu.Unlock()
+	if strings.Contains(freshMessageText, "Номер привязан") || !strings.Contains(freshMessageText, "Код входа ClubPay") {
+		t.Fatalf("fresh mobile contact entered legacy flow: %q", freshMessageText)
+	}
+	freshOTP := regexp.MustCompile(`[0-9]{6}`).FindString(freshMessageText)
+	if freshOTP == "" {
+		t.Fatal("fresh mobile flow did not deliver an OTP")
+	}
+	expect(200, "POST", "/api/mobile/auth/verify", "", "", map[string]any{"challenge": freshChallenge, "device_id": device, "otp": freshOTP})
 	// Wrong contact and forwarded contact cannot verify the requested phone.
 	msg := telegramMessage{Text: "/start " + ch, Chat: telegramChat{ID: 77}, From: telegramUser{ID: 77}}
 	if _, err = s.processTelegramUpdate(ctx, telegramUpdate{Message: msg}); err != nil {

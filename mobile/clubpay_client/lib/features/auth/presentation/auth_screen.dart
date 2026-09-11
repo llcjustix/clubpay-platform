@@ -19,6 +19,7 @@ class _AuthScreenState extends ConsumerState<AuthScreen> {
   final _otp = TextEditingController();
   AuthChallenge? _challenge;
   bool _busy = false;
+  bool _openingTelegram = false;
   String? _error;
   Timer? _timer;
   @override
@@ -146,16 +147,22 @@ class _AuthScreenState extends ConsumerState<AuthScreen> {
               ActionButton(
                 label: l.openTelegram,
                 icon: Icons.open_in_new,
-                onPressed: expired
+                onPressed: expired || _openingTelegram
                     ? null
                     : () async {
+                        setState(() => _openingTelegram = true);
                         try {
                           await openTelegramAuthorization(_challenge!.telegramLink);
                         } catch (e) {
                           if (context.mounted) showFailure(context, e);
+                        } finally {
+                          if (mounted) {
+                            setState(() => _openingTelegram = false);
+                          }
                         }
                       },
                 secondary: true,
+                busy: _openingTelegram,
               ),
             ],
           ),
