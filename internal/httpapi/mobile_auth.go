@@ -573,7 +573,7 @@ func (s *Server) handleMobileBalances(w http.ResponseWriter, r *http.Request) {
  SELECT b.club_id,b.club_name,b.seconds_balance,b.updated_at,b.controller_synced_at,b.club_online,
   GREATEST(0,ROUND(b.units::numeric/360000))::bigint AS balance_uzs,
   COALESCE((SELECT jsonb_agg(jsonb_build_object('id',z.id,'name',z.name,'hourly_price_tiyin',z.hourly_price_tiyin,'seconds_available',b.units/z.hourly_price_tiyin) ORDER BY z.sort_order,z.name) FROM zones z WHERE z.club_id=b.club_id AND z.status<>'deleted' AND z.hourly_price_tiyin>0),'[]'::jsonb) AS zones
- FROM balances b ORDER BY b.club_name`, p.ID, strings.EqualFold(s.cfg.NodeMode, "cloud"))
+ FROM balances b ORDER BY b.club_name`, p.ID, s.localNodeMode())
 	if err != nil {
 		mobileInternal(w)
 		return
@@ -598,7 +598,10 @@ func (s *Server) handleMobileClubs(w http.ResponseWriter, r *http.Request) {
 	}
 	rows, err := s.queryMaps(r.Context(), `
 		SELECT c.id AS club_id,c.name AS club_name,COALESCE(c.address,'') AS address,
-		  COALESCE(c.controller_synced_at>now()-interval '45 seconds',false) AS club_online,
+		  CASE WHEN $2::boolean
+		    THEN COALESCE(c.controller_synced_at>now()-interval '45 seconds',false)
+		    ELSE EXISTS(SELECT 1 FROM pc_refs live WHERE live.club_id=c.id AND live.status_cache IN ('available','sleeping','occupied','frozen'))
+		  END AS club_online,
 		  COUNT(*) FILTER (WHERE p.status_cache IN ('available','sleeping'))::int AS available_pcs
 		FROM clubs c
 		JOIN pc_refs p ON p.club_id=c.id AND p.status_cache<>'deleted'
@@ -608,7 +611,7 @@ func (s *Server) handleMobileClubs(w http.ResponseWriter, r *http.Request) {
 		GROUP BY c.id,c.name,c.address,c.controller_synced_at
 		ORDER BY (COUNT(*) FILTER (WHERE p.status_cache IN ('available','sleeping'))) DESC,c.name
 		LIMIT 50
-	`, query)
+	`, query, s.localNodeMode())
 	if err != nil {
 		mobileInternal(w)
 		return
@@ -631,9 +634,12 @@ func (s *Server) handleMobileClub(w http.ResponseWriter, r *http.Request) {
 	var club map[string]any
 	rows, err := s.queryMaps(r.Context(), `
 		SELECT c.id AS club_id,c.name AS club_name,COALESCE(c.address,'') AS address,
-		  COALESCE(c.controller_synced_at>now()-interval '45 seconds',false) AS club_online
+		  CASE WHEN $2::boolean
+		    THEN COALESCE(c.controller_synced_at>now()-interval '45 seconds',false)
+		    ELSE EXISTS(SELECT 1 FROM pc_refs live WHERE live.club_id=c.id AND live.status_cache IN ('available','sleeping','occupied','frozen'))
+		  END AS club_online
 		FROM clubs c WHERE c.id=$1 AND c.status='active'
-	`, clubID)
+	`, clubID, s.localNodeMode())
 	if err != nil {
 		mobileInternal(w)
 		return
