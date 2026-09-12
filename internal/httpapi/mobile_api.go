@@ -17,6 +17,7 @@ import (
 
 type mobileOperationContext struct{ Player, Phone, Key string }
 type mobileOperationKey struct{}
+type mobileDirectStartKey struct{}
 
 func (s *Server) mobileRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/mobile/auth/challenge", s.handleMobileChallenge)
@@ -123,7 +124,10 @@ func (s *Server) handleMobileTestPaymentSuccess(w http.ResponseWriter, r *http.R
 		writeError(w, http.StatusBadRequest, "invoice_id is required")
 		return
 	}
-	grantID, err := s.completeMockPayment(r.Context(), invoiceID, p.ID)
+	// Test payments from the mobile app should start immediately through the
+	// Cloud's connected Agent; they do not require a separate edge snapshot.
+	ctx := context.WithValue(r.Context(), mobileDirectStartKey{}, true)
+	grantID, err := s.completeMockPayment(ctx, invoiceID, p.ID)
 	if errors.Is(err, errMockOrderNotFound) {
 		writeError(w, http.StatusNotFound, "order not found")
 		return
