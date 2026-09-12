@@ -4753,10 +4753,9 @@ func (s *Server) applyPaymentSuccess(ctx context.Context, success paymentSuccess
 		}
 		return "", err
 	}
-	// The public Cloud receives the payment but cannot see the club-LAN Agent
-	// socket. Leave the durable grant pending; the primary Controller pulls it
-	// and starts the session through its own connected Agent.
-	if !s.edgeNodeMode() {
+	// Web payments keep the Controller handoff. Mobile test payments use the
+	// directly connected Cloud Agent, so a test can start immediately.
+	if !s.edgeNodeMode() && ctx.Value(mobileDirectStartKey{}) != true {
 		return grantID, nil
 	}
 
