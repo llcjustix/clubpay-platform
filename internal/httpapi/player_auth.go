@@ -543,9 +543,6 @@ func (s *Server) redeemPlayerBalanceToPC(ctx context.Context, req redeemPlayerBa
 		return nil, err
 	}
 
-	// Reuse Controller reconciliation for new mobile sessions arriving at Cloud.
-	// No LAN credentials or direct Agent calls are exposed to the client.
-	_, mobile := ctx.Value(mobileOperationKey{}).(mobileOperationContext)
 	if extending {
 		if err := s.extendGrantSession(ctx, grantID, parent.ID, parent.CoreSessionID, clubID, pcID, externalPCID, seconds, "player_balance", "", ""); err != nil {
 			s.refundPlayerBalance(ctx, player.ID, clubID, seconds, grantID, err.Error())
@@ -557,9 +554,6 @@ func (s *Server) redeemPlayerBalanceToPC(ctx context.Context, req redeemPlayerBa
 	if err != nil {
 		s.refundPlayerBalance(ctx, player.ID, clubID, seconds, grantID, err.Error())
 		return nil, err
-	}
-	if mobile && !s.edgeNodeMode() {
-		return map[string]any{"success": true, "grant_id": grantID, "seconds_used": seconds}, nil
 	}
 	if !extending {
 		// In the rare direct-Controller mobile path, apply the same one-player /
