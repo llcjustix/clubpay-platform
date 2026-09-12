@@ -394,16 +394,8 @@ func TestMobileIntegration(t *testing.T) {
 	expect(401, "POST", "/api/mobile/payments/test/success/"+invoice, "", "", nil)
 	expect(200, "POST", "/api/mobile/payments/test/success/"+invoice, access, "", nil)
 	status = expect(200, "GET", "/api/mobile/orders/"+invoice, access, "", nil)
-	if status["grant_status"] != "pending" {
-		t.Fatalf("cloud grant should wait for Controller: %v", status)
-	}
-	controller := NewServer(config.Config{NodeMode: "edge", SessionGraceSeconds: 180}, pool, core.NewMockAdapter())
-	if !controller.startPendingEdgeGrants(ctx, club) {
-		t.Fatal("controller did not process pending grant")
-	}
-	status = expect(200, "GET", "/api/mobile/orders/"+invoice, access, "", nil)
 	if status["grant_status"] != "accepted" {
-		t.Fatalf("grant not accepted: %v", status)
+		t.Fatalf("mobile test payment did not start through the connected Agent: %v", status)
 	}
 	var ledgerBalance int
 	_ = pool.QueryRow(ctx, `SELECT seconds_balance FROM player_club_balances WHERE player_id=$1 AND club_id=$2`, me["id"], club).Scan(&ledgerBalance)
@@ -459,15 +451,8 @@ func TestMobileIntegration(t *testing.T) {
 		t.Fatal("duplicate balance redemption")
 	}
 	balanceStatus := expect(200, "GET", "/api/mobile/sessions/"+redeem["grant_id"].(string), access, "", nil)
-	if balanceStatus["grant_status"] != "pending" {
-		t.Fatal("mobile cloud balance grant must wait for Controller")
-	}
-	if !controller.startPendingEdgeGrants(ctx, club) {
-		t.Fatal("controller did not start balance grant")
-	}
-	balanceStatus = expect(200, "GET", "/api/mobile/sessions/"+redeem["grant_id"].(string), access, "", nil)
 	if balanceStatus["grant_status"] != "accepted" {
-		t.Fatal("balance grant did not start")
+		t.Fatal("mobile balance grant did not start")
 	}
 
 	if _, err = s.finishGrant(ctx, redeem["grant_id"].(string), "player_end", 160); err != nil {
