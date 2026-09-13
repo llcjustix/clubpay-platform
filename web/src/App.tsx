@@ -1,7 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
-import { MapContainer, Marker, TileLayer, useMap, useMapEvents } from 'react-leaflet';
-import { divIcon, type LatLngExpression } from 'leaflet';
 import {
   Activity,
   AlertCircle,
@@ -17,6 +15,7 @@ import {
   KeyRound,
   LogOut,
   Monitor,
+  Maximize2,
   Play,
   Plus,
   Power,
@@ -35,11 +34,11 @@ import {
 } from 'lucide-react';
 import '@fontsource-variable/geist';
 import '@fontsource-variable/geist-mono';
-import 'leaflet/dist/leaflet.css';
 import './styles.css';
 
 const runtimeApiBase = (window as Window & { __CLUBPAY_API_BASE__?: string }).__CLUBPAY_API_BASE__;
 const API_BASE = runtimeApiBase || import.meta.env.VITE_API_BASE_URL || 'http://localhost:8080';
+const YANDEX_MAPS_API_KEY = import.meta.env.VITE_YANDEX_MAPS_API_KEY || '';
 const ADMIN_REFRESH_MS = 2000;
 const OWNER_REFRESH_MS = 5000;
 const TOKEN_KEY = 'clubpay_token';
@@ -3195,47 +3194,93 @@ function Centered({ text }: { text: string }) {
   return <main className="centered"><AlertCircle size={24} /> {text}</main>;
 }
 
-const clubPointIcon = divIcon({
-  className: 'club-point-marker',
-  html: '<span>●</span>',
-  iconSize: [28, 28],
-  iconAnchor: [14, 14],
-});
+type MapPoint = { latitude: number; longitude: number };
 
-function MapViewport({ point }: { point: LatLngExpression }) {
-  const map = useMap();
-  useEffect(() => { map.setView(point); }, [map, point]);
-  return null;
+declare global {
+  interface Window { ymaps?: any; }
 }
 
-function MapClick({ onPick }: { onPick: (latitude: number, longitude: number) => void }) {
-  useMapEvents({ click(event) { onPick(event.latlng.lat, event.latlng.lng); } });
-  return null;
+function YandexMapPicker({ point, onPick, height = 300 }: { point: MapPoint; onPick: (latitude: number, longitude: number) => void; height?: number }) {
+  const containerRef = useRef<HTMLDivElement>(null);
+  const mapRef = useRef<any>(null);
+  const markerRef = useRef<any>(null);
+  const onPickRef = useRef(onPick);
+  onPickRef.current = onPick;
+
+  useEffect(() => {
+    if (!YANDEX_MAPS_API_KEY || !containerRef.current) return;
+    let cancelled = false;
+    const create = () => {
+      if (cancelled || !containerRef.current || !window.ymaps) return;
+      const ymaps = window.ymaps;
+      const map = new ymaps.Map(containerRef.current, { center: [point.latitude, point.longitude], zoom: 16, controls: ['zoomControl'] });
+      const place = (latitude: number, longitude: number) => {
+        if (markerRef.current) map.geoObjects.remove(markerRef.current);
+        markerRef.current = new ymaps.Placemark([latitude, longitude], {}, { preset: 'islands#violetIcon' });
+        map.geoObjects.add(markerRef.current);
+      };
+      place(point.latitude, point.longitude);
+      map.events.add('click', (event: any) => {
+        const [latitude, longitude] = event.get('coords');
+        place(latitude, longitude);
+        onPickRef.current(latitude, longitude);
+      });
+      mapRef.current = map;
+    };
+    const boot = () => window.ymaps ? window.ymaps.ready(create) : undefined;
+    if (window.ymaps) boot();
+    else {
+      const existing = document.querySelector<HTMLScriptElement>('script[data-clubpay-yandex-maps]');
+      const script = existing || document.createElement('script');
+      if (!existing) {
+        script.dataset.clubpayYandexMaps = 'true';
+        script.src = `https://api-maps.yandex.ru/2.1/?apikey=${encodeURIComponent(YANDEX_MAPS_API_KEY)}&lang=ru_RU`;
+        document.head.appendChild(script);
+      }
+      script.addEventListener('load', boot, { once: true });
+    }
+    return () => {
+      cancelled = true;
+      mapRef.current?.destroy?.();
+      mapRef.current = undefined;
+      markerRef.current = undefined;
+    };
+  }, []);
+
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !window.ymaps) return;
+    map.setCenter([point.latitude, point.longitude]);
+    if (markerRef.current) map.geoObjects.remove(markerRef.current);
+    markerRef.current = new window.ymaps.Placemark([point.latitude, point.longitude], {}, { preset: 'islands#violetIcon' });
+    map.geoObjects.add(markerRef.current);
+  }, [point.latitude, point.longitude]);
+
+  if (!YANDEX_MAPS_API_KEY) return <div className="map-provider-warning">Нужен ключ JavaScript API Яндекс Карт.</div>;
+  return <div ref={containerRef} className="club-point-map yandex-point-map" style={{ height }} aria-label="Карта Яндекс" />;
 }
 
-function MapPointPicker({
-  latitude,
-  longitude,
-  onChange,
-}: {
-  latitude?: number | null;
-  longitude?: number | null;
-  onChange: (latitude: number, longitude: number) => void;
-}) {
-  const point: LatLngExpression = latitude != null && longitude != null ? [latitude, longitude] : [41.3111, 69.2797];
-  return (
+function MapPointPicker({ latitude, longitude, onChange }: { latitude?: number | null; longitude?: number | null; onChange: (latitude: number, longitude: number) => void; }) {
+  const [expanded, setExpanded] = useState(false);
+  const point: MapPoint = latitude != null && longitude != null ? { latitude, longitude } : { latitude: 41.3111, longitude: 69.2797 };
+  const map = <YandexMapPicker point={point} onPick={onChange} height={expanded ? 620 : 300} />;
+  return <>
     <div className="map-point-picker">
-      <strong>Точка клуба на карте</strong>
-      <small className="field-help">Нажмите на точку входа в клуб. Эту точку увидят игроки в приложении и смогут построить маршрут.</small>
-      <MapContainer center={point} zoom={latitude != null ? 16 : 11} scrollWheelZoom className="club-point-map">
-        <MapViewport point={point} />
-        <MapClick onPick={onChange} />
-        <TileLayer attribution="© OpenStreetMap contributors" url="https://tile.openstreetmap.org/{z}/{x}/{y}.png" />
-        {latitude != null && longitude != null && <Marker position={[latitude, longitude]} icon={clubPointIcon} />}
-      </MapContainer>
-      <div className="map-point-coordinates">{latitude != null && longitude != null ? `${latitude.toFixed(6)}, ${longitude.toFixed(6)}` : 'Точка ещё не выбрана'}</div>
+      <div className="map-point-heading">
+        <div><strong>Точка клуба на карте</strong><small className="field-help">Нажмите на точку входа в клуб. Её увидят игроки в приложении.</small></div>
+        <button className="map-expand-button" type="button" title="Развернуть карту" onClick={() => setExpanded(true)}><Maximize2 size={17} /></button>
+      </div>
+      {map}
+      <div className="map-point-coordinates">{latitude != null && longitude != null ? `${latitude.toFixed(6)}, ${longitude.toFixed(6)}` : 'Нажмите на карту, чтобы выбрать точку'}</div>
     </div>
-  );
+    {expanded && <div className="map-expand-backdrop" role="dialog" aria-modal="true" aria-label="Выбор точки клуба">
+      <div className="map-expand-panel">
+        <div className="map-point-heading"><div><strong>Точка клуба на карте</strong><small className="field-help">Нажмите на точку входа и закройте окно.</small></div><button className="map-expand-button" type="button" title="Закрыть" onClick={() => setExpanded(false)}><X size={18} /></button></div>
+        {map}
+        <div className="map-point-coordinates">{point.latitude.toFixed(6)}, {point.longitude.toFixed(6)}</div>
+      </div>
+    </div>}
+  </>;
 }
 
 function Field({

@@ -2685,3 +2685,28 @@ textarea:focus {
     grid-template-columns: 1fr;
   }
 }
+
+.map-point-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+.map-point-heading > div { display: grid; gap: 5px; }
+.map-expand-button {
+  width: 34px;
+  height: 34px;
+  display: grid;
+  place-items: center;
+  flex: 0 0 auto;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  color: var(--text-primary);
+  background: var(--surface);
+  cursor: pointer;
+}
+.map-expand-button:hover { border-color: var(--accent); color: var(--accent); }
+.map-provider-warning { min-height: 160px; display: grid; place-items: center; border: 1px dashed var(--divider-strong); border-radius: 12px; color: var(--text-muted); }
+.map-expand-backdrop { position: fixed; inset: 0; z-index: 100; display: grid; place-items: center; padding: 40px; background: rgba(0,0,0,.64); }
+.map-expand-panel { width: min(1120px, 100%); max-height: calc(100vh - 80px); display: grid; gap: 10px; overflow: auto; padding: 18px; border: 1px solid var(--divider-strong); border-radius: 16px; background: var(--surface); }
+.map-expand-panel .club-point-map { min-height: min(620px, calc(100vh - 200px)); }

@@ -1,16 +1,19 @@
+import 'dart:convert';
+
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter_map/flutter_map.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:go_router/go_router.dart';
-import 'package:latlong2/latlong.dart';
+import 'package:webview_flutter/webview_flutter.dart';
 
 import '../../../core/club_theme.dart';
 import '../../../core/providers.dart';
 import '../../../core/ui.dart';
 import '../domain/club_catalog.dart';
 import 'club_browser_screen.dart';
+
+const _yandexMapsKey = String.fromEnvironment('YANDEX_MAPS_API_KEY');
 
 class ClubMapScreen extends ConsumerStatefulWidget {
   const ClubMapScreen({super.key});
@@ -21,8 +24,9 @@ class ClubMapScreen extends ConsumerStatefulWidget {
 class _ClubMapScreenState extends ConsumerState<ClubMapScreen> {
   late Future<List<ClubSearchResult>> _clubs;
   ClubSearchResult? _selected;
-  LatLng? _playerLocation;
+  MapPoint? _playerLocation;
   bool _locating = false;
+
   @override
   void initState() {
     super.initState();
@@ -41,10 +45,10 @@ class _ClubMapScreenState extends ConsumerState<ClubMapScreen> {
           permission == LocationPermission.deniedForever) {
         return;
       }
-      final position = await Geolocator.getCurrentPosition();
+      final point = await Geolocator.getCurrentPosition();
       if (mounted) {
         setState(
-          () => _playerLocation = LatLng(position.latitude, position.longitude),
+          () => _playerLocation = MapPoint(point.latitude, point.longitude),
         );
       }
       ref
@@ -55,7 +59,7 @@ class _ClubMapScreenState extends ConsumerState<ClubMapScreen> {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
             content: Text(
-              'Не удалось определить геопозицию. Проверьте разрешение на геолокацию.',
+              'Не удалось определить геопозицию. Проверьте разрешение.',
             ),
           ),
         );
@@ -84,85 +88,45 @@ class _ClubMapScreenState extends ConsumerState<ClubMapScreen> {
             ? const Center(child: CupertinoActivityIndicator())
             : snapshot.hasError
             ? Center(child: Text(errorLabel(context, snapshot.error!)))
+            : _yandexMapsKey.isEmpty
+            ? const Center(
+                child: Padding(
+                  padding: EdgeInsets.all(24),
+                  child: Text(
+                    'Карта Яндекс временно не настроена.',
+                    textAlign: TextAlign.center,
+                  ),
+                ),
+              )
             : Stack(
                 children: [
-                  FlutterMap(
-                    options: MapOptions(
-                      initialCenter: clubs.isEmpty
-                          ? const LatLng(41.3111, 69.2797)
-                          : LatLng(
-                              clubs.first.latitude!,
-                              clubs.first.longitude!,
-                            ),
-                      initialZoom: clubs.isEmpty ? 11 : 13,
-                      onTap: (_, point) => setState(() => _selected = null),
+                  YandexClubMap(
+                    key: ValueKey(
+                      '${clubs.map((club) => club.id).join(',')}:$_playerLocation',
                     ),
-                    children: [
-                      TileLayer(
-                        urlTemplate:
-                            'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
-                        userAgentPackageName: 'uz.clubpay.clubpayClient',
-                      ),
-                      MarkerLayer(
-                        markers: [
-                          if (_playerLocation != null)
-                            Marker(
-                              point: _playerLocation!,
-                              width: 34,
-                              height: 34,
-                              child: Container(
-                                decoration: BoxDecoration(
-                                  color: ClubColors.blue,
-                                  shape: BoxShape.circle,
-                                  border: Border.all(
-                                    color: Colors.white,
-                                    width: 3,
-                                  ),
-                                ),
-                              ),
-                            ),
-                          for (final club in clubs)
-                            Marker(
-                              point: LatLng(club.latitude!, club.longitude!),
-                              width: 46,
-                              height: 46,
-                              child: GestureDetector(
-                                onTap: () {
-                                  ref
-                                      .read(analyticsProvider)
-                                      .track(
-                                        'club_map_pin_opened',
-                                        screen: 'club_map',
-                                      );
-                                  setState(() => _selected = club);
-                                },
-                                child: DecoratedBox(
-                                  decoration: BoxDecoration(
-                                    color: club.online
-                                        ? ClubColors.purple
-                                        : ClubColors.muted,
-                                    shape: BoxShape.circle,
-                                    border: Border.all(
-                                      color: Colors.white,
-                                      width: 3,
-                                    ),
-                                  ),
-                                  child: const Icon(
-                                    CupertinoIcons.game_controller_solid,
-                                    color: Colors.white,
-                                    size: 24,
-                                  ),
-                                ),
-                              ),
-                            ),
-                        ],
-                      ),
-                      const RichAttributionWidget(
-                        attributions: [
-                          TextSourceAttribution('© OpenStreetMap contributors'),
-                        ],
-                      ),
-                    ],
+                    clubs: clubs,
+                    playerLocation: _playerLocation,
+                    onClubTap: (id) {
+                      final club = clubs
+                          .where((item) => item.id == id)
+                          .firstOrNull;
+                      if (club == null) return;
+                      ref
+                          .read(analyticsProvider)
+                          .track('club_map_pin_opened', screen: 'club_map');
+                      setState(() => _selected = club);
+                    },
+                  ),
+                  Positioned(
+                    top: 16,
+                    right: 16,
+                    child: FloatingActionButton.small(
+                      heroTag: 'player-location',
+                      onPressed: _locating ? null : _locatePlayer,
+                      child: _locating
+                          ? const CupertinoActivityIndicator()
+                          : const Icon(CupertinoIcons.location_solid),
+                    ),
                   ),
                   if (_selected != null)
                     Align(
@@ -170,90 +134,18 @@ class _ClubMapScreenState extends ConsumerState<ClubMapScreen> {
                       child: SafeArea(
                         child: Padding(
                           padding: const EdgeInsets.all(16),
-                          child: Material(
-                            color: ClubColors.surface,
-                            borderRadius: BorderRadius.circular(24),
-                            child: InkWell(
-                              borderRadius: BorderRadius.circular(24),
-                              onTap: () {
-                                ref
-                                    .read(analyticsProvider)
-                                    .track(
-                                      'club_opened_from_map',
-                                      screen: 'club_map',
-                                    );
-                                context.push('/clubs/${_selected!.id}');
-                              },
-                              child: Padding(
-                                padding: const EdgeInsets.all(16),
-                                child: Row(
-                                  children: [
-                                    const SettingsIcon(
-                                      CupertinoIcons.game_controller_solid,
-                                      color: ClubColors.purple,
-                                    ),
-                                    const SizedBox(width: 12),
-                                    Expanded(
-                                      child: Column(
-                                        crossAxisAlignment:
-                                            CrossAxisAlignment.start,
-                                        children: [
-                                          Text(
-                                            _selected!.name,
-                                            style: Theme.of(
-                                              context,
-                                            ).textTheme.titleMedium,
-                                          ),
-                                          if (_selected!.address.isNotEmpty)
-                                            Text(
-                                              _selected!.address,
-                                              maxLines: 1,
-                                              overflow: TextOverflow.ellipsis,
-                                              style: const TextStyle(
-                                                color: ClubColors.muted,
-                                              ),
-                                            ),
-                                          Text(
-                                            _selected!.online
-                                                ? '${_selected!.availablePCs} свободных ПК'
-                                                : 'Клуб сейчас не на связи',
-                                            style: TextStyle(
-                                              color: _selected!.online
-                                                  ? ClubColors.green
-                                                  : ClubColors.muted,
-                                            ),
-                                          ),
-                                          Positioned(
-                                            right: 16,
-                                            bottom: _selected == null
-                                                ? 24
-                                                : 180,
-                                            child: FloatingActionButton.small(
-                                              heroTag: 'player-location',
-                                              onPressed: _locating
-                                                  ? null
-                                                  : _locatePlayer,
-                                              child: _locating
-                                                  ? const CupertinoActivityIndicator(
-                                                      color: Colors.white,
-                                                    )
-                                                  : const Icon(
-                                                      CupertinoIcons
-                                                          .location_fill,
-                                                    ),
-                                            ),
-                                          ),
-                                        ],
-                                      ),
-                                    ),
-                                    const Icon(
-                                      CupertinoIcons.chevron_right,
-                                      color: ClubColors.muted,
-                                    ),
-                                  ],
-                                ),
-                              ),
-                            ),
+                          child: _ClubMapCard(
+                            club: _selected!,
+                            onClose: () => setState(() => _selected = null),
+                            onOpen: () {
+                              ref
+                                  .read(analyticsProvider)
+                                  .track(
+                                    'club_opened_from_map',
+                                    screen: 'club_map',
+                                  );
+                              context.push('/clubs/${_selected!.id}');
+                            },
                           ),
                         ),
                       ),
@@ -263,4 +155,140 @@ class _ClubMapScreenState extends ConsumerState<ClubMapScreen> {
       );
     },
   );
+}
+
+class _ClubMapCard extends StatelessWidget {
+  const _ClubMapCard({
+    required this.club,
+    required this.onOpen,
+    required this.onClose,
+  });
+  final ClubSearchResult club;
+  final VoidCallback onOpen, onClose;
+
+  @override
+  Widget build(BuildContext context) => Material(
+    color: ClubColors.surface,
+    borderRadius: BorderRadius.circular(24),
+    child: Padding(
+      padding: const EdgeInsets.all(18),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              const SettingsIcon(
+                CupertinoIcons.game_controller_solid,
+                color: ClubColors.purple,
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Text(
+                  club.name,
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  style: Theme.of(context).textTheme.titleMedium,
+                ),
+              ),
+              IconButton(
+                tooltip: 'Закрыть',
+                onPressed: onClose,
+                icon: const Icon(CupertinoIcons.xmark_circle_fill),
+              ),
+            ],
+          ),
+          if (club.address.isNotEmpty) ...[
+            const SizedBox(height: 10),
+            Text(club.address, style: const TextStyle(color: ClubColors.muted)),
+          ],
+          const SizedBox(height: 8),
+          Text(
+            club.online
+                ? '${club.availablePCs} из ${club.totalPCs} свободных ПК'
+                : 'Клуб сейчас не на связи',
+            style: TextStyle(
+              color: club.online && club.availablePCs > 0
+                  ? ClubColors.green
+                  : ClubColors.muted,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+          const SizedBox(height: 14),
+          SizedBox(
+            width: double.infinity,
+            child: ActionButton(
+              label: 'Открыть клуб',
+              onPressed: onOpen,
+              icon: CupertinoIcons.arrow_right,
+            ),
+          ),
+        ],
+      ),
+    ),
+  );
+}
+
+class MapPoint {
+  const MapPoint(this.latitude, this.longitude);
+  final double latitude, longitude;
+  @override
+  String toString() => '$latitude,$longitude';
+}
+
+class YandexClubMap extends StatefulWidget {
+  const YandexClubMap({
+    super.key,
+    required this.clubs,
+    required this.playerLocation,
+    required this.onClubTap,
+  });
+  final List<ClubSearchResult> clubs;
+  final MapPoint? playerLocation;
+  final ValueChanged<String> onClubTap;
+  @override
+  State<YandexClubMap> createState() => _YandexClubMapState();
+}
+
+class _YandexClubMapState extends State<YandexClubMap> {
+  late final WebViewController _controller;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = WebViewController()
+      ..setJavaScriptMode(JavaScriptMode.unrestricted)
+      ..setBackgroundColor(ClubColors.background)
+      ..addJavaScriptChannel(
+        'ClubPayMap',
+        onMessageReceived: (message) => widget.onClubTap(message.message),
+      )
+      ..loadHtmlString(_mapHTML(widget.clubs, widget.playerLocation));
+  }
+
+  @override
+  Widget build(BuildContext context) => WebViewWidget(controller: _controller);
+}
+
+String _mapHTML(List<ClubSearchResult> clubs, MapPoint? player) {
+  final markers = clubs
+      .map(
+        (club) => {
+          'id': club.id,
+          'name': club.name,
+          'lat': club.latitude,
+          'lon': club.longitude,
+          'available': club.availablePCs,
+          'total': club.totalPCs,
+          'online': club.online,
+        },
+      )
+      .toList();
+  final center = player == null
+      ? {
+          'lat': clubs.firstOrNull?.latitude ?? 41.3111,
+          'lon': clubs.firstOrNull?.longitude ?? 69.2797,
+        }
+      : {'lat': player.latitude, 'lon': player.longitude};
+  return '''<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no"><style>html,body,#map{margin:0;width:100%;height:100%;background:#000}.ymaps-2-1-79-map{font-family:-apple-system,BlinkMacSystemFont,sans-serif!important}</style><script src="https://api-maps.yandex.ru/2.1/?apikey=$_yandexMapsKey&lang=ru_RU"></script></head><body><div id="map"></div><script>const clubs=${jsonEncode(markers)}, center=${jsonEncode(center)}; ymaps.ready(()=>{const map=new ymaps.Map('map',{center:[center.lat,center.lon],zoom:13,controls:['zoomControl']}); clubs.forEach(c=>{const marker=new ymaps.Placemark([c.lat,c.lon],{balloonContentHeader:c.name,balloonContentBody:(c.online?c.available+' из '+c.total+' свободных ПК':'Клуб не на связи'),balloonContentFooter:'<button onclick="window.ClubPayMap.postMessage(\\''+c.id+'\\')">Открыть клуб</button>'},{preset:c.online?'islands#violetIcon':'islands#grayIcon'}); marker.events.add('click',()=>window.ClubPayMap.postMessage(c.id));map.geoObjects.add(marker);});${player == null ? '' : "map.geoObjects.add(new ymaps.Placemark([${player.latitude},${player.longitude}],{balloonContent:'Вы здесь'},{preset:'islands#blueCircleIcon'}));"}});</script></body></html>''';
 }

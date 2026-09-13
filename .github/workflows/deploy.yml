@@ -49,6 +49,7 @@ jobs:
         run: |
           docker build \
             --build-arg VITE_API_BASE_URL=https://api-clubpay.justix.uz \
+            --build-arg VITE_YANDEX_MAPS_API_KEY="${{ secrets.YANDEX_MAPS_API_KEY }}" \
             -t ${{ secrets.DOCKER_USERNAME }}/clubpay-web:${{ github.sha }} \
             -t ${{ secrets.DOCKER_USERNAME }}/clubpay-web:latest \
             ./web
