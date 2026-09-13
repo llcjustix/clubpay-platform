@@ -1,5 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
+import { MapContainer, Marker, TileLayer, useMap, useMapEvents } from 'react-leaflet';
+import { divIcon, type LatLngExpression } from 'leaflet';
 import {
   Activity,
   AlertCircle,
@@ -33,6 +35,7 @@ import {
 } from 'lucide-react';
 import '@fontsource-variable/geist';
 import '@fontsource-variable/geist-mono';
+import 'leaflet/dist/leaflet.css';
 import './styles.css';
 
 const runtimeApiBase = (window as Window & { __CLUBPAY_API_BASE__?: string }).__CLUBPAY_API_BASE__;
@@ -2491,8 +2494,11 @@ function SettingsPage({ auth, selectedClubID, currentPath, onClubChange, onLogou
               <Field label="Юр. название" value={clubForm.legal_name} onChange={(value) => setClubForm({ ...clubForm, legal_name: value })} help="Официальное название юрлица для договора и чеков." />
               <Field label="ИНН" value={clubForm.tin} onChange={(value) => setClubForm({ ...clubForm, tin: value })} help="Налоговый номер клуба." />
               <Field label="Адрес" value={clubForm.address} onChange={(value) => setClubForm({ ...clubForm, address: value })} help="Адрес клуба или юрлица." />
-              <Field label="Широта точки на карте" type="number" value={clubForm.latitude == null ? '' : String(clubForm.latitude)} onChange={(value) => setClubForm({ ...clubForm, latitude: value === '' ? null : Number(value) })} help="Точка входа в клуб. Её увидят игроки в приложении." />
-              <Field label="Долгота точки на карте" type="number" value={clubForm.longitude == null ? '' : String(clubForm.longitude)} onChange={(value) => setClubForm({ ...clubForm, longitude: value === '' ? null : Number(value) })} help="Вставьте координаты из Яндекс Карт или 2ГИС." />
+              <MapPointPicker
+                latitude={clubForm.latitude}
+                longitude={clubForm.longitude}
+                onChange={(latitude, longitude) => setClubForm({ ...clubForm, latitude, longitude })}
+              />
             </div>
             {!canManageNetwork && <ClubConnectionSummary club={clubForm} />}
             <div className="button-row settings-savebar">
@@ -3187,6 +3193,49 @@ function StatusBadge({ status }: { status: string }) {
 
 function Centered({ text }: { text: string }) {
   return <main className="centered"><AlertCircle size={24} /> {text}</main>;
+}
+
+const clubPointIcon = divIcon({
+  className: 'club-point-marker',
+  html: '<span>●</span>',
+  iconSize: [28, 28],
+  iconAnchor: [14, 14],
+});
+
+function MapViewport({ point }: { point: LatLngExpression }) {
+  const map = useMap();
+  useEffect(() => { map.setView(point); }, [map, point]);
+  return null;
+}
+
+function MapClick({ onPick }: { onPick: (latitude: number, longitude: number) => void }) {
+  useMapEvents({ click(event) { onPick(event.latlng.lat, event.latlng.lng); } });
+  return null;
+}
+
+function MapPointPicker({
+  latitude,
+  longitude,
+  onChange,
+}: {
+  latitude?: number | null;
+  longitude?: number | null;
+  onChange: (latitude: number, longitude: number) => void;
+}) {
+  const point: LatLngExpression = latitude != null && longitude != null ? [latitude, longitude] : [41.3111, 69.2797];
+  return (
+    <div className="map-point-picker">
+      <strong>Точка клуба на карте</strong>
+      <small className="field-help">Нажмите на точку входа в клуб. Эту точку увидят игроки в приложении и смогут построить маршрут.</small>
+      <MapContainer center={point} zoom={latitude != null ? 16 : 11} scrollWheelZoom className="club-point-map">
+        <MapViewport point={point} />
+        <MapClick onPick={onChange} />
+        <TileLayer attribution="© OpenStreetMap contributors" url="https://tile.openstreetmap.org/{z}/{x}/{y}.png" />
+        {latitude != null && longitude != null && <Marker position={[latitude, longitude]} icon={clubPointIcon} />}
+      </MapContainer>
+      <div className="map-point-coordinates">{latitude != null && longitude != null ? `${latitude.toFixed(6)}, ${longitude.toFixed(6)}` : 'Точка ещё не выбрана'}</div>
+    </div>
+  );
 }
 
 function Field({

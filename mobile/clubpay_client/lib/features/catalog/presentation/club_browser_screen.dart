@@ -57,22 +57,35 @@ class _ClubBrowserScreenState extends ConsumerState<ClubBrowserScreen> {
     setState(() => _locating = true);
     try {
       var permission = await Geolocator.checkPermission();
-      if (permission == LocationPermission.denied) permission = await Geolocator.requestPermission();
-      if (permission == LocationPermission.denied || permission == LocationPermission.deniedForever) return;
+      if (permission == LocationPermission.denied) {
+        permission = await Geolocator.requestPermission();
+      }
+      if (permission == LocationPermission.denied ||
+          permission == LocationPermission.deniedForever) {
+        return;
+      }
       final location = await Geolocator.getCurrentPosition();
       if (mounted) setState(() => _location = location);
       _track('nearby_clubs_enabled');
     } catch (_) {
       // Location is an optional catalogue convenience.
-    } finally { if (mounted) setState(() => _locating = false); }
+    } finally {
+      if (mounted) setState(() => _locating = false);
+    }
   }
 
   List<ClubSearchResult> _ordered(List<ClubSearchResult> clubs) {
     if (_location == null) return clubs;
     final copy = [...clubs];
-    double distance(ClubSearchResult club) => club.latitude == null || club.longitude == null
+    double distance(ClubSearchResult club) =>
+        club.latitude == null || club.longitude == null
         ? double.infinity
-        : Geolocator.distanceBetween(_location!.latitude, _location!.longitude, club.latitude!, club.longitude!);
+        : Geolocator.distanceBetween(
+            _location!.latitude,
+            _location!.longitude,
+            club.latitude!,
+            club.longitude!,
+          );
     copy.sort((a, b) => distance(a).compareTo(distance(b)));
     return copy;
   }
@@ -84,42 +97,79 @@ class _ClubBrowserScreenState extends ConsumerState<ClubBrowserScreen> {
     actions: [
       IconButton(
         tooltip: 'Поддержка',
-        onPressed: () { _track('support_opened'); context.push('/support'); },
+        onPressed: () {
+          _track('support_opened');
+          context.push('/support');
+        },
         icon: const Icon(CupertinoIcons.chat_bubble_text),
       ),
       IconButton(
         tooltip: 'Поиск клубов',
-        onPressed: () { _track('club_search_opened'); setState(() => _searchOpen = !_searchOpen); },
+        onPressed: () {
+          _track('club_search_opened');
+          setState(() => _searchOpen = !_searchOpen);
+        },
         icon: const Icon(CupertinoIcons.search),
       ),
       IconButton(
         tooltip: context.l.howItWorks,
-        onPressed: () { _track('how_it_works_opened'); showClubGuide(context); },
+        onPressed: () {
+          _track('how_it_works_opened');
+          showClubGuide(context);
+        },
         icon: const Icon(CupertinoIcons.question_circle),
       ),
     ],
     bottom: const ClubNavigation(profile: false),
     children: [
       SectionCaption(context.l.clubSearchTitle),
-      Align(
-        alignment: Alignment.centerLeft,
-        child: TextButton.icon(
-          onPressed: _locating ? null : _locate,
-          icon: _locating ? const SizedBox(width: 16, height: 16, child: CupertinoActivityIndicator()) : const Icon(CupertinoIcons.location),
-          label: Text(_location == null ? 'Показать ближайшие' : 'Клубы отсортированы по расстоянию'),
-        ),
+      Wrap(
+        spacing: 4,
+        children: [
+          TextButton.icon(
+            onPressed: _locating ? null : _locate,
+            icon: _locating
+                ? const SizedBox(
+                    width: 16,
+                    height: 16,
+                    child: CupertinoActivityIndicator(),
+                  )
+                : const Icon(CupertinoIcons.location),
+            label: Text(
+              _location == null ? 'Ближайшие' : 'Отсортировано по расстоянию',
+            ),
+          ),
+          TextButton.icon(
+            onPressed: () {
+              _track('club_map_opened');
+              context.push('/clubs-map');
+            },
+            icon: const Icon(CupertinoIcons.map),
+            label: const Text('Карта'),
+          ),
+        ],
       ),
       if (_searchOpen) ...[
         TextField(
           controller: _search,
           autofocus: true,
           textInputAction: TextInputAction.search,
-          onChanged: (_) { _debounce?.cancel(); _debounce = Timer(const Duration(milliseconds: 250), _load); },
+          onChanged: (_) {
+            _debounce?.cancel();
+            _debounce = Timer(const Duration(milliseconds: 250), _load);
+          },
           onSubmitted: (_) => _load(),
           decoration: InputDecoration(
             hintText: context.l.clubSearchHint,
             prefixIcon: const Icon(CupertinoIcons.search),
-            suffixIcon: IconButton(onPressed: () { _search.clear(); _load(); setState(() => _searchOpen = false); }, icon: const Icon(CupertinoIcons.clear_circled_solid)),
+            suffixIcon: IconButton(
+              onPressed: () {
+                _search.clear();
+                _load();
+                setState(() => _searchOpen = false);
+              },
+              icon: const Icon(CupertinoIcons.clear_circled_solid),
+            ),
           ),
         ),
         const SizedBox(height: 18),
@@ -178,7 +228,10 @@ class _ClubBrowserScreenState extends ConsumerState<ClubBrowserScreen> {
                           : ClubColors.muted,
                     ),
                   ),
-                  onTap: () { _track('club_opened'); context.push('/clubs/${club.id}'); },
+                  onTap: () {
+                    _track('club_opened');
+                    context.push('/clubs/${club.id}');
+                  },
                 ),
             ],
           );
@@ -210,7 +263,15 @@ class _ClubDetailScreenState extends ConsumerState<ClubDetailScreen> {
   Future<void> _wake(ClubComputer pc) async {
     try {
       await ref.read(clubCatalogRepositoryProvider).wake(pc.id);
-      if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Команда на включение отправлена. Обновим список, когда ПК появится в сети.')));
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text(
+              'Команда на включение отправлена. Обновим список, когда ПК появится в сети.',
+            ),
+          ),
+        );
+      }
     } catch (error) {
       if (mounted) showFailure(context, error);
     }
@@ -224,7 +285,8 @@ class _ClubDetailScreenState extends ConsumerState<ClubDetailScreen> {
       return AppPage(
         title: title,
         actions: [
-          if (snapshot.data?.latitude != null && snapshot.data?.longitude != null)
+          if (snapshot.data?.latitude != null &&
+              snapshot.data?.longitude != null)
             IconButton(
               tooltip: 'Открыть карту',
               onPressed: () => _openMaps(snapshot.data!),
@@ -289,7 +351,11 @@ class _ClubDetailScreenState extends ConsumerState<ClubDetailScreen> {
                           ? context.l.selectThisPc
                           : _statusLabel(context, pc.status),
                       trailing: Text(
-                        pc.selectable ? context.l.available : pc.wakeable ? 'Включить' : _statusLabel(context, pc.status),
+                        pc.selectable
+                            ? context.l.available
+                            : pc.wakeable
+                            ? 'Включить'
+                            : _statusLabel(context, pc.status),
                         style: TextStyle(
                           color: pc.selectable
                               ? ClubColors.green
@@ -299,8 +365,10 @@ class _ClubDetailScreenState extends ConsumerState<ClubDetailScreen> {
                       onTap: !snapshot.data!.online
                           ? null
                           : pc.selectable
-                          ? () { ref.read(analyticsProvider).track('pc_selected', screen: 'club_detail'); context.push('/computer/${pc.token}'); }
-                          : pc.wakeable ? () => _wake(pc) : null,
+                          ? () => _selectPC(snapshot.data!, zone, pc)
+                          : pc.wakeable
+                          ? () => _wake(pc)
+                          : null,
                     ),
                 ],
               ),
@@ -316,6 +384,51 @@ class _ClubDetailScreenState extends ConsumerState<ClubDetailScreen> {
     },
   );
 
+  Future<void> _selectPC(
+    ClubCatalog club,
+    ClubZone zone,
+    ClubComputer pc,
+  ) async {
+    ref.read(analyticsProvider).track('pc_selected', screen: 'club_detail');
+    await showModalBottomSheet<void>(
+      context: context,
+      builder: (sheet) => SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.all(20),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(pc.label, style: Theme.of(context).textTheme.titleLarge),
+              const SizedBox(height: 12),
+              ListTile(
+                leading: const Icon(CupertinoIcons.play_fill),
+                title: const Text('Начать игру сейчас'),
+                onTap: () {
+                  Navigator.pop(sheet);
+                  context.push('/computer/${pc.token}');
+                },
+              ),
+              ListTile(
+                leading: const Icon(CupertinoIcons.calendar_badge_plus),
+                title: const Text('Забронировать на другое время'),
+                subtitle: const Text('Выберите дату и сколько часов играть'),
+                onTap: () {
+                  Navigator.pop(sheet);
+                  ref
+                      .read(analyticsProvider)
+                      .track('reservation_opened', screen: 'club_detail');
+                  context.push(
+                    '/reservation/${pc.id}?club=${Uri.encodeComponent(club.name)}&zone=${Uri.encodeComponent(zone.name)}&pc=${Uri.encodeComponent(pc.label)}',
+                  );
+                },
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
   Future<void> _openMaps(ClubCatalog club) async {
     final lat = club.latitude!;
     final lon = club.longitude!;
@@ -324,20 +437,34 @@ class _ClubDetailScreenState extends ConsumerState<ClubDetailScreen> {
       builder: (sheetContext) => SafeArea(
         child: Padding(
           padding: const EdgeInsets.all(20),
-          child: Column(mainAxisSize: MainAxisSize.min, children: [
-            Text('Открыть ${club.name}', style: Theme.of(context).textTheme.titleLarge),
-            const SizedBox(height: 12),
-            ListTile(
-              leading: const Icon(CupertinoIcons.map),
-              title: const Text('Яндекс Карты'),
-              onTap: () async { Navigator.pop(sheetContext); await openExternal('https://yandex.com/maps/?pt=$lon,$lat&z=17&l=map'); },
-            ),
-            ListTile(
-              leading: const Icon(CupertinoIcons.location_solid),
-              title: const Text('2ГИС'),
-              onTap: () async { Navigator.pop(sheetContext); await openExternal('https://2gis.uz/geo/$lon,$lat'); },
-            ),
-          ]),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(
+                'Открыть ${club.name}',
+                style: Theme.of(context).textTheme.titleLarge,
+              ),
+              const SizedBox(height: 12),
+              ListTile(
+                leading: const Icon(CupertinoIcons.map),
+                title: const Text('Яндекс Карты'),
+                onTap: () async {
+                  Navigator.pop(sheetContext);
+                  await openExternal(
+                    'https://yandex.com/maps/?pt=$lon,$lat&z=17&l=map',
+                  );
+                },
+              ),
+              ListTile(
+                leading: const Icon(CupertinoIcons.location_solid),
+                title: const Text('2ГИС'),
+                onTap: () async {
+                  Navigator.pop(sheetContext);
+                  await openExternal('https://2gis.uz/geo/$lon,$lat');
+                },
+              ),
+            ],
+          ),
         ),
       ),
     );

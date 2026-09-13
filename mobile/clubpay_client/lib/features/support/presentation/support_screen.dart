@@ -35,6 +35,7 @@ class _SupportScreenState extends ConsumerState<SupportScreen> {
     setState(() => _sending = true);
     try {
       await ref.read(apiProvider).post('/api/mobile/support/messages', {'body': body});
+      ref.read(analyticsProvider).track('support_message_sent', screen: 'support');
       _message.clear();
       if (mounted) setState(() => _messages = _loadMessages());
       if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Сообщение отправлено в поддержку.')));
@@ -45,7 +46,7 @@ class _SupportScreenState extends ConsumerState<SupportScreen> {
   Widget build(BuildContext context) => AppPage(
     title: 'Поддержка',
     children: [
-      const InfoCard(children: [Text('Опишите проблему: клуб, компьютер и что произошло. Мы увидим сообщение и ответим в этом чате.')]),
+      const InfoCard(children: [Text('Опишите проблему: клуб, компьютер и что произошло. Сообщение сразу попадёт в поддержку. Мы ответим по указанному в обращении способу связи.')]),
       const SizedBox(height: 20),
       FutureBuilder<List<_SupportMessage>>(
         future: _messages,

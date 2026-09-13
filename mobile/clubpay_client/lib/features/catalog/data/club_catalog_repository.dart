@@ -1,4 +1,5 @@
 import '../../../core/api_client.dart';
+import 'package:uuid/uuid.dart';
 import '../domain/club_catalog.dart';
 
 class ClubCatalogRepository {
@@ -24,5 +25,39 @@ class ClubCatalogRepository {
 
   Future<void> wake(String pcID) async {
     await api.post('/api/mobile/pcs/${Uri.encodeComponent(pcID)}/wake', {});
+  }
+
+  Future<List<MobileReservation>> reservations() async {
+    final data = await api.get('/api/mobile/reservations');
+    return ((data['reservations'] as List?) ?? [])
+        .map(
+          (item) => MobileReservation.fromJson(
+            Map<String, dynamic>.from(item as Map),
+          ),
+        )
+        .toList();
+  }
+
+  Future<MobileReservation> createReservation({
+    required String pcID,
+    required DateTime startsAt,
+    required int durationHours,
+  }) async {
+    final data = await api.post('/api/mobile/reservations', {
+      'pc_id': pcID,
+      'starts_at': startsAt.toUtc().toIso8601String(),
+      'duration_hours': durationHours,
+    }, key: const Uuid().v4().replaceAll('-', ''));
+    return MobileReservation.fromJson(
+      Map<String, dynamic>.from(data['reservation'] as Map),
+    );
+  }
+
+  Future<void> cancelReservation(String id) async {
+    await api.post(
+      '/api/mobile/reservations/${Uri.encodeComponent(id)}/cancel',
+      {},
+      key: const Uuid().v4().replaceAll('-', ''),
+    );
   }
 }

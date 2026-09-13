@@ -71,6 +71,10 @@ class _SessionScreenState extends ConsumerState<SessionScreen>
       if (!mounted) return;
       setState(() => _status = result);
       if (result?.terminal == true) {
+        ref.read(analyticsProvider).track(
+          result?.phase == SessionPhase.active ? 'session_started' : 'session_finished',
+          screen: 'session',
+        );
         await repo.clear();
         ref.invalidate(balancesProvider);
       } else if (++_checks < 60) {

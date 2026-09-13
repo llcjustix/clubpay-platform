@@ -102,3 +102,36 @@ class ClubCatalog {
     );
   }
 }
+
+class MobileReservation {
+  const MobileReservation({
+    required this.id,
+    required this.status,
+    required this.clubName,
+    required this.zoneName,
+    required this.pcLabel,
+    required this.startsAt,
+    required this.endsAt,
+    required this.heldFrom,
+    required this.checkinDeadline,
+    required this.durationHours,
+  });
+  final String id, status, clubName, zoneName, pcLabel;
+  final DateTime startsAt, endsAt, heldFrom, checkinDeadline;
+  final int durationHours;
+  factory MobileReservation.fromJson(Map<String, dynamic> json) =>
+      MobileReservation(
+        id: json['id'] as String,
+        status: json['status'] as String,
+        clubName: json['club_name'] as String,
+        zoneName: json['zone_name'] as String,
+        pcLabel: json['pc_label'] as String,
+        startsAt: DateTime.parse(json['starts_at'] as String).toLocal(),
+        endsAt: DateTime.parse(json['ends_at'] as String).toLocal(),
+        heldFrom: DateTime.parse(json['held_from'] as String).toLocal(),
+        checkinDeadline: DateTime.parse(
+          json['checkin_deadline'] as String,
+        ).toLocal(),
+        durationHours: (json['duration_hours'] as num).toInt(),
+      );
+}

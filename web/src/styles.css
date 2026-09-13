@@ -336,6 +336,38 @@ textarea:focus {
   grid-template-columns: 1fr;
 }
 
+.map-point-picker {
+  grid-column: 1 / -1;
+  display: grid;
+  gap: 8px;
+  color: var(--text-secondary);
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.club-point-map {
+  height: 300px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  overflow: hidden;
+  cursor: crosshair;
+}
+
+.club-point-marker {
+  display: grid;
+  place-items: center;
+  color: var(--accent);
+  font-size: 38px;
+  line-height: 1;
+  text-shadow: 0 1px 4px rgba(0, 0, 0, .6);
+}
+
+.map-point-coordinates {
+  color: var(--text-faint);
+  font-size: 11px;
+  font-weight: 520;
+}
+
 .compact-form {
   gap: 12px;
 }
