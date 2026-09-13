@@ -2,6 +2,7 @@ import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:geolocator/geolocator.dart';
 import 'package:go_router/go_router.dart';
 import 'package:latlong2/latlong.dart';
 
@@ -20,11 +21,48 @@ class ClubMapScreen extends ConsumerStatefulWidget {
 class _ClubMapScreenState extends ConsumerState<ClubMapScreen> {
   late Future<List<ClubSearchResult>> _clubs;
   ClubSearchResult? _selected;
+  LatLng? _playerLocation;
+  bool _locating = false;
   @override
   void initState() {
     super.initState();
     _clubs = ref.read(clubCatalogRepositoryProvider).search('');
     ref.read(analyticsProvider).track('club_map_opened', screen: 'club_map');
+  }
+
+  Future<void> _locatePlayer() async {
+    setState(() => _locating = true);
+    try {
+      var permission = await Geolocator.checkPermission();
+      if (permission == LocationPermission.denied) {
+        permission = await Geolocator.requestPermission();
+      }
+      if (permission == LocationPermission.denied ||
+          permission == LocationPermission.deniedForever) {
+        return;
+      }
+      final position = await Geolocator.getCurrentPosition();
+      if (mounted) {
+        setState(
+          () => _playerLocation = LatLng(position.latitude, position.longitude),
+        );
+      }
+      ref
+          .read(analyticsProvider)
+          .track('club_map_location_enabled', screen: 'club_map');
+    } catch (_) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text(
+              'Не удалось определить геопозицию. Проверьте разрешение на геолокацию.',
+            ),
+          ),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _locating = false);
+    }
   }
 
   @override
@@ -67,6 +105,22 @@ class _ClubMapScreenState extends ConsumerState<ClubMapScreen> {
                       ),
                       MarkerLayer(
                         markers: [
+                          if (_playerLocation != null)
+                            Marker(
+                              point: _playerLocation!,
+                              width: 34,
+                              height: 34,
+                              child: Container(
+                                decoration: BoxDecoration(
+                                  color: ClubColors.blue,
+                                  shape: BoxShape.circle,
+                                  border: Border.all(
+                                    color: Colors.white,
+                                    width: 3,
+                                  ),
+                                ),
+                              ),
+                            ),
                           for (final club in clubs)
                             Marker(
                               point: LatLng(club.latitude!, club.longitude!),
@@ -167,6 +221,26 @@ class _ClubMapScreenState extends ConsumerState<ClubMapScreen> {
                                               color: _selected!.online
                                                   ? ClubColors.green
                                                   : ClubColors.muted,
+                                            ),
+                                          ),
+                                          Positioned(
+                                            right: 16,
+                                            bottom: _selected == null
+                                                ? 24
+                                                : 180,
+                                            child: FloatingActionButton.small(
+                                              heroTag: 'player-location',
+                                              onPressed: _locating
+                                                  ? null
+                                                  : _locatePlayer,
+                                              child: _locating
+                                                  ? const CupertinoActivityIndicator(
+                                                      color: Colors.white,
+                                                    )
+                                                  : const Icon(
+                                                      CupertinoIcons
+                                                          .location_fill,
+                                                    ),
                                             ),
                                           ),
                                         ],

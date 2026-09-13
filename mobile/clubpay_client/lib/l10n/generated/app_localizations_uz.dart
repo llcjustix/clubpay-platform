@@ -510,4 +510,8 @@ class AppLocalizationsUz extends AppLocalizations {
   @override
   String get supportUnavailable =>
       'Qo‘llab-quvvatlash vaqtincha ishlamayapti. Keyinroq urinib ko‘ring.';
+
+  @override
+  String get reservationUnavailable =>
+      'Bron qilish hozir vaqtincha ishlamayapti. Keyinroq urinib ko‘ring.';
 }

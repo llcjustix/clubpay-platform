@@ -510,4 +510,8 @@ class AppLocalizationsRu extends AppLocalizations {
   @override
   String get supportUnavailable =>
       'Поддержка временно недоступна. Попробуйте позже.';
+
+  @override
+  String get reservationUnavailable =>
+      'Бронирование сейчас временно недоступно. Попробуйте позже.';
 }

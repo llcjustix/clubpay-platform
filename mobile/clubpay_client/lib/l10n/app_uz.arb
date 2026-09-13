@@ -205,5 +205,6 @@
   "noConnection": "Aloqa yo‘q",
   "selectThisPc": "Bo‘sh — shu kompyuterni tanlash",
   "clubNoZones": "Bu klubda hozircha mavjud zonalar yo‘q.",
-  "supportUnavailable": "Qo‘llab-quvvatlash vaqtincha ishlamayapti. Keyinroq urinib ko‘ring."
+  "supportUnavailable": "Qo‘llab-quvvatlash vaqtincha ishlamayapti. Keyinroq urinib ko‘ring.",
+  "reservationUnavailable": "Bron qilish hozir vaqtincha ishlamayapti. Keyinroq urinib ko‘ring."
 }

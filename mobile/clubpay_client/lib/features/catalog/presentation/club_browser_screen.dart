@@ -4,7 +4,6 @@ import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
-import 'package:geolocator/geolocator.dart';
 
 import '../../../core/club_navigation.dart';
 import '../../../core/club_theme.dart';
@@ -29,8 +28,6 @@ class _ClubBrowserScreenState extends ConsumerState<ClubBrowserScreen> {
   Timer? _debounce;
   late Future<List<ClubSearchResult>> _clubs;
   bool _searchOpen = false;
-  Position? _location;
-  bool _locating = false;
 
   @override
   void initState() {
@@ -51,43 +48,6 @@ class _ClubBrowserScreenState extends ConsumerState<ClubBrowserScreen> {
 
   void _track(String event) {
     ref.read(analyticsProvider).track(event, screen: 'club_catalog');
-  }
-
-  Future<void> _locate() async {
-    setState(() => _locating = true);
-    try {
-      var permission = await Geolocator.checkPermission();
-      if (permission == LocationPermission.denied) {
-        permission = await Geolocator.requestPermission();
-      }
-      if (permission == LocationPermission.denied ||
-          permission == LocationPermission.deniedForever) {
-        return;
-      }
-      final location = await Geolocator.getCurrentPosition();
-      if (mounted) setState(() => _location = location);
-      _track('nearby_clubs_enabled');
-    } catch (_) {
-      // Location is an optional catalogue convenience.
-    } finally {
-      if (mounted) setState(() => _locating = false);
-    }
-  }
-
-  List<ClubSearchResult> _ordered(List<ClubSearchResult> clubs) {
-    if (_location == null) return clubs;
-    final copy = [...clubs];
-    double distance(ClubSearchResult club) =>
-        club.latitude == null || club.longitude == null
-        ? double.infinity
-        : Geolocator.distanceBetween(
-            _location!.latitude,
-            _location!.longitude,
-            club.latitude!,
-            club.longitude!,
-          );
-    copy.sort((a, b) => distance(a).compareTo(distance(b)));
-    return copy;
   }
 
   @override
@@ -123,31 +83,16 @@ class _ClubBrowserScreenState extends ConsumerState<ClubBrowserScreen> {
     bottom: const ClubNavigation(profile: false),
     children: [
       SectionCaption(context.l.clubSearchTitle),
-      Wrap(
-        spacing: 4,
-        children: [
-          TextButton.icon(
-            onPressed: _locating ? null : _locate,
-            icon: _locating
-                ? const SizedBox(
-                    width: 16,
-                    height: 16,
-                    child: CupertinoActivityIndicator(),
-                  )
-                : const Icon(CupertinoIcons.location),
-            label: Text(
-              _location == null ? 'Ближайшие' : 'Отсортировано по расстоянию',
-            ),
-          ),
-          TextButton.icon(
-            onPressed: () {
-              _track('club_map_opened');
-              context.push('/clubs-map');
-            },
-            icon: const Icon(CupertinoIcons.map),
-            label: const Text('Карта'),
-          ),
-        ],
+      Align(
+        alignment: Alignment.centerLeft,
+        child: TextButton.icon(
+          onPressed: () {
+            _track('club_map_opened');
+            context.push('/clubs-map');
+          },
+          icon: const Icon(CupertinoIcons.map),
+          label: const Text('Открыть карту клубов'),
+        ),
       ),
       if (_searchOpen) ...[
         TextField(
@@ -195,7 +140,7 @@ class _ClubBrowserScreenState extends ConsumerState<ClubBrowserScreen> {
               ],
             );
           }
-          final clubs = _ordered(snapshot.data ?? const <ClubSearchResult>[]);
+          final clubs = snapshot.data ?? const <ClubSearchResult>[];
           if (clubs.isEmpty) {
             return Padding(
               padding: const EdgeInsets.symmetric(vertical: 36, horizontal: 16),

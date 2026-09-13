@@ -1003,6 +1003,12 @@ abstract class AppLocalizations {
   /// In ru, this message translates to:
   /// **'Поддержка временно недоступна. Попробуйте позже.'**
   String get supportUnavailable;
+
+  /// No description provided for @reservationUnavailable.
+  ///
+  /// In ru, this message translates to:
+  /// **'Бронирование сейчас временно недоступно. Попробуйте позже.'**
+  String get reservationUnavailable;
 }
 
 class _AppLocalizationsDelegate

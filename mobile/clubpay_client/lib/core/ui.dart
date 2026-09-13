@@ -33,6 +33,9 @@ String errorLabel(BuildContext context, Object error) {
     if (error.requestOptions.path.startsWith('/api/mobile/support')) {
       return l.supportUnavailable;
     }
+    if (error.requestOptions.path.startsWith('/api/mobile/reservations')) {
+      return l.reservationUnavailable;
+    }
     if (error.response?.statusCode == 404) return l.qrNotFound;
     if (error.response?.statusCode == 503) return l.serviceUnavailable;
     if (error.response?.statusCode == 409) return l.operationHelp;
@@ -151,7 +154,12 @@ class AppPage extends StatelessWidget {
                   padding: const EdgeInsets.only(bottom: 16, left: 4),
                   child: Row(
                     children: [
-                      Expanded(child: Text(title, style: Theme.of(context).textTheme.headlineLarge)),
+                      Expanded(
+                        child: Text(
+                          title,
+                          style: Theme.of(context).textTheme.headlineLarge,
+                        ),
+                      ),
                       ...?actions,
                     ],
                   ),
