@@ -137,6 +137,24 @@ jobs:
           echo "=== Running containers ==="
           docker ps
 
+          # Do not report a successful deployment until the API is reachable.
+          # This also preserves the startup error in the Actions log when a
+          # migration or configuration change prevents the process from booting.
+          echo "=== Waiting for API health ==="
+          for attempt in $(seq 1 12); do
+            if curl --fail --silent --show-error http://127.0.0.1:2045/api/health; then
+              echo
+              echo "API is healthy"
+              exit 0
+            fi
+            sleep 5
+          done
+
+          echo "API did not become healthy"
+          docker compose ps
+          docker compose logs --tail=200 api
+          exit 1
+
       - name: Show application logs on failure
         if: failure()
         run: |
