@@ -893,7 +893,7 @@ abstract class AppLocalizations {
   /// No description provided for @zoneConversionHelp.
   ///
   /// In ru, this message translates to:
-  /// **'В другой зоне доступное время может отличаться.'**
+  /// **'Это время уже оплачено. Нажмите «Использовать время», чтобы запустить игру на этом ПК.'**
   String get zoneConversionHelp;
 
   /// No description provided for @clubOffline.
@@ -935,7 +935,7 @@ abstract class AppLocalizations {
   /// No description provided for @balanceInZone.
   ///
   /// In ru, this message translates to:
-  /// **'Доступно в зоне {zone}'**
+  /// **'Ваше оплаченное время в зоне {zone}'**
   String balanceInZone(String zone);
 
   /// No description provided for @balanceUnknown.
@@ -997,6 +997,12 @@ abstract class AppLocalizations {
   /// In ru, this message translates to:
   /// **'В этом клубе пока нет доступных зон.'**
   String get clubNoZones;
+
+  /// No description provided for @supportUnavailable.
+  ///
+  /// In ru, this message translates to:
+  /// **'Поддержка временно недоступна. Попробуйте позже.'**
+  String get supportUnavailable;
 }
 
 class _AppLocalizationsDelegate

@@ -30,6 +30,9 @@ String errorLabel(BuildContext context, Object error) {
     if (code == 'otp_invalid_or_expired') return l.invalidOtp;
     if (code == 'qr_catalog_unavailable') return l.qrCatalogUnavailable;
     if (error.response?.statusCode == 401) return l.sessionExpired;
+    if (error.requestOptions.path.startsWith('/api/mobile/support')) {
+      return l.supportUnavailable;
+    }
     if (error.response?.statusCode == 404) return l.qrNotFound;
     if (error.response?.statusCode == 503) return l.serviceUnavailable;
     if (error.response?.statusCode == 409) return l.operationHelp;

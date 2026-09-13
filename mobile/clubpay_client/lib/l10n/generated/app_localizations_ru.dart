@@ -446,7 +446,7 @@ class AppLocalizationsRu extends AppLocalizations {
 
   @override
   String get zoneConversionHelp =>
-      'В другой зоне доступное время может отличаться.';
+      'Это время уже оплачено. Нажмите «Использовать время», чтобы запустить игру на этом ПК.';
 
   @override
   String get clubOffline => 'Клуб сейчас не на связи';
@@ -470,7 +470,7 @@ class AppLocalizationsRu extends AppLocalizations {
 
   @override
   String balanceInZone(String zone) {
-    return 'Доступно в зоне $zone';
+    return 'Ваше оплаченное время в зоне $zone';
   }
 
   @override
@@ -506,4 +506,8 @@ class AppLocalizationsRu extends AppLocalizations {
 
   @override
   String get clubNoZones => 'В этом клубе пока нет доступных зон.';
+
+  @override
+  String get supportUnavailable =>
+      'Поддержка временно недоступна. Попробуйте позже.';
 }

@@ -446,7 +446,7 @@ class AppLocalizationsUz extends AppLocalizations {
 
   @override
   String get zoneConversionHelp =>
-      'Boshqa zonada mavjud vaqt boshqacha bo‘lishi mumkin.';
+      'Bu vaqt allaqachon to‘langan. Shu kompyuterda o‘yinni boshlash uchun «Vaqtdan foydalanish» tugmasini bosing.';
 
   @override
   String get clubOffline => 'Klub hozir tarmoqqa ulanmagan';
@@ -470,7 +470,7 @@ class AppLocalizationsUz extends AppLocalizations {
 
   @override
   String balanceInZone(String zone) {
-    return '$zone zonasida mavjud';
+    return '$zone zonasidagi to‘langan vaqtingiz';
   }
 
   @override
@@ -506,4 +506,8 @@ class AppLocalizationsUz extends AppLocalizations {
 
   @override
   String get clubNoZones => 'Bu klubda hozircha mavjud zonalar yo‘q.';
+
+  @override
+  String get supportUnavailable =>
+      'Qo‘llab-quvvatlash vaqtincha ishlamayapti. Keyinroq urinib ko‘ring.';
 }

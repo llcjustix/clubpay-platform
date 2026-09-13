@@ -166,7 +166,7 @@
   "currencySuffix": "so‘m",
   "clubBalanceHelp": "Uni shu klubdagi o‘yin vaqti uchun ishlating",
   "clubBalanceHomeHelp": "QR skanerlangandan keyin bu kompyuterda balans qancha vaqtga yetishini ko‘rsatamiz.",
-  "zoneConversionHelp": "Boshqa zonada mavjud vaqt boshqacha bo‘lishi mumkin.",
+  "zoneConversionHelp": "Bu vaqt allaqachon to‘langan. Shu kompyuterda o‘yinni boshlash uchun «Vaqtdan foydalanish» tugmasini bosing.",
   "clubOffline": "Klub hozir tarmoqqa ulanmagan",
   "balanceStale": "Aloqa yo‘q. Oxirgi olingan qoldiq ko‘rsatilgan.",
   "balanceUpdated": "Yangilangan: {time}",
@@ -180,7 +180,7 @@
   "zeroMinutes": "0 daq",
   "balancePending": "Qoldiq yangilanmoqda…",
   "useBalance": "Vaqtdan foydalanish",
-  "balanceInZone": "{zone} zonasida mavjud",
+  "balanceInZone": "{zone} zonasidagi to‘langan vaqtingiz",
   "@balanceInZone": {
     "placeholders": {
       "zone": {
@@ -204,5 +204,6 @@
   },
   "noConnection": "Aloqa yo‘q",
   "selectThisPc": "Bo‘sh — shu kompyuterni tanlash",
-  "clubNoZones": "Bu klubda hozircha mavjud zonalar yo‘q."
+  "clubNoZones": "Bu klubda hozircha mavjud zonalar yo‘q.",
+  "supportUnavailable": "Qo‘llab-quvvatlash vaqtincha ishlamayapti. Keyinroq urinib ko‘ring."
 }
