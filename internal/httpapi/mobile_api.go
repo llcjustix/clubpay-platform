@@ -34,6 +34,7 @@ func (s *Server) mobileRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/mobile/favorites/{club_id}", s.mobileMutation(s.handleMobileFavoriteAdd))
 	mux.HandleFunc("POST /api/mobile/favorites/{club_id}/remove", s.mobileMutation(s.handleMobileFavoriteRemove))
 	mux.HandleFunc("POST /api/mobile/reservations", s.mobileMutation(s.handleMobileReservationCreate))
+	mux.HandleFunc("POST /api/mobile/reservations/{reservation_id}/check-in", s.mobileMutation(s.handleMobileReservationCheckIn))
 	mux.HandleFunc("POST /api/mobile/reservations/{reservation_id}/cancel", s.mobileMutation(s.handleMobileReservationCancel))
 	mux.HandleFunc("POST /api/mobile/reservations/{reservation_id}/reschedule", s.mobileMutation(s.handleMobileReservationReschedule))
 	mux.HandleFunc("POST /api/mobile/events", s.handleMobileAnalyticsEvent)

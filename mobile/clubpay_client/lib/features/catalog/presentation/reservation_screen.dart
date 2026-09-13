@@ -210,19 +210,7 @@ class _ReservationScreenState extends ConsumerState<ReservationScreen> {
       ),
       const SizedBox(height: 18),
       Text(
-        'ПК будет отмечен как занятый с ${DateFormat('HH:mm').format(item.heldFrom)}. Введите код на ПК с ${DateFormat('HH:mm').format(item.startsAt)} и до ${DateFormat('HH:mm').format(item.checkinDeadline)}.',
-      ),
-      const SizedBox(height: 14),
-      const Text(
-        'Код для начала игры',
-        style: TextStyle(color: ClubColors.muted),
-      ),
-      const SizedBox(height: 3),
-      Text(
-        item.entryCode,
-        style: Theme.of(
-          context,
-        ).textTheme.headlineSmall?.copyWith(letterSpacing: 2),
+        'ПК будет отмечен как занятый с ${DateFormat('HH:mm').format(item.heldFrom)}. В начале брони на экране ПК появится код — введите его в ClubPay, чтобы продолжить к оплате или запуску игры.',
       ),
       const SizedBox(height: 18),
       ActionButton(label: 'К брони', onPressed: () => context.go('/home')),

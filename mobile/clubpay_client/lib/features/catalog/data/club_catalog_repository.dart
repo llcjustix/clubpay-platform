@@ -75,6 +75,18 @@ class ClubCatalogRepository {
     );
   }
 
+  Future<String> checkInReservation({
+    required String id,
+    required String entryCode,
+  }) async {
+    final data = await api.post(
+      '/api/mobile/reservations/${Uri.encodeComponent(id)}/check-in',
+      {'entry_code': entryCode},
+      key: const Uuid().v4().replaceAll('-', ''),
+    );
+    return data['pc_token'] as String;
+  }
+
   Future<void> cancelReservation(String id) async {
     await api.post(
       '/api/mobile/reservations/${Uri.encodeComponent(id)}/cancel',

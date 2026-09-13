@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
@@ -128,78 +129,153 @@ class _ClubBrowserScreenState extends ConsumerState<ClubBrowserScreen> {
   }
 
   Future<void> _openReservation(MobileReservation reservation) async {
-    await showModalBottomSheet<void>(
-      context: context,
-      builder: (sheet) => SafeArea(
-        child: Padding(
-          padding: const EdgeInsets.fromLTRB(20, 20, 20, 28),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              Text('Ваша бронь', style: Theme.of(context).textTheme.titleLarge),
-              const SizedBox(height: 8),
-              Text(
-                '${reservation.clubName} · ${reservation.pcLabel}',
-                style: const TextStyle(color: ClubColors.muted),
-              ),
-              const SizedBox(height: 20),
-              ListTile(
-                enabled: DateTime.now().isBefore(reservation.heldFrom),
-                leading: const Icon(CupertinoIcons.calendar),
-                title: const Text('Перенести бронь'),
-                subtitle: const Text('Изменить время и длительность'),
-                onTap: () {
-                  Navigator.pop(sheet);
-                  context.push(
-                    '/reservation/${reservation.pcID}',
-                    extra: reservation,
-                  );
-                },
-              ),
-              ListTile(
-                enabled: DateTime.now().isBefore(reservation.heldFrom),
-                leading: const Icon(
-                  CupertinoIcons.xmark_circle,
-                  color: ClubColors.red,
+    final code = TextEditingController();
+    var checkingIn = false;
+    try {
+      await showModalBottomSheet<void>(
+        context: context,
+        builder: (sheet) => StatefulBuilder(
+          builder: (sheet, setSheetState) {
+            final canEnterCode =
+                !DateTime.now().isBefore(reservation.startsAt) &&
+                DateTime.now().isBefore(reservation.checkinDeadline);
+            return SafeArea(
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(20, 20, 20, 28),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    Text(
+                      'Ваша бронь',
+                      style: Theme.of(context).textTheme.titleLarge,
+                    ),
+                    const SizedBox(height: 8),
+                    Text(
+                      '${reservation.clubName} · ${reservation.pcLabel}',
+                      style: const TextStyle(color: ClubColors.muted),
+                    ),
+                    const SizedBox(height: 20),
+                    if (canEnterCode) ...[
+                      const Text('Введите код с экрана ПК'),
+                      const SizedBox(height: 10),
+                      TextField(
+                        controller: code,
+                        autofocus: true,
+                        keyboardType: TextInputType.number,
+                        inputFormatters: [
+                          FilteringTextInputFormatter.digitsOnly,
+                          LengthLimitingTextInputFormatter(6),
+                        ],
+                        decoration: const InputDecoration(
+                          hintText: 'Шесть цифр',
+                          counterText: '',
+                        ),
+                        onChanged: (_) => setSheetState(() {}),
+                      ),
+                      ActionButton(
+                        label: 'Продолжить к запуску',
+                        busy: checkingIn,
+                        onPressed: checkingIn || code.text.length != 6
+                            ? null
+                            : () async {
+                                setSheetState(() => checkingIn = true);
+                                try {
+                                  final token = await ref
+                                      .read(clubCatalogRepositoryProvider)
+                                      .checkInReservation(
+                                        id: reservation.id,
+                                        entryCode: code.text,
+                                      );
+                                  ref
+                                      .read(analyticsProvider)
+                                      .track(
+                                        'reservation_code_confirmed',
+                                        screen: 'club_catalog',
+                                      );
+                                  ref
+                                      .read(catalogRevisionProvider.notifier)
+                                      .bump();
+                                  if (!mounted || !sheet.mounted) return;
+                                  Navigator.pop(sheet);
+                                  context.push('/computer/$token');
+                                } catch (error) {
+                                  if (mounted) {
+                                    showFailure(context, error);
+                                  }
+                                } finally {
+                                  if (sheet.mounted) {
+                                    setSheetState(() => checkingIn = false);
+                                  }
+                                }
+                              },
+                      ),
+                    ] else
+                      Text(
+                        DateTime.now().isBefore(reservation.startsAt)
+                            ? 'Код появится на экране ПК в ${_time(reservation.startsAt)}. Тогда введите его здесь.'
+                            : 'Время ввода кода закончилось. Бронь больше недоступна.',
+                        style: const TextStyle(color: ClubColors.muted),
+                      ),
+                    const SizedBox(height: 14),
+                    ListTile(
+                      enabled: DateTime.now().isBefore(reservation.heldFrom),
+                      leading: const Icon(CupertinoIcons.calendar),
+                      title: const Text('Перенести бронь'),
+                      subtitle: const Text('Изменить время и длительность'),
+                      onTap: () {
+                        Navigator.pop(sheet);
+                        context.push(
+                          '/reservation/${reservation.pcID}',
+                          extra: reservation,
+                        );
+                      },
+                    ),
+                    ListTile(
+                      enabled: DateTime.now().isBefore(reservation.heldFrom),
+                      leading: const Icon(
+                        CupertinoIcons.xmark_circle,
+                        color: ClubColors.red,
+                      ),
+                      title: const Text(
+                        'Отменить бронь',
+                        style: TextStyle(color: ClubColors.red),
+                      ),
+                      onTap: () async {
+                        Navigator.pop(sheet);
+                        try {
+                          await ref
+                              .read(clubCatalogRepositoryProvider)
+                              .cancelReservation(reservation.id);
+                          ref
+                              .read(analyticsProvider)
+                              .track(
+                                'reservation_cancelled',
+                                screen: 'club_catalog',
+                              );
+                          ref.read(catalogRevisionProvider.notifier).bump();
+                          if (mounted) {
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              const SnackBar(content: Text('Бронь отменена.')),
+                            );
+                          }
+                        } catch (error) {
+                          if (mounted) {
+                            showFailure(context, error);
+                          }
+                        }
+                      },
+                    ),
+                  ],
                 ),
-                title: const Text(
-                  'Отменить бронь',
-                  style: TextStyle(color: ClubColors.red),
-                ),
-                onTap: () async {
-                  Navigator.pop(sheet);
-                  try {
-                    await ref
-                        .read(clubCatalogRepositoryProvider)
-                        .cancelReservation(reservation.id);
-                    ref
-                        .read(analyticsProvider)
-                        .track('reservation_cancelled', screen: 'club_catalog');
-                    ref.read(catalogRevisionProvider.notifier).bump();
-                    if (mounted) {
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        const SnackBar(content: Text('Бронь отменена.')),
-                      );
-                    }
-                  } catch (error) {
-                    if (mounted) showFailure(context, error);
-                  }
-                },
               ),
-              if (!DateTime.now().isBefore(reservation.heldFrom))
-                const Padding(
-                  padding: EdgeInsets.only(top: 8),
-                  child: Text(
-                    'В течение 30 минут до начала бронь нельзя изменить или отменить.',
-                    style: TextStyle(color: ClubColors.muted),
-                  ),
-                ),
-            ],
-          ),
+            );
+          },
         ),
-      ),
-    );
+      );
+    } finally {
+      code.dispose();
+    }
   }
 
   @override
@@ -333,7 +409,8 @@ class _ReservationCard extends StatelessWidget {
     final now = DateTime.now();
     MobileReservation? reservation;
     for (final item in reservations) {
-      if (item.status == 'confirmed' && item.checkinDeadline.isAfter(now)) {
+      if ((item.status == 'confirmed' || item.status == 'checked_in') &&
+          item.checkinDeadline.isAfter(now)) {
         reservation = item;
         break;
       }
@@ -359,35 +436,13 @@ class _ReservationCard extends StatelessWidget {
                 '${booking.pcLabel} · ${_reservationDate(booking.startsAt)}',
                 style: const TextStyle(color: ClubColors.muted),
               ),
-              const SizedBox(height: 6),
+              const SizedBox(height: 8),
               Text(
                 held
-                    ? 'ПК зарезервирован для вас. Введите код на ПК до ${_time(booking.checkinDeadline)}.'
-                    : 'ПК будет отмечен как забронированный за 30 минут до начала.',
+                    ? 'ПК зарезервирован для вас. Откройте бронь и введите код с экрана ПК, чтобы продолжить к запуску игры.'
+                    : 'ПК будет отмечен как забронированный за 30 минут до начала. Код появится на экране ПК в начале брони.',
                 style: const TextStyle(color: ClubColors.muted),
               ),
-              const SizedBox(height: 14),
-              Text(
-                'Код для начала игры',
-                style: Theme.of(
-                  context,
-                ).textTheme.bodySmall?.copyWith(color: ClubColors.muted),
-              ),
-              const SizedBox(height: 3),
-              Text(
-                booking.entryCode,
-                style: Theme.of(context).textTheme.headlineSmall?.copyWith(
-                  fontFeatures: const [FontFeature.tabularFigures()],
-                  letterSpacing: 2,
-                ),
-              ),
-              if (!held) ...[
-                const SizedBox(height: 4),
-                Text(
-                  'Код можно ввести на ПК с ${_time(booking.startsAt)}.',
-                  style: const TextStyle(color: ClubColors.muted, fontSize: 13),
-                ),
-              ],
             ],
           ),
         ),

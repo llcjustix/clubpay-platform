@@ -10,7 +10,6 @@ import (
 	"strings"
 	"time"
 
-	"clubpay/internal/core"
 	"github.com/jackc/pgx/v5"
 )
 
@@ -36,7 +35,7 @@ func (s *Server) handleMobileReservations(w http.ResponseWriter, r *http.Request
 	// the PC even if a background worker was temporarily unavailable.
 	_, _ = s.db.Exec(r.Context(), `UPDATE mobile_reservations
 SET status='expired',updated_at=now()
-WHERE status='confirmed' AND starts_at + interval '15 minutes' < now()`)
+WHERE status IN ('confirmed','checked_in') AND starts_at + interval '15 minutes' < now()`)
 	rows, err := s.queryMaps(r.Context(), `SELECT r.id::text,r.pc_ref_id::text,r.status,r.entry_code,r.starts_at,
  r.starts_at + make_interval(mins => r.duration_minutes) AS ends_at,
  r.starts_at - interval '30 minutes' AS held_from,
@@ -287,6 +286,90 @@ WHERE pc_ref_id=$1::uuid AND status='accepted' AND (planned_ends_at IS NULL OR p
 	}})
 }
 
+// handleMobileReservationCheckIn verifies the code visible on the reserved
+// PC. It deliberately keeps the reservation held until the normal mobile
+// payment/start flow succeeds, so another player cannot take the PC midway
+// through checkout.
+func (s *Server) handleMobileReservationCheckIn(w http.ResponseWriter, r *http.Request) {
+	p, ok := s.requireMobile(w, r)
+	if !ok {
+		return
+	}
+	id := strings.TrimSpace(r.PathValue("reservation_id"))
+	var req struct {
+		EntryCode string `json:"entry_code"`
+	}
+	if id == "" || !mobileDecode(w, r, &req) {
+		if id == "" {
+			writeError(w, http.StatusBadRequest, "reservation_id_required")
+		}
+		return
+	}
+	req.EntryCode = strings.TrimSpace(req.EntryCode)
+	if len(req.EntryCode) != 6 {
+		writeError(w, http.StatusBadRequest, "invalid_reservation_code")
+		return
+	}
+
+	var token string
+	err := s.db.QueryRow(r.Context(), `
+		SELECT COALESCE(q.public_token, '')
+		FROM mobile_reservations r
+		JOIN pc_refs pc ON pc.id=r.pc_ref_id
+		LEFT JOIN LATERAL (
+			SELECT public_token FROM qr_codes
+			WHERE pc_ref_id=pc.id AND type='static_pc' AND status='active'
+			ORDER BY created_at DESC LIMIT 1
+		) q ON true
+		WHERE r.id=$1::uuid AND r.player_id=$2 AND r.status IN ('confirmed','checked_in')
+		  AND r.entry_code=$3 AND r.starts_at <= now()
+		  AND r.starts_at + interval '15 minutes' >= now()
+		FOR UPDATE OF r
+	`, id, p.ID, req.EntryCode).Scan(&token)
+	if errors.Is(err, pgx.ErrNoRows) {
+		writeError(w, http.StatusConflict, "reservation_code_not_active")
+		return
+	}
+	if err != nil {
+		mobileInternal(w)
+		return
+	}
+	if token == "" {
+		writeError(w, http.StatusConflict, "reservation_pc_unavailable")
+		return
+	}
+	if _, err = s.db.Exec(r.Context(), `UPDATE mobile_reservations SET status='checked_in',updated_at=now() WHERE id=$1::uuid AND player_id=$2`, id, p.ID); err != nil {
+		mobileInternal(w)
+		return
+	}
+	_, _ = s.db.Exec(r.Context(), `INSERT INTO audit_logs(action,entity_type,entity_id,metadata) VALUES('mobile_reservation_checked_in','mobile_reservation',$1,'{}')`, id)
+	writeJSON(w, http.StatusOK, map[string]any{"success": true, "pc_token": token})
+}
+
+// reservationAllowsPlayerSession keeps a held PC private to its reservation
+// owner. A correct code in ClubPay changes the reservation to checked_in; only
+// then may that player use the normal checkout or existing-balance flow.
+func reservationAllowsPlayerSession(ctx context.Context, q interface {
+	QueryRow(context.Context, string, ...any) pgx.Row
+}, pcID, playerID string) (bool, error) {
+	var reservationPlayerID, status string
+	err := q.QueryRow(ctx, `
+		SELECT player_id::text,status
+		FROM mobile_reservations
+		WHERE pc_ref_id=$1::uuid AND status IN ('confirmed','checked_in')
+		  AND starts_at-interval '30 minutes'<=now()
+		  AND starts_at+interval '15 minutes'>=now()
+		ORDER BY starts_at ASC LIMIT 1
+	`, pcID).Scan(&reservationPlayerID, &status)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return true, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	return status == "checked_in" && playerID != "" && reservationPlayerID == playerID, nil
+}
+
 func (s *Server) handleMobileReservationCancel(w http.ResponseWriter, r *http.Request) {
 	p, ok := s.requireMobile(w, r)
 	if !ok {
@@ -312,151 +395,4 @@ WHERE id=$1::uuid AND player_id=$2 AND status='confirmed' AND starts_at>now()+in
 	}
 	_, _ = s.db.Exec(r.Context(), `INSERT INTO audit_logs(action,entity_type,entity_id,metadata) VALUES('mobile_reservation_cancelled','mobile_reservation',$1,'{}')`, id)
 	writeJSON(w, http.StatusOK, map[string]any{"success": true, "reservation_id": id})
-}
-
-// handleReservationCheckIn accepts the one-time code entered on the reserved
-// PC. Only an authenticated Agent can call it; the code is useful solely for
-// that PC during its 15-minute arrival window. A reservation never creates
-// unpaid time: the selected duration must already be present on the player
-// profile balance.
-func (s *Server) handleReservationCheckIn(w http.ResponseWriter, r *http.Request) {
-	if !s.requireCore(w, r) {
-		return
-	}
-	var req struct {
-		ExternalPCID string `json:"external_pc_id"`
-		EntryCode    string `json:"entry_code"`
-	}
-	if !mobileDecode(w, r, &req) {
-		return
-	}
-	req.ExternalPCID = strings.TrimSpace(req.ExternalPCID)
-	req.EntryCode = strings.TrimSpace(req.EntryCode)
-	if req.ExternalPCID == "" || len(req.EntryCode) != 6 {
-		writeError(w, http.StatusBadRequest, "invalid_reservation_code")
-		return
-	}
-
-	ctx := r.Context()
-	tx, err := s.db.Begin(ctx)
-	if err != nil {
-		writeError(w, http.StatusServiceUnavailable, "reservation_unavailable")
-		return
-	}
-	defer tx.Rollback(ctx)
-
-	var reservationID, playerID, clubID, pcID, externalPCID string
-	var durationMinutes int
-	err = tx.QueryRow(ctx, `
-		SELECT r.id::text,r.player_id::text,r.club_id::text,r.pc_ref_id::text,p.external_pc_id,r.duration_minutes
-		FROM mobile_reservations r
-		JOIN pc_refs p ON p.id=r.pc_ref_id
-		WHERE p.external_pc_id=$1 AND r.status='confirmed' AND r.entry_code=$2
-		  AND r.starts_at <= now() AND r.starts_at + interval '15 minutes' >= now()
-		FOR UPDATE OF r,p
-	`, req.ExternalPCID, req.EntryCode).Scan(&reservationID, &playerID, &clubID, &pcID, &externalPCID, &durationMinutes)
-	if errors.Is(err, pgx.ErrNoRows) {
-		writeError(w, http.StatusConflict, "reservation_code_not_active")
-		return
-	}
-	if err != nil {
-		writeError(w, http.StatusServiceUnavailable, "reservation_unavailable")
-		return
-	}
-	seconds := durationMinutes * 60
-	balance, err := s.balanceSecondsForPC(ctx, tx, playerID, clubID, pcID)
-	if err != nil {
-		writeError(w, http.StatusServiceUnavailable, "reservation_unavailable")
-		return
-	}
-	if balance < seconds {
-		writeError(w, http.StatusConflict, "reservation_balance_insufficient")
-		return
-	}
-	var grantID string
-	err = tx.QueryRow(ctx, `
-		INSERT INTO game_access_grants (club_id,pc_ref_id,player_id,duration_minutes,duration_seconds,status,source)
-		VALUES ($1,$2,$3,$4,$5,'pending','mobile_reservation')
-		RETURNING id::text
-	`, clubID, pcID, playerID, durationMinutes, seconds).Scan(&grantID)
-	if err != nil {
-		writeError(w, http.StatusServiceUnavailable, "reservation_unavailable")
-		return
-	}
-	if err = s.recordPlayerTime(ctx, tx, playerID, clubID, -seconds, "session_start", grantID, "", "reservation-checkin:"+reservationID); err != nil {
-		writeError(w, http.StatusConflict, "reservation_balance_insufficient")
-		return
-	}
-	if _, err = tx.Exec(ctx, `UPDATE mobile_reservations SET status='checked_in',updated_at=now() WHERE id=$1::uuid`, reservationID); err != nil {
-		writeError(w, http.StatusServiceUnavailable, "reservation_unavailable")
-		return
-	}
-	if err = mobileAudit(ctx, tx, "mobile_reservation_checked_in", reservationID); err != nil {
-		writeError(w, http.StatusServiceUnavailable, "reservation_unavailable")
-		return
-	}
-	if err = tx.Commit(ctx); err != nil {
-		writeError(w, http.StatusServiceUnavailable, "reservation_unavailable")
-		return
-	}
-
-	// Preserve the existing one-player/one-active-session guarantee before
-	// starting the newly checked-in booking.
-	if err = s.handoffPlayerSession(ctx, playerID, pcID); err != nil {
-		s.refundReservationCheckIn(ctx, reservationID, playerID, clubID, grantID, seconds, err.Error())
-		writeError(w, http.StatusConflict, "reservation_start_failed")
-		return
-	}
-	extendURL, err := s.createSessionExtendURL(ctx, clubID, pcID, grantID, time.Now().UTC().Add(time.Duration(seconds)*time.Second+s.sessionGraceDuration()))
-	if err != nil {
-		s.refundReservationCheckIn(ctx, reservationID, playerID, clubID, grantID, seconds, err.Error())
-		writeError(w, http.StatusServiceUnavailable, "reservation_start_failed")
-		return
-	}
-	start, err := s.core.StartSession(ctx, core.StartSessionCommand{
-		RequestID: "reservation_" + reservationID,
-		GrantID:   grantID, ClubID: clubID, PCID: pcID, PCExternalID: externalPCID,
-		DurationSeconds: seconds, DurationMinutes: durationMinutes,
-		GraceSeconds: s.cfg.SessionGraceSeconds, Source: "mobile_reservation",
-		ExtendURL: extendURL, CreatedAt: time.Now().UTC().Format(time.RFC3339),
-	})
-	if err != nil {
-		s.deactivateSessionExtendQR(ctx, grantID)
-		s.refundReservationCheckIn(ctx, reservationID, playerID, clubID, grantID, seconds, err.Error())
-		writeError(w, http.StatusConflict, "reservation_start_failed")
-		return
-	}
-	coreSessionID := start.CoreSessionID
-	if coreSessionID == "" {
-		coreSessionID = "core-session-" + grantID
-	}
-	endsAt := time.Now().UTC().Add(time.Duration(seconds) * time.Second)
-	if start.EndsAt != nil {
-		endsAt = *start.EndsAt
-	}
-	if _, err = s.db.Exec(ctx, `
-		UPDATE game_access_grants
-		SET status='accepted',core_session_id=$1,accepted_at=now(),planned_ends_at=$2,grace_ends_at=$3,last_error=NULL
-		WHERE id=$4::uuid
-	`, coreSessionID, endsAt, endsAt.Add(s.sessionGraceDuration()), grantID); err != nil {
-		writeError(w, http.StatusServiceUnavailable, "reservation_start_failed")
-		return
-	}
-	s.updateSessionExtendQRExpiry(ctx, grantID, endsAt.Add(s.sessionGraceDuration()))
-	_, _ = s.db.Exec(ctx, `UPDATE pc_refs SET status_cache='occupied' WHERE id=$1::uuid`, pcID)
-	writeJSON(w, http.StatusOK, map[string]any{"success": true, "grant_id": grantID, "core_session_id": coreSessionID})
-}
-
-func (s *Server) refundReservationCheckIn(ctx context.Context, reservationID, playerID, clubID, grantID string, seconds int, cause string) {
-	tx, err := s.db.Begin(ctx)
-	if err != nil {
-		return
-	}
-	defer tx.Rollback(ctx)
-	if err = s.recordPlayerTime(ctx, tx, playerID, clubID, seconds, "session_start_refund", grantID, "", "reservation-refund:"+reservationID); err != nil {
-		return
-	}
-	_, _ = tx.Exec(ctx, `UPDATE game_access_grants SET status='start_failed',last_error=$1 WHERE id=$2::uuid`, cause, grantID)
-	_, _ = tx.Exec(ctx, `UPDATE mobile_reservations SET status='confirmed',updated_at=now() WHERE id=$1::uuid`, reservationID)
-	_ = tx.Commit(ctx)
 }

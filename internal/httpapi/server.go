@@ -200,7 +200,6 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("POST /api/payments/mock/success/{invoice_id}", s.handleMockPaymentSuccess)
 	mux.HandleFunc("POST /api/core/events", s.handleCoreEvent)
 	mux.HandleFunc("GET /api/core/bootstrap", s.handleCoreBootstrap)
-	mux.HandleFunc("POST /api/core/reservations/check-in", s.handleReservationCheckIn)
 	// Called only by an authenticated Agent when a player ends their own session from the kiosk UI.
 	// It deliberately uses the same voucher/Telegram delivery flow as the admin endpoint below.
 	mux.HandleFunc("POST /api/core/agent/session/end", s.handleAgentEndSession)
@@ -1921,6 +1920,13 @@ func (s *Server) handleCreateCheckout(w http.ResponseWriter, r *http.Request) {
 		}
 		orderSeed.PlayerID = player.ID
 	}
+	if allowed, err := reservationAllowsPlayerSession(ctx, s.db, orderSeed.PCID, orderSeed.PlayerID); err != nil {
+		writeError(w, http.StatusServiceUnavailable, "reservation_unavailable")
+		return
+	} else if !allowed {
+		writeError(w, http.StatusConflict, "reservation_checkin_required")
+		return
+	}
 	if strings.TrimSpace(req.VoucherCode) != "" {
 		voucherID, voucherSeconds, err := s.validVoucherForPC(ctx, req.VoucherCode, orderSeed.ClubID, orderSeed.PCID, orderSeed.PCStatus, orderSeed.QRType)
 		if err != nil {
@@ -3186,7 +3192,7 @@ func (s *Server) handleCoreBootstrap(w http.ResponseWriter, r *http.Request) {
 	// allowed to return immediately.
 	_, _ = s.db.Exec(r.Context(), `UPDATE mobile_reservations
 SET status='expired',updated_at=now()
-WHERE status='confirmed' AND starts_at + interval '15 minutes' < now()`)
+WHERE status IN ('confirmed','checked_in') AND starts_at + interval '15 minutes' < now()`)
 	clubIDFilter := strings.TrimSpace(r.URL.Query().Get("club_id"))
 	if externalPCID == "" {
 		writeError(w, http.StatusBadRequest, "external_pc_id is required")
@@ -3273,7 +3279,7 @@ WHERE status='confirmed' AND starts_at + interval '15 minutes' < now()`)
 	}
 	err = s.db.QueryRow(r.Context(), `SELECT entry_code,starts_at,starts_at + interval '15 minutes'
 FROM mobile_reservations
-WHERE pc_ref_id=$1::uuid AND status='confirmed'
+WHERE pc_ref_id=$1::uuid AND status IN ('confirmed','checked_in')
   AND starts_at - interval '30 minutes' <= now()
   AND starts_at + interval '15 minutes' >= now()
 ORDER BY starts_at ASC LIMIT 1`, row.PCID).Scan(&reservation.EntryCode, &reservation.StartsAt, &reservation.CheckinDeadline)

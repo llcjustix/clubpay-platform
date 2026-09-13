@@ -482,6 +482,13 @@ func (s *Server) redeemPlayerBalanceToPC(ctx context.Context, req redeemPlayerBa
 	if err != nil {
 		return nil, fmt.Errorf("Telegram authorization is no longer valid. Sign in again")
 	}
+	allowed, err := reservationAllowsPlayerSession(ctx, tx, pcID, player.ID)
+	if err != nil {
+		return nil, err
+	}
+	if !allowed {
+		return nil, fmt.Errorf("reservation check-in is required before starting this PC")
+	}
 	if !canUseQRForSession(pcStatus, qrType) {
 		if isSessionExtensionState(pcStatus) && qrType != "session_extend" {
 			return nil, fmt.Errorf("PC is occupied. Use session QR to extend")
