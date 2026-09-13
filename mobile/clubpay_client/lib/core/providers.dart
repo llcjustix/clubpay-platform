@@ -17,7 +17,9 @@ final vaultProvider = Provider(
   (ref) => SessionVault(ref.watch(secureStoreProvider)),
 );
 final apiProvider = Provider((ref) => ApiClient(ref.watch(vaultProvider)));
-final analyticsProvider = Provider((ref) => MobileAnalytics(ref.watch(apiProvider)));
+final analyticsProvider = Provider(
+  (ref) => MobileAnalytics(ref.watch(apiProvider)),
+);
 final authRepositoryProvider = Provider(
   (ref) => AuthRepository(ref.watch(apiProvider)),
 );
@@ -61,6 +63,20 @@ final balancesProvider = FutureProvider<List<ClubBalance>>((ref) async {
     playerId: player.id,
   ).balances();
 });
+
+/// Monotonic revision used by every catalog screen after a player mutation.
+/// It removes stale cards when a favorite or a reservation changes.
+final catalogRevisionProvider =
+    NotifierProvider<CatalogRevisionController, int>(
+      CatalogRevisionController.new,
+    );
+
+class CatalogRevisionController extends Notifier<int> {
+  @override
+  int build() => 0;
+  void bump() => state++;
+}
+
 final localeProvider = NotifierProvider<LocaleController, Locale>(
   LocaleController.new,
 );

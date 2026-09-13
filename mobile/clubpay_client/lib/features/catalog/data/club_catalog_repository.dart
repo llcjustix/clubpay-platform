@@ -82,4 +82,22 @@ class ClubCatalogRepository {
       key: const Uuid().v4().replaceAll('-', ''),
     );
   }
+
+  Future<MobileReservation> rescheduleReservation({
+    required String id,
+    required DateTime startsAt,
+    required int durationHours,
+  }) async {
+    final data = await api.post(
+      '/api/mobile/reservations/${Uri.encodeComponent(id)}/reschedule',
+      {
+        'starts_at': startsAt.toUtc().toIso8601String(),
+        'duration_hours': durationHours,
+      },
+      key: const Uuid().v4().replaceAll('-', ''),
+    );
+    return MobileReservation.fromJson(
+      Map<String, dynamic>.from(data['reservation'] as Map),
+    );
+  }
 }

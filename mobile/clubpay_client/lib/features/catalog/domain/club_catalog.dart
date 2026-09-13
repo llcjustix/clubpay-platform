@@ -122,6 +122,7 @@ class ClubCatalog {
 class MobileReservation {
   const MobileReservation({
     required this.id,
+    required this.pcID,
     required this.status,
     required this.clubName,
     required this.zoneName,
@@ -131,13 +132,16 @@ class MobileReservation {
     required this.heldFrom,
     required this.checkinDeadline,
     required this.durationHours,
+    this.entryCode = '',
   });
-  final String id, status, clubName, zoneName, pcLabel;
+  final String id, pcID, status, clubName, zoneName, pcLabel;
+  final String entryCode;
   final DateTime startsAt, endsAt, heldFrom, checkinDeadline;
   final int durationHours;
   factory MobileReservation.fromJson(Map<String, dynamic> json) =>
       MobileReservation(
         id: json['id'] as String,
+        pcID: json['pc_id'] as String? ?? '',
         status: json['status'] as String,
         clubName: json['club_name'] as String,
         zoneName: json['zone_name'] as String,
@@ -149,5 +153,6 @@ class MobileReservation {
           json['checkin_deadline'] as String,
         ).toLocal(),
         durationHours: (json['duration_hours'] as num).toInt(),
+        entryCode: json['entry_code'] as String? ?? '',
       );
 }

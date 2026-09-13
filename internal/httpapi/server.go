@@ -3176,6 +3176,12 @@ func (s *Server) handleCoreBootstrap(w http.ResponseWriter, r *http.Request) {
 	if externalPCID == "" {
 		externalPCID = strings.TrimSpace(r.URL.Query().Get("pc_id"))
 	}
+	// Keep the kiosk view correct even if a periodic cleanup job was delayed.
+	// Once the 15 minute arrival window passes the static payment screen is
+	// allowed to return immediately.
+	_, _ = s.db.Exec(r.Context(), `UPDATE mobile_reservations
+SET status='expired',updated_at=now()
+WHERE status='confirmed' AND starts_at + interval '15 minutes' < now()`)
 	clubIDFilter := strings.TrimSpace(r.URL.Query().Get("club_id"))
 	if externalPCID == "" {
 		writeError(w, http.StatusBadRequest, "external_pc_id is required")
@@ -3255,6 +3261,22 @@ func (s *Server) handleCoreBootstrap(w http.ResponseWriter, r *http.Request) {
 	if row.QRToken != "" {
 		qrURL = s.staticPCQRCodeURL(row.QRToken)
 	}
+	var reservation struct {
+		EntryCode       string
+		StartsAt        time.Time
+		CheckinDeadline time.Time
+	}
+	err = s.db.QueryRow(r.Context(), `SELECT entry_code,starts_at,starts_at + interval '15 minutes'
+FROM mobile_reservations
+WHERE pc_ref_id=$1::uuid AND status='confirmed'
+  AND starts_at - interval '30 minutes' <= now()
+  AND starts_at + interval '15 minutes' >= now()
+ORDER BY starts_at ASC LIMIT 1`, row.PCID).Scan(&reservation.EntryCode, &reservation.StartsAt, &reservation.CheckinDeadline)
+	reservationActive := err == nil
+	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"server_time":    time.Now().UTC().Format(time.RFC3339),
 		"config_version": "mvp-core-agent-v1",
@@ -3270,6 +3292,16 @@ func (s *Server) handleCoreBootstrap(w http.ResponseWriter, r *http.Request) {
 		},
 		"packages": packages,
 		"qr_url":   qrURL,
+		"reservation": func() any {
+			if !reservationActive {
+				return nil
+			}
+			return map[string]any{
+				"entry_code":       reservation.EntryCode,
+				"starts_at":        reservation.StartsAt.UTC(),
+				"checkin_deadline": reservation.CheckinDeadline.UTC(),
+			}
+		}(),
 	})
 }
 

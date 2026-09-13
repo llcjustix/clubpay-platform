@@ -1,7 +1,10 @@
 package httpapi
 
 import (
+	"crypto/rand"
 	"errors"
+	"fmt"
+	"math/big"
 	"net/http"
 	"strings"
 	"time"
@@ -32,7 +35,7 @@ func (s *Server) handleMobileReservations(w http.ResponseWriter, r *http.Request
 	_, _ = s.db.Exec(r.Context(), `UPDATE mobile_reservations
 SET status='expired',updated_at=now()
 WHERE status='confirmed' AND starts_at + interval '15 minutes' < now()`)
-	rows, err := s.queryMaps(r.Context(), `SELECT r.id::text,r.status,r.starts_at,
+	rows, err := s.queryMaps(r.Context(), `SELECT r.id::text,r.pc_ref_id::text,r.status,r.entry_code,r.starts_at,
  r.starts_at + make_interval(mins => r.duration_minutes) AS ends_at,
  r.starts_at - interval '30 minutes' AS held_from,
  r.starts_at + interval '15 minutes' AS checkin_deadline,
@@ -146,9 +149,14 @@ WHERE pc_ref_id=$1 AND status='accepted' AND (planned_ends_at IS NULL OR planned
 		writeError(w, http.StatusConflict, "pc_busy_for_reservation")
 		return
 	}
+	entryCode, err := newReservationEntryCode()
+	if err != nil {
+		mobileInternal(w)
+		return
+	}
 	var id string
-	err = tx.QueryRow(r.Context(), `INSERT INTO mobile_reservations(player_id,club_id,pc_ref_id,starts_at,duration_minutes)
-VALUES($1,$2::uuid,$3::uuid,$4,$5) RETURNING id::text`, p.ID, clubID, req.PCID, start, durationMinutes).Scan(&id)
+	err = tx.QueryRow(r.Context(), `INSERT INTO mobile_reservations(player_id,club_id,pc_ref_id,starts_at,duration_minutes,entry_code)
+VALUES($1,$2::uuid,$3::uuid,$4,$5,$6) RETURNING id::text`, p.ID, clubID, req.PCID, start, durationMinutes, entryCode).Scan(&id)
 	if err != nil {
 		mobileInternal(w)
 		return
@@ -163,12 +171,118 @@ VALUES($1,$2::uuid,$3::uuid,$4,$5) RETURNING id::text`, p.ID, clubID, req.PCID, 
 	}
 	writeJSON(w, http.StatusCreated, map[string]any{
 		"reservation": map[string]any{
-			"id": id, "status": "confirmed", "club_name": clubName, "zone_name": zoneName, "pc_label": label,
+			"id": id, "pc_id": req.PCID, "status": "confirmed", "entry_code": entryCode, "club_name": clubName, "zone_name": zoneName, "pc_label": label,
 			"starts_at": start, "ends_at": start.Add(time.Duration(durationMinutes) * time.Minute),
 			"held_from": start.Add(-reservationLeadTime), "checkin_deadline": start.Add(reservationArrivalWindow),
 			"duration_hours": req.DurationHours,
 		},
 	})
+}
+
+func newReservationEntryCode() (string, error) {
+	n, err := rand.Int(rand.Reader, big.NewInt(1000000))
+	if err != nil {
+		return "", err
+	}
+	return fmt.Sprintf("%06d", n.Int64()), nil
+}
+
+func (s *Server) handleMobileReservationReschedule(w http.ResponseWriter, r *http.Request) {
+	p, ok := s.requireMobile(w, r)
+	if !ok {
+		return
+	}
+	id := strings.TrimSpace(r.PathValue("reservation_id"))
+	var req struct {
+		StartsAt      string `json:"starts_at"`
+		DurationHours int    `json:"duration_hours"`
+	}
+	if id == "" || !mobileDecode(w, r, &req) {
+		if id == "" {
+			writeError(w, http.StatusBadRequest, "reservation_id_required")
+		}
+		return
+	}
+	start, err := time.Parse(time.RFC3339, req.StartsAt)
+	if err != nil || req.DurationHours < 1 || req.DurationHours > 24 {
+		writeError(w, http.StatusBadRequest, "invalid_reservation")
+		return
+	}
+	start = start.UTC()
+	if start.Before(time.Now().UTC().Add(reservationLeadTime)) || start.After(time.Now().UTC().Add(reservationMaxAhead)) {
+		writeError(w, http.StatusBadRequest, "reservation_start_out_of_range")
+		return
+	}
+	tx, err := s.db.Begin(r.Context())
+	if err != nil {
+		mobileInternal(w)
+		return
+	}
+	defer tx.Rollback(r.Context())
+	var pcID, clubID, clubName, zoneName, label, entryCode string
+	err = tx.QueryRow(r.Context(), `SELECT r.pc_ref_id::text,r.club_id::text,c.name,z.name,p.label,r.entry_code
+FROM mobile_reservations r JOIN clubs c ON c.id=r.club_id JOIN pc_refs p ON p.id=r.pc_ref_id JOIN zones z ON z.id=p.zone_id
+WHERE r.id=$1::uuid AND r.player_id=$2 AND r.status='confirmed' AND r.starts_at>now()+interval '30 minutes'
+FOR UPDATE OF r`, id, p.ID).Scan(&pcID, &clubID, &clubName, &zoneName, &label, &entryCode)
+	if errors.Is(err, pgx.ErrNoRows) {
+		writeError(w, http.StatusConflict, "reservation_cannot_be_cancelled")
+		return
+	}
+	if err != nil {
+		mobileInternal(w)
+		return
+	}
+	if _, err = tx.Exec(r.Context(), `SELECT pg_advisory_xact_lock(hashtext($1::text))`, pcID); err != nil {
+		mobileInternal(w)
+		return
+	}
+	minutes := req.DurationHours * 60
+	windowStart := start.Add(-reservationLeadTime)
+	windowEnd := start.Add(time.Duration(minutes)*time.Minute + reservationArrivalWindow)
+	var conflict bool
+	err = tx.QueryRow(r.Context(), `SELECT EXISTS(SELECT 1 FROM mobile_reservations
+WHERE pc_ref_id=$1::uuid AND id<>$2::uuid AND status IN ('confirmed','checked_in')
+  AND starts_at - interval '30 minutes' < $4
+  AND starts_at + make_interval(mins => duration_minutes + 15) > $3)`, pcID, id, windowStart, windowEnd).Scan(&conflict)
+	if err != nil {
+		mobileInternal(w)
+		return
+	}
+	if conflict {
+		writeError(w, http.StatusConflict, "pc_already_reserved")
+		return
+	}
+	var busy bool
+	err = tx.QueryRow(r.Context(), `SELECT EXISTS(SELECT 1 FROM game_access_grants
+WHERE pc_ref_id=$1::uuid AND status='accepted' AND (planned_ends_at IS NULL OR planned_ends_at > $2))`, pcID, windowStart).Scan(&busy)
+	if err != nil {
+		mobileInternal(w)
+		return
+	}
+	if busy {
+		writeError(w, http.StatusConflict, "pc_busy_for_reservation")
+		return
+	}
+	_, err = tx.Exec(r.Context(), `UPDATE mobile_reservations SET starts_at=$3,duration_minutes=$4,updated_at=now() WHERE id=$1::uuid AND player_id=$2`, id, p.ID, start, minutes)
+	if err != nil {
+		mobileInternal(w)
+		return
+	}
+	if err = mobileAudit(r.Context(), tx, "mobile_reservation_rescheduled", id); err != nil {
+		mobileInternal(w)
+		return
+	}
+	if err = tx.Commit(r.Context()); err != nil {
+		mobileInternal(w)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"reservation": map[string]any{
+		"id": id, "pc_id": pcID, "status": "confirmed", "entry_code": entryCode,
+		"club_name": clubName, "zone_name": zoneName, "pc_label": label,
+		"starts_at": start, "ends_at": start.Add(time.Duration(minutes) * time.Minute),
+		"held_from": start.Add(-reservationLeadTime), "checkin_deadline": start.Add(reservationArrivalWindow),
+		"duration_hours": req.DurationHours,
+	}})
 }
 
 func (s *Server) handleMobileReservationCancel(w http.ResponseWriter, r *http.Request) {

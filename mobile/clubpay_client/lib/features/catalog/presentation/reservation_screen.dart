@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:intl/intl.dart';
+import 'package:go_router/go_router.dart';
 
 import '../../../core/club_theme.dart';
 import '../../../core/providers.dart';
@@ -17,23 +18,31 @@ class ReservationScreen extends ConsumerStatefulWidget {
     required this.clubName,
     required this.zoneName,
     required this.pcLabel,
+    this.reservation,
   });
   final String pcID, clubName, zoneName, pcLabel;
+  final MobileReservation? reservation;
   @override
   ConsumerState<ReservationScreen> createState() => _ReservationScreenState();
 }
 
 class _ReservationScreenState extends ConsumerState<ReservationScreen> {
   late DateTime _startsAt;
-  final _hours = TextEditingController(text: '2');
+  late final TextEditingController _hours;
   bool _saving = false;
   MobileReservation? _created;
+
+  bool get _editing => widget.reservation != null;
 
   @override
   void initState() {
     super.initState();
+    final reservation = widget.reservation;
     final now = DateTime.now().add(const Duration(minutes: 30));
-    _startsAt = DateTime(now.year, now.month, now.day, now.hour + 1);
+    _startsAt =
+        reservation?.startsAt ??
+        DateTime(now.year, now.month, now.day, now.hour + 1);
+    _hours = TextEditingController(text: '${reservation?.durationHours ?? 2}');
   }
 
   @override
@@ -71,7 +80,7 @@ class _ReservationScreenState extends ConsumerState<ReservationScreen> {
     );
   }
 
-  Future<void> _create() async {
+  Future<void> _save() async {
     final hours = int.tryParse(_hours.text.trim());
     if (hours == null || hours < 1 || hours > 24) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -89,16 +98,25 @@ class _ReservationScreenState extends ConsumerState<ReservationScreen> {
     }
     setState(() => _saving = true);
     try {
-      final reservation = await ref
-          .read(clubCatalogRepositoryProvider)
-          .createReservation(
-            pcID: widget.pcID,
-            startsAt: _startsAt,
-            durationHours: hours,
-          );
+      final repository = ref.read(clubCatalogRepositoryProvider);
+      final reservation = _editing
+          ? await repository.rescheduleReservation(
+              id: widget.reservation!.id,
+              startsAt: _startsAt,
+              durationHours: hours,
+            )
+          : await repository.createReservation(
+              pcID: widget.pcID,
+              startsAt: _startsAt,
+              durationHours: hours,
+            );
       ref
           .read(analyticsProvider)
-          .track('reservation_created', screen: 'reservation');
+          .track(
+            _editing ? 'reservation_rescheduled' : 'reservation_created',
+            screen: 'reservation',
+          );
+      ref.read(catalogRevisionProvider.notifier).bump();
       if (mounted) setState(() => _created = reservation);
     } catch (error) {
       if (mounted) showFailure(context, error);
@@ -109,7 +127,9 @@ class _ReservationScreenState extends ConsumerState<ReservationScreen> {
 
   @override
   Widget build(BuildContext context) => AppPage(
-    title: _created == null ? 'Забронировать ПК' : 'Бронь оформлена',
+    title: _created != null
+        ? (_editing ? 'Бронь перенесена' : 'Бронь оформлена')
+        : (_editing ? 'Перенести бронь' : 'Забронировать ПК'),
     children: [
       if (_created != null)
         _confirmation(_created!)
@@ -158,16 +178,16 @@ class _ReservationScreenState extends ConsumerState<ReservationScreen> {
             ),
             SizedBox(height: 10),
             Text(
-              'После начала у вас будет 15 минут, чтобы войти. Если не прийти, бронь отменится и ПК снова станет свободным.',
+              'С начала брони у вас будет 15 минут, чтобы ввести код на ПК. Если не прийти, бронь отменится и ПК снова станет свободным.',
               style: TextStyle(color: ClubColors.muted),
             ),
           ],
         ),
         ActionButton(
-          label: 'Забронировать',
+          label: _editing ? 'Перенести бронь' : 'Забронировать',
           icon: CupertinoIcons.calendar_badge_plus,
           busy: _saving,
-          onPressed: _create,
+          onPressed: _save,
         ),
       ],
     ],
@@ -192,6 +212,8 @@ class _ReservationScreenState extends ConsumerState<ReservationScreen> {
       Text(
         'ПК будет отмечен как занятый с ${DateFormat('HH:mm').format(item.heldFrom)}. Введите код на ПК до ${DateFormat('HH:mm').format(item.checkinDeadline)}, чтобы начать игру.',
       ),
+      const SizedBox(height: 18),
+      ActionButton(label: 'К брони', onPressed: () => context.go('/home')),
     ],
   );
 }

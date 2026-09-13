@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import '../features/auth/presentation/auth_screen.dart';
 import '../features/catalog/presentation/club_browser_screen.dart';
+import '../features/catalog/domain/club_catalog.dart';
 import '../features/catalog/presentation/reservation_screen.dart';
 import '../features/catalog/presentation/club_map_screen.dart';
 import '../features/profile/presentation/profile_screen.dart';
@@ -78,9 +79,24 @@ final routerProvider = Provider<GoRouter>((ref) {
         path: '/reservation/:pcId',
         builder: (_, s) => ReservationScreen(
           pcID: s.pathParameters['pcId']!,
-          clubName: s.uri.queryParameters['club'] ?? '',
-          zoneName: s.uri.queryParameters['zone'] ?? '',
-          pcLabel: s.uri.queryParameters['pc'] ?? '',
+          clubName:
+              s.uri.queryParameters['club'] ??
+              (s.extra is MobileReservation
+                  ? (s.extra as MobileReservation).clubName
+                  : ''),
+          zoneName:
+              s.uri.queryParameters['zone'] ??
+              (s.extra is MobileReservation
+                  ? (s.extra as MobileReservation).zoneName
+                  : ''),
+          pcLabel:
+              s.uri.queryParameters['pc'] ??
+              (s.extra is MobileReservation
+                  ? (s.extra as MobileReservation).pcLabel
+                  : ''),
+          reservation: s.extra is MobileReservation
+              ? s.extra as MobileReservation
+              : null,
         ),
       ),
       GoRoute(

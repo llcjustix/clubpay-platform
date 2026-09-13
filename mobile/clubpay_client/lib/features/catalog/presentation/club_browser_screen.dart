@@ -26,197 +26,310 @@ class ClubBrowserScreen extends ConsumerStatefulWidget {
 class _ClubBrowserScreenState extends ConsumerState<ClubBrowserScreen> {
   final _search = TextEditingController();
   Timer? _debounce;
+  Timer? _refreshTimer;
   late Future<List<ClubSearchResult>> _clubs;
   late Future<List<MobileReservation>> _reservations;
   bool _searchOpen = false;
   bool _hasFavorites = false;
+  int _catalogRevision = -1;
 
   @override
   void initState() {
     super.initState();
     _clubs = ref.read(clubCatalogRepositoryProvider).search('');
-    _reservations = ref.read(clubCatalogRepositoryProvider).reservations();
+    _reservations = _loadReservations();
+    _refreshTimer = Timer.periodic(const Duration(seconds: 15), (_) => _load());
   }
 
   @override
   void dispose() {
     _debounce?.cancel();
+    _refreshTimer?.cancel();
     _search.dispose();
     super.dispose();
   }
 
-  void _load() => setState(() {
-    _clubs = ref.read(clubCatalogRepositoryProvider).search(_search.text);
-    _reservations = ref.read(clubCatalogRepositoryProvider).reservations();
-  });
+  void _load() {
+    if (!mounted) return;
+    setState(() {
+      _clubs = ref.read(clubCatalogRepositoryProvider).search(_search.text);
+      _reservations = _loadReservations();
+    });
+  }
 
   void _track(String event) {
     ref.read(analyticsProvider).track(event, screen: 'club_catalog');
   }
 
-  @override
-  Widget build(BuildContext context) => AppPage(
-    title: context.l.appName,
-    largeTitle: true,
-    actions: [
-      IconButton(
-        tooltip: 'Поддержка',
-        onPressed: () {
-          _track('support_opened');
-          context.push('/support');
-        },
-        icon: const Icon(CupertinoIcons.chat_bubble_text),
-      ),
-      IconButton(
-        tooltip: 'Поиск клубов',
-        onPressed: () {
-          _track('club_search_opened');
-          setState(() => _searchOpen = !_searchOpen);
-        },
-        icon: const Icon(CupertinoIcons.search),
-      ),
-      IconButton(
-        tooltip: context.l.howItWorks,
-        onPressed: () {
-          _track('how_it_works_opened');
-          showClubGuide(context);
-        },
-        icon: const Icon(CupertinoIcons.question_circle),
-      ),
-    ],
-    bottom: ClubNavigation(profile: false, showFavorites: _hasFavorites),
-    children: [
-      SectionCaption(context.l.clubSearchTitle),
-      Align(
-        alignment: Alignment.centerLeft,
-        child: TextButton.icon(
-          onPressed: () {
-            _track('club_map_opened');
-            context.push('/clubs-map');
-          },
-          icon: const Icon(CupertinoIcons.map),
-          label: const Text('Открыть карту клубов'),
-        ),
-      ),
-      FutureBuilder<List<MobileReservation>>(
-        future: _reservations,
-        builder: (context, snapshot) {
-          final now = DateTime.now();
-          final reservation = (snapshot.data ?? const <MobileReservation>[])
-              .cast<MobileReservation?>()
-              .firstWhere(
-                (item) =>
-                    item != null &&
-                    item.status == 'confirmed' &&
-                    item.checkinDeadline.isAfter(now),
-                orElse: () => null,
-              );
-          if (reservation == null) return const SizedBox.shrink();
-          final held = !reservation.heldFrom.isAfter(now);
-          return Padding(
-            padding: const EdgeInsets.only(bottom: 16),
-            child: InfoCard(
-              children: [
-                Text(
-                  'Ваша бронь · ${reservation.clubName}',
-                  style: Theme.of(context).textTheme.titleMedium,
-                ),
-                const SizedBox(height: 6),
-                Text(
-                  '${reservation.pcLabel} · ${_reservationDate(reservation.startsAt)}',
-                  style: const TextStyle(color: ClubColors.muted),
-                ),
-                const SizedBox(height: 6),
-                Text(
-                  held
-                      ? 'ПК уже зарезервирован для вас. У вас 15 минут после начала, чтобы прийти.'
-                      : 'ПК будет отмечен как забронированный за 30 минут до начала.',
-                  style: const TextStyle(color: ClubColors.muted),
-                ),
-              ],
-            ),
-          );
-        },
-      ),
-      if (_searchOpen) ...[
-        TextField(
-          controller: _search,
-          autofocus: true,
-          textInputAction: TextInputAction.search,
-          onChanged: (_) {
-            _debounce?.cancel();
-            _debounce = Timer(const Duration(milliseconds: 250), _load);
-          },
-          onSubmitted: (_) => _load(),
-          decoration: InputDecoration(
-            hintText: context.l.clubSearchHint,
-            prefixIcon: const Icon(CupertinoIcons.search),
-            suffixIcon: IconButton(
-              onPressed: () {
-                _search.clear();
-                _load();
-                setState(() => _searchOpen = false);
-              },
-              icon: const Icon(CupertinoIcons.clear_circled_solid),
-            ),
-          ),
-        ),
-        const SizedBox(height: 18),
-      ],
-      FutureBuilder<List<ClubSearchResult>>(
-        future: _clubs,
-        builder: (context, snapshot) {
-          if (snapshot.connectionState != ConnectionState.done) {
-            return const Padding(
-              padding: EdgeInsets.all(32),
-              child: Center(child: CupertinoActivityIndicator()),
-            );
-          }
-          if (snapshot.hasError) {
-            return SettingsGroup(
-              children: [
-                SettingsRow(
-                  icon: CupertinoIcons.exclamationmark_triangle,
-                  color: ClubColors.orange,
-                  title: errorLabel(context, snapshot.error!),
-                  onTap: _load,
-                ),
-              ],
-            );
-          }
-          final clubs = snapshot.data ?? const <ClubSearchResult>[];
-          final hasFavorites = clubs.any((club) => club.favorite);
-          if (hasFavorites != _hasFavorites) {
-            WidgetsBinding.instance.addPostFrameCallback((_) {
-              if (mounted) setState(() => _hasFavorites = hasFavorites);
-            });
-          }
-          if (clubs.isEmpty) {
-            return Padding(
-              padding: const EdgeInsets.symmetric(vertical: 36, horizontal: 16),
-              child: Text(
-                context.l.clubSearchEmpty,
-                textAlign: TextAlign.center,
+  // The catalog remains usable when the optional reservation endpoint is
+  // temporarily unavailable; the next revision/poll retries it automatically.
+  Future<List<MobileReservation>> _loadReservations() async {
+    try {
+      return await ref.read(clubCatalogRepositoryProvider).reservations();
+    } catch (_) {
+      return const <MobileReservation>[];
+    }
+  }
+
+  Future<void> _openReservation(MobileReservation reservation) async {
+    await showModalBottomSheet<void>(
+      context: context,
+      builder: (sheet) => SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(20, 20, 20, 28),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Text('Ваша бронь', style: Theme.of(context).textTheme.titleLarge),
+              const SizedBox(height: 8),
+              Text(
+                '${reservation.clubName} · ${reservation.pcLabel}',
                 style: const TextStyle(color: ClubColors.muted),
               ),
-            );
-          }
-          return SettingsGroup(
-            children: [
-              for (final club in clubs)
-                ClubCatalogRow(
-                  club: club,
-                  onTap: () {
-                    _track('club_opened');
-                    context.push('/clubs/${club.id}');
-                  },
+              const SizedBox(height: 20),
+              ListTile(
+                enabled: DateTime.now().isBefore(reservation.heldFrom),
+                leading: const Icon(CupertinoIcons.calendar),
+                title: const Text('Перенести бронь'),
+                subtitle: const Text('Изменить время и длительность'),
+                onTap: () {
+                  Navigator.pop(sheet);
+                  context.push(
+                    '/reservation/${reservation.pcID}',
+                    extra: reservation,
+                  );
+                },
+              ),
+              ListTile(
+                enabled: DateTime.now().isBefore(reservation.heldFrom),
+                leading: const Icon(
+                  CupertinoIcons.xmark_circle,
+                  color: ClubColors.red,
+                ),
+                title: const Text(
+                  'Отменить бронь',
+                  style: TextStyle(color: ClubColors.red),
+                ),
+                onTap: () async {
+                  Navigator.pop(sheet);
+                  try {
+                    await ref
+                        .read(clubCatalogRepositoryProvider)
+                        .cancelReservation(reservation.id);
+                    ref
+                        .read(analyticsProvider)
+                        .track('reservation_cancelled', screen: 'club_catalog');
+                    ref.read(catalogRevisionProvider.notifier).bump();
+                    if (mounted) {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(content: Text('Бронь отменена.')),
+                      );
+                    }
+                  } catch (error) {
+                    if (mounted) showFailure(context, error);
+                  }
+                },
+              ),
+              if (!DateTime.now().isBefore(reservation.heldFrom))
+                const Padding(
+                  padding: EdgeInsets.only(top: 8),
+                  child: Text(
+                    'В течение 30 минут до начала бронь нельзя изменить или отменить.',
+                    style: TextStyle(color: ClubColors.muted),
+                  ),
                 ),
             ],
-          );
-        },
+          ),
+        ),
       ),
-    ],
-  );
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final revision = ref.watch(catalogRevisionProvider);
+    if (revision != _catalogRevision) {
+      _catalogRevision = revision;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) {
+          _load();
+        }
+      });
+    }
+    return AppPage(
+      title: context.l.appName,
+      largeTitle: true,
+      actions: [
+        IconButton(
+          tooltip: 'Поддержка',
+          onPressed: () {
+            _track('support_opened');
+            context.push('/support');
+          },
+          icon: const Icon(CupertinoIcons.chat_bubble_text),
+        ),
+        IconButton(
+          tooltip: 'Поиск клубов',
+          onPressed: () {
+            _track('club_search_opened');
+            setState(() => _searchOpen = !_searchOpen);
+          },
+          icon: const Icon(CupertinoIcons.search),
+        ),
+        IconButton(
+          tooltip: context.l.howItWorks,
+          onPressed: () {
+            _track('how_it_works_opened');
+            showClubGuide(context);
+          },
+          icon: const Icon(CupertinoIcons.question_circle),
+        ),
+      ],
+      bottom: ClubNavigation(profile: false, showFavorites: _hasFavorites),
+      children: [
+        SectionCaption(context.l.clubSearchTitle),
+        Align(
+          alignment: Alignment.centerLeft,
+          child: TextButton.icon(
+            onPressed: () {
+              _track('club_map_opened');
+              context.push('/clubs-map');
+            },
+            icon: const Icon(CupertinoIcons.map),
+            label: const Text('Открыть карту клубов'),
+          ),
+        ),
+        FutureBuilder<List<MobileReservation>>(
+          future: _reservations,
+          builder: (context, snapshot) {
+            final now = DateTime.now();
+            final reservation = (snapshot.data ?? const <MobileReservation>[])
+                .cast<MobileReservation?>()
+                .firstWhere(
+                  (item) =>
+                      item != null &&
+                      item.status == 'confirmed' &&
+                      item.checkinDeadline.isAfter(now),
+                  orElse: () => null,
+                );
+            if (reservation == null) return const SizedBox.shrink();
+            final held = !reservation.heldFrom.isAfter(now);
+            return Padding(
+              padding: const EdgeInsets.only(bottom: 16),
+              child: Material(
+                color: Colors.transparent,
+                child: InkWell(
+                  borderRadius: BorderRadius.circular(24),
+                  onTap: () => _openReservation(reservation),
+                  child: InfoCard(
+                    children: [
+                      Text(
+                        'Ваша бронь · ${reservation.clubName}',
+                        style: Theme.of(context).textTheme.titleMedium,
+                      ),
+                      const SizedBox(height: 6),
+                      Text(
+                        '${reservation.pcLabel} · ${_reservationDate(reservation.startsAt)}',
+                        style: const TextStyle(color: ClubColors.muted),
+                      ),
+                      const SizedBox(height: 6),
+                      Text(
+                        held
+                            ? 'ПК зарезервирован для вас. Введите код на ПК до ${_time(reservation.checkinDeadline)}.'
+                            : 'ПК будет отмечен как забронированный за 30 минут до начала.',
+                        style: const TextStyle(color: ClubColors.muted),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            );
+          },
+        ),
+        if (_searchOpen) ...[
+          TextField(
+            controller: _search,
+            autofocus: true,
+            textInputAction: TextInputAction.search,
+            onChanged: (_) {
+              _debounce?.cancel();
+              _debounce = Timer(const Duration(milliseconds: 250), _load);
+            },
+            onSubmitted: (_) => _load(),
+            decoration: InputDecoration(
+              hintText: context.l.clubSearchHint,
+              prefixIcon: const Icon(CupertinoIcons.search),
+              suffixIcon: IconButton(
+                onPressed: () {
+                  _search.clear();
+                  _load();
+                  setState(() => _searchOpen = false);
+                },
+                icon: const Icon(CupertinoIcons.clear_circled_solid),
+              ),
+            ),
+          ),
+          const SizedBox(height: 18),
+        ],
+        FutureBuilder<List<ClubSearchResult>>(
+          future: _clubs,
+          builder: (context, snapshot) {
+            if (snapshot.connectionState != ConnectionState.done) {
+              return const Padding(
+                padding: EdgeInsets.all(32),
+                child: Center(child: CupertinoActivityIndicator()),
+              );
+            }
+            if (snapshot.hasError) {
+              return SettingsGroup(
+                children: [
+                  SettingsRow(
+                    icon: CupertinoIcons.exclamationmark_triangle,
+                    color: ClubColors.orange,
+                    title: errorLabel(context, snapshot.error!),
+                    onTap: _load,
+                  ),
+                ],
+              );
+            }
+            final clubs = snapshot.data ?? const <ClubSearchResult>[];
+            final hasFavorites = clubs.any((club) => club.favorite);
+            if (hasFavorites != _hasFavorites) {
+              WidgetsBinding.instance.addPostFrameCallback((_) {
+                if (mounted) setState(() => _hasFavorites = hasFavorites);
+              });
+            }
+            if (clubs.isEmpty) {
+              return Padding(
+                padding: const EdgeInsets.symmetric(
+                  vertical: 36,
+                  horizontal: 16,
+                ),
+                child: Text(
+                  context.l.clubSearchEmpty,
+                  textAlign: TextAlign.center,
+                  style: const TextStyle(color: ClubColors.muted),
+                ),
+              );
+            }
+            return SettingsGroup(
+              children: [
+                for (final club in clubs)
+                  ClubCatalogRow(
+                    club: club,
+                    onTap: () {
+                      _track('club_opened');
+                      context.push('/clubs/${club.id}');
+                    },
+                  ),
+              ],
+            );
+          },
+        ),
+      ],
+    );
+  }
 }
 
 class ClubDetailScreen extends ConsumerStatefulWidget {
@@ -228,10 +341,21 @@ class ClubDetailScreen extends ConsumerStatefulWidget {
 
 class _ClubDetailScreenState extends ConsumerState<ClubDetailScreen> {
   late Future<ClubCatalog> _club;
+  Timer? _refreshTimer;
   @override
   void initState() {
     super.initState();
     _club = ref.read(clubCatalogRepositoryProvider).club(widget.clubId);
+    _refreshTimer = Timer.periodic(
+      const Duration(seconds: 15),
+      (_) => _reload(),
+    );
+  }
+
+  @override
+  void dispose() {
+    _refreshTimer?.cancel();
+    super.dispose();
   }
 
   void _reload() => setState(
@@ -243,6 +367,7 @@ class _ClubDetailScreenState extends ConsumerState<ClubDetailScreen> {
       await ref
           .read(clubCatalogRepositoryProvider)
           .toggleFavorite(club.id, favorite: club.favorite);
+      ref.read(catalogRevisionProvider.notifier).bump();
       if (mounted) _reload();
     } catch (error) {
       if (mounted) showFailure(context, error);
@@ -274,13 +399,6 @@ class _ClubDetailScreenState extends ConsumerState<ClubDetailScreen> {
       return AppPage(
         title: title,
         actions: [
-          if (snapshot.data?.latitude != null &&
-              snapshot.data?.longitude != null)
-            IconButton(
-              tooltip: 'Открыть карту',
-              onPressed: () => _openMaps(snapshot.data!),
-              icon: const Icon(CupertinoIcons.map),
-            ),
           if (snapshot.data != null)
             IconButton(
               tooltip: snapshot.data!.favorite
@@ -429,47 +547,6 @@ class _ClubDetailScreenState extends ConsumerState<ClubDetailScreen> {
       ),
     );
   }
-
-  Future<void> _openMaps(ClubCatalog club) async {
-    final lat = club.latitude!;
-    final lon = club.longitude!;
-    await showModalBottomSheet<void>(
-      context: context,
-      builder: (sheetContext) => SafeArea(
-        child: Padding(
-          padding: const EdgeInsets.all(20),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Text(
-                'Открыть ${club.name}',
-                style: Theme.of(context).textTheme.titleLarge,
-              ),
-              const SizedBox(height: 12),
-              ListTile(
-                leading: const Icon(CupertinoIcons.map),
-                title: const Text('Яндекс Карты'),
-                onTap: () async {
-                  Navigator.pop(sheetContext);
-                  await openExternal(
-                    'https://yandex.com/maps/?pt=$lon,$lat&z=17&l=map',
-                  );
-                },
-              ),
-              ListTile(
-                leading: const Icon(CupertinoIcons.location_solid),
-                title: const Text('2ГИС'),
-                onTap: () async {
-                  Navigator.pop(sheetContext);
-                  await openExternal('https://2gis.uz/geo/$lon,$lat');
-                },
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
 }
 
 String _statusLabel(BuildContext context, String status) => switch (status) {
@@ -570,6 +647,9 @@ class ClubCatalogRow extends StatelessWidget {
 String _reservationDate(DateTime value) =>
     '${value.day.toString().padLeft(2, '0')}.${value.month.toString().padLeft(2, '0')} · ${value.hour.toString().padLeft(2, '0')}:${value.minute.toString().padLeft(2, '0')}';
 
+String _time(DateTime value) =>
+    '${value.hour.toString().padLeft(2, '0')}:${value.minute.toString().padLeft(2, '0')}';
+
 String _pcSubtitle(BuildContext context, ClubComputer pc) {
   if (pc.status != 'reserved') return _statusLabel(context, pc.status);
   final when = pc.reservationStartsAt == null
@@ -586,6 +666,7 @@ class FavoritesScreen extends ConsumerStatefulWidget {
 
 class _FavoritesScreenState extends ConsumerState<FavoritesScreen> {
   late Future<List<ClubSearchResult>> _clubs;
+  int _catalogRevision = -1;
   @override
   void initState() {
     super.initState();
@@ -596,57 +677,66 @@ class _FavoritesScreenState extends ConsumerState<FavoritesScreen> {
     () => _clubs = ref.read(clubCatalogRepositoryProvider).favorites(),
   );
   @override
-  Widget build(BuildContext context) => AppPage(
-    title: 'Избранное',
-    actions: [
-      IconButton(
-        tooltip: context.l.refresh,
-        icon: const Icon(CupertinoIcons.arrow_clockwise),
-        onPressed: _reload,
+  Widget build(BuildContext context) {
+    final revision = ref.watch(catalogRevisionProvider);
+    if (revision != _catalogRevision) {
+      _catalogRevision = revision;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) _reload();
+      });
+    }
+    return AppPage(
+      title: 'Избранное',
+      actions: [
+        IconButton(
+          tooltip: context.l.refresh,
+          icon: const Icon(CupertinoIcons.arrow_clockwise),
+          onPressed: _reload,
+        ),
+      ],
+      bottom: const ClubNavigation(
+        profile: false,
+        showFavorites: true,
+        favorites: true,
       ),
-    ],
-    bottom: const ClubNavigation(
-      profile: false,
-      showFavorites: true,
-      favorites: true,
-    ),
-    children: [
-      FutureBuilder<List<ClubSearchResult>>(
-        future: _clubs,
-        builder: (context, snapshot) {
-          if (snapshot.connectionState != ConnectionState.done) {
-            return const Padding(
-              padding: EdgeInsets.all(32),
-              child: Center(child: CupertinoActivityIndicator()),
-            );
-          }
-          if (snapshot.hasError) {
-            return InfoCard(
-              children: [Text(errorLabel(context, snapshot.error!))],
-            );
-          }
-          final clubs = snapshot.data ?? const <ClubSearchResult>[];
-          if (clubs.isEmpty) {
-            return const InfoCard(
+      children: [
+        FutureBuilder<List<ClubSearchResult>>(
+          future: _clubs,
+          builder: (context, snapshot) {
+            if (snapshot.connectionState != ConnectionState.done) {
+              return const Padding(
+                padding: EdgeInsets.all(32),
+                child: Center(child: CupertinoActivityIndicator()),
+              );
+            }
+            if (snapshot.hasError) {
+              return InfoCard(
+                children: [Text(errorLabel(context, snapshot.error!))],
+              );
+            }
+            final clubs = snapshot.data ?? const <ClubSearchResult>[];
+            if (clubs.isEmpty) {
+              return const InfoCard(
+                children: [
+                  Text(
+                    'Добавьте клуб в избранное — он появится здесь.',
+                    style: TextStyle(color: ClubColors.muted),
+                  ),
+                ],
+              );
+            }
+            return SettingsGroup(
               children: [
-                Text(
-                  'Добавьте клуб в избранное — он появится здесь.',
-                  style: TextStyle(color: ClubColors.muted),
-                ),
+                for (final club in clubs)
+                  ClubCatalogRow(
+                    club: club,
+                    onTap: () => context.push('/clubs/${club.id}'),
+                  ),
               ],
             );
-          }
-          return SettingsGroup(
-            children: [
-              for (final club in clubs)
-                ClubCatalogRow(
-                  club: club,
-                  onTap: () => context.push('/clubs/${club.id}'),
-                ),
-            ],
-          );
-        },
-      ),
-    ],
-  );
+          },
+        ),
+      ],
+    );
+  }
 }
