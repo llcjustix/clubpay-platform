@@ -487,7 +487,7 @@ func (s *Server) redeemPlayerBalanceToPC(ctx context.Context, req redeemPlayerBa
 		return nil, err
 	}
 	if !allowed {
-		return nil, fmt.Errorf("reservation check-in is required before starting this PC")
+		return nil, fmt.Errorf("start the reservation in ClubPay before starting this PC")
 	}
 	if !canUseQRForSession(pcStatus, qrType) {
 		if isSessionExtensionState(pcStatus) && qrType != "session_extend" {

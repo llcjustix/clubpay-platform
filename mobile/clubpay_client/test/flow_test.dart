@@ -158,9 +158,6 @@ void main() {
     expect(find.text('Standard · 10000 сум/ч'), findsOneWidget);
     await tester.tap(find.text('PC 07'));
     await tester.pumpAndSettle();
-    expect(find.text('Начать игру сейчас'), findsOneWidget);
-    await tester.tap(find.text('Начать игру сейчас'));
-    await tester.pumpAndSettle();
     expect(find.text('PC 07'), findsOneWidget);
     await tester.tap(find.text('Оплатить'));
     await tester.pumpAndSettle();

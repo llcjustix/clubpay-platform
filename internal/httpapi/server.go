@@ -3273,16 +3273,15 @@ WHERE status IN ('confirmed','checked_in') AND starts_at + interval '15 minutes'
 		qrURL = s.staticPCQRCodeURL(row.QRToken)
 	}
 	var reservation struct {
-		EntryCode       string
 		StartsAt        time.Time
 		CheckinDeadline time.Time
 	}
-	err = s.db.QueryRow(r.Context(), `SELECT entry_code,starts_at,starts_at + interval '15 minutes'
+	err = s.db.QueryRow(r.Context(), `SELECT starts_at,starts_at + interval '15 minutes'
 FROM mobile_reservations
 WHERE pc_ref_id=$1::uuid AND status IN ('confirmed','checked_in')
-  AND starts_at - interval '30 minutes' <= now()
+  AND starts_at - interval '15 minutes' <= now()
   AND starts_at + interval '15 minutes' >= now()
-ORDER BY starts_at ASC LIMIT 1`, row.PCID).Scan(&reservation.EntryCode, &reservation.StartsAt, &reservation.CheckinDeadline)
+ORDER BY starts_at ASC LIMIT 1`, row.PCID).Scan(&reservation.StartsAt, &reservation.CheckinDeadline)
 	reservationActive := err == nil
 	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
 		writeError(w, http.StatusInternalServerError, err.Error())
@@ -3308,7 +3307,6 @@ ORDER BY starts_at ASC LIMIT 1`, row.PCID).Scan(&reservation.EntryCode, &reserva
 				return nil
 			}
 			return map[string]any{
-				"entry_code":       reservation.EntryCode,
 				"starts_at":        reservation.StartsAt.UTC(),
 				"checkin_deadline": reservation.CheckinDeadline.UTC(),
 			}

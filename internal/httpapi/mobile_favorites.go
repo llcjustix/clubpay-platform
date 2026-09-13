@@ -21,7 +21,7 @@ func (s *Server) handleMobileFavorites(w http.ResponseWriter, r *http.Request) {
     JOIN zones z ON z.id=p.zone_id AND z.status='active'
     LEFT JOIN LATERAL (SELECT r.pc_ref_id FROM mobile_reservations r
       WHERE r.pc_ref_id=p.id AND r.status IN ('confirmed','checked_in')
-        AND r.starts_at-interval '30 minutes'<=now()
+        AND r.starts_at-interval '15 minutes'<=now()
         AND r.starts_at+make_interval(mins=>r.duration_minutes+15)>now() LIMIT 1) held ON true
     WHERE f.player_id=$1 AND c.status='active'
     GROUP BY c.id,c.name,c.address,c.latitude,c.longitude,c.controller_synced_at,f.created_at

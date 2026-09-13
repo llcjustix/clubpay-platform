@@ -132,10 +132,8 @@ class MobileReservation {
     required this.heldFrom,
     required this.checkinDeadline,
     required this.durationHours,
-    this.entryCode = '',
   });
   final String id, pcID, status, clubName, zoneName, pcLabel;
-  final String entryCode;
   final DateTime startsAt, endsAt, heldFrom, checkinDeadline;
   final int durationHours;
   factory MobileReservation.fromJson(Map<String, dynamic> json) =>
@@ -153,6 +151,5 @@ class MobileReservation {
           json['checkin_deadline'] as String,
         ).toLocal(),
         durationHours: (json['duration_hours'] as num).toInt(),
-        entryCode: json['entry_code'] as String? ?? '',
       );
 }

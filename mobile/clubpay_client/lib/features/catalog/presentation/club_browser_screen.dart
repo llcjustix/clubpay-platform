@@ -2,7 +2,6 @@ import 'dart:async';
 
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
@@ -129,15 +128,13 @@ class _ClubBrowserScreenState extends ConsumerState<ClubBrowserScreen> {
   }
 
   Future<void> _openReservation(MobileReservation reservation) async {
-    final code = TextEditingController();
-    var checkingIn = false;
-    try {
-      await showModalBottomSheet<void>(
+    var starting = false;
+    await showModalBottomSheet<void>(
         context: context,
         builder: (sheet) => StatefulBuilder(
           builder: (sheet, setSheetState) {
-            final canEnterCode =
-                !DateTime.now().isBefore(reservation.startsAt) &&
+            final canStart =
+                !DateTime.now().isBefore(reservation.heldFrom) &&
                 DateTime.now().isBefore(reservation.checkinDeadline);
             return SafeArea(
               child: Padding(
@@ -156,41 +153,25 @@ class _ClubBrowserScreenState extends ConsumerState<ClubBrowserScreen> {
                       style: const TextStyle(color: ClubColors.muted),
                     ),
                     const SizedBox(height: 20),
-                    if (canEnterCode) ...[
-                      const Text('Введите код с экрана ПК'),
-                      const SizedBox(height: 10),
-                      TextField(
-                        controller: code,
-                        autofocus: true,
-                        keyboardType: TextInputType.number,
-                        inputFormatters: [
-                          FilteringTextInputFormatter.digitsOnly,
-                          LengthLimitingTextInputFormatter(6),
-                        ],
-                        decoration: const InputDecoration(
-                          hintText: 'Шесть цифр',
-                          counterText: '',
-                        ),
-                        onChanged: (_) => setSheetState(() {}),
-                      ),
+                    if (canStart) ...[
+                      const Text('Вы на месте? Начните игру в ClubPay — затем выберите оплату или используйте уже оплаченное время.'),
+                      const SizedBox(height: 14),
                       ActionButton(
-                        label: 'Продолжить к запуску',
-                        busy: checkingIn,
-                        onPressed: checkingIn || code.text.length != 6
+                        label: 'Начать игру',
+                        icon: CupertinoIcons.play_fill,
+                        busy: starting,
+                        onPressed: starting
                             ? null
                             : () async {
-                                setSheetState(() => checkingIn = true);
+                                setSheetState(() => starting = true);
                                 try {
                                   final token = await ref
                                       .read(clubCatalogRepositoryProvider)
-                                      .checkInReservation(
-                                        id: reservation.id,
-                                        entryCode: code.text,
-                                      );
+                                      .startReservation(id: reservation.id);
                                   ref
                                       .read(analyticsProvider)
                                       .track(
-                                        'reservation_code_confirmed',
+                                        'reservation_started',
                                         screen: 'club_catalog',
                                       );
                                   ref
@@ -205,16 +186,16 @@ class _ClubBrowserScreenState extends ConsumerState<ClubBrowserScreen> {
                                   }
                                 } finally {
                                   if (sheet.mounted) {
-                                    setSheetState(() => checkingIn = false);
+                                    setSheetState(() => starting = false);
                                   }
                                 }
                               },
                       ),
                     ] else
                       Text(
-                        DateTime.now().isBefore(reservation.startsAt)
-                            ? 'Код появится на экране ПК в ${_time(reservation.startsAt)}. Тогда введите его здесь.'
-                            : 'Время ввода кода закончилось. Бронь больше недоступна.',
+                        DateTime.now().isBefore(reservation.heldFrom)
+                            ? 'Кнопка «Начать игру» станет доступна в ${_time(reservation.heldFrom)} — за 15 минут до начала брони.'
+                            : 'Время для начала игры закончилось. Бронь больше недоступна.',
                         style: const TextStyle(color: ClubColors.muted),
                       ),
                     const SizedBox(height: 14),
@@ -273,9 +254,6 @@ class _ClubBrowserScreenState extends ConsumerState<ClubBrowserScreen> {
           },
         ),
       );
-    } finally {
-      code.dispose();
-    }
   }
 
   @override
@@ -485,7 +463,6 @@ bool _sameReservations(
     if (left.id != right.id ||
         left.pcID != right.pcID ||
         left.status != right.status ||
-        left.entryCode != right.entryCode ||
         left.startsAt != right.startsAt ||
         left.endsAt != right.endsAt ||
         left.heldFrom != right.heldFrom ||
@@ -565,26 +542,18 @@ class _ClubDetailScreenState extends ConsumerState<ClubDetailScreen> {
         title: title,
         actions: [
           if (snapshot.data != null)
-            DecoratedBox(
-              decoration: BoxDecoration(
+            IconButton(
+              tooltip: snapshot.data!.favorite
+                  ? 'Убрать из избранного'
+                  : 'Добавить в избранное',
+              onPressed: () => _toggleFavorite(snapshot.data!),
+              icon: Icon(
+                snapshot.data!.favorite
+                    ? CupertinoIcons.heart_fill
+                    : CupertinoIcons.heart,
                 color: snapshot.data!.favorite
                     ? ClubColors.favorite
-                    : Colors.transparent,
-                shape: BoxShape.circle,
-              ),
-              child: IconButton(
-                tooltip: snapshot.data!.favorite
-                    ? 'Убрать из избранного'
-                    : 'Добавить в избранное',
-                onPressed: () => _toggleFavorite(snapshot.data!),
-                icon: Icon(
-                  snapshot.data!.favorite
-                      ? CupertinoIcons.heart_fill
-                      : CupertinoIcons.heart,
-                  color: snapshot.data!.favorite
-                      ? Colors.white
-                      : ClubColors.text,
-                ),
+                    : ClubColors.text,
               ),
             ),
           IconButton(
@@ -676,49 +645,13 @@ class _ClubDetailScreenState extends ConsumerState<ClubDetailScreen> {
     },
   );
 
-  Future<void> _selectPC(
+  void _selectPC(
     ClubCatalog club,
     ClubZone zone,
     ClubComputer pc,
   ) async {
     ref.read(analyticsProvider).track('pc_selected', screen: 'club_detail');
-    await showModalBottomSheet<void>(
-      context: context,
-      builder: (sheet) => SafeArea(
-        child: Padding(
-          padding: const EdgeInsets.all(20),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Text(pc.label, style: Theme.of(context).textTheme.titleLarge),
-              const SizedBox(height: 12),
-              ListTile(
-                leading: const Icon(CupertinoIcons.play_fill),
-                title: const Text('Начать игру сейчас'),
-                onTap: () {
-                  Navigator.pop(sheet);
-                  context.push('/computer/${pc.token}');
-                },
-              ),
-              ListTile(
-                leading: const Icon(CupertinoIcons.calendar_badge_plus),
-                title: const Text('Забронировать на другое время'),
-                subtitle: const Text('Выберите дату и сколько часов играть'),
-                onTap: () {
-                  Navigator.pop(sheet);
-                  ref
-                      .read(analyticsProvider)
-                      .track('reservation_opened', screen: 'club_detail');
-                  context.push(
-                    '/reservation/${pc.id}?club=${Uri.encodeComponent(club.name)}&zone=${Uri.encodeComponent(zone.name)}&pc=${Uri.encodeComponent(pc.label)}',
-                  );
-                },
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
+    context.push('/computer/${pc.token}');
   }
 }
 

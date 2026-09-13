@@ -14,7 +14,7 @@ import (
 )
 
 const (
-	reservationLeadTime      = 30 * time.Minute
+	reservationLeadTime      = 15 * time.Minute
 	reservationArrivalWindow = 15 * time.Minute
 	reservationMaxAhead      = 30 * 24 * time.Hour
 )
@@ -36,9 +36,9 @@ func (s *Server) handleMobileReservations(w http.ResponseWriter, r *http.Request
 	_, _ = s.db.Exec(r.Context(), `UPDATE mobile_reservations
 SET status='expired',updated_at=now()
 WHERE status IN ('confirmed','checked_in') AND starts_at + interval '15 minutes' < now()`)
-	rows, err := s.queryMaps(r.Context(), `SELECT r.id::text,r.pc_ref_id::text,r.status,r.entry_code,r.starts_at,
+	rows, err := s.queryMaps(r.Context(), `SELECT r.id::text,r.pc_ref_id::text,r.status,r.starts_at,
  r.starts_at + make_interval(mins => r.duration_minutes) AS ends_at,
- r.starts_at - interval '30 minutes' AS held_from,
+ r.starts_at - interval '15 minutes' AS held_from,
  r.starts_at + interval '15 minutes' AS checkin_deadline,
  r.duration_minutes/60 AS duration_hours,c.name AS club_name,z.name AS zone_name,p.label AS pc_label
 FROM mobile_reservations r
@@ -127,7 +127,7 @@ WHERE player_id=$1 AND status IN ('confirmed','checked_in')
 	var alreadyReserved bool
 	err = tx.QueryRow(r.Context(), `SELECT EXISTS(SELECT 1 FROM mobile_reservations
 WHERE pc_ref_id=$1 AND status IN ('confirmed','checked_in')
-  AND starts_at - interval '30 minutes' < $3
+  AND starts_at - interval '15 minutes' < $3
   AND starts_at + make_interval(mins => duration_minutes + 15) > $2)`, req.PCID, windowStart, windowEnd).Scan(&alreadyReserved)
 	if err != nil {
 		mobileInternal(w)
@@ -172,7 +172,7 @@ VALUES($1,$2::uuid,$3::uuid,$4,$5,$6) RETURNING id::text`, p.ID, clubID, req.PCI
 	}
 	writeJSON(w, http.StatusCreated, map[string]any{
 		"reservation": map[string]any{
-			"id": id, "pc_id": req.PCID, "status": "confirmed", "entry_code": entryCode, "club_name": clubName, "zone_name": zoneName, "pc_label": label,
+			"id": id, "pc_id": req.PCID, "status": "confirmed", "club_name": clubName, "zone_name": zoneName, "pc_label": label,
 			"starts_at": start, "ends_at": start.Add(time.Duration(durationMinutes) * time.Minute),
 			"held_from": start.Add(-reservationLeadTime), "checkin_deadline": start.Add(reservationArrivalWindow),
 			"duration_hours": req.DurationHours,
@@ -220,11 +220,11 @@ func (s *Server) handleMobileReservationReschedule(w http.ResponseWriter, r *htt
 		return
 	}
 	defer tx.Rollback(r.Context())
-	var pcID, clubID, clubName, zoneName, label, entryCode string
-	err = tx.QueryRow(r.Context(), `SELECT r.pc_ref_id::text,r.club_id::text,c.name,z.name,p.label,r.entry_code
+	var pcID, clubID, clubName, zoneName, label string
+	err = tx.QueryRow(r.Context(), `SELECT r.pc_ref_id::text,r.club_id::text,c.name,z.name,p.label
 FROM mobile_reservations r JOIN clubs c ON c.id=r.club_id JOIN pc_refs p ON p.id=r.pc_ref_id JOIN zones z ON z.id=p.zone_id
-WHERE r.id=$1::uuid AND r.player_id=$2 AND r.status='confirmed' AND r.starts_at>now()+interval '30 minutes'
-FOR UPDATE OF r`, id, p.ID).Scan(&pcID, &clubID, &clubName, &zoneName, &label, &entryCode)
+WHERE r.id=$1::uuid AND r.player_id=$2 AND r.status='confirmed' AND r.starts_at>now()+interval '15 minutes'
+FOR UPDATE OF r`, id, p.ID).Scan(&pcID, &clubID, &clubName, &zoneName, &label)
 	if errors.Is(err, pgx.ErrNoRows) {
 		writeError(w, http.StatusConflict, "reservation_cannot_be_cancelled")
 		return
@@ -243,7 +243,7 @@ FOR UPDATE OF r`, id, p.ID).Scan(&pcID, &clubID, &clubName, &zoneName, &label, &
 	var conflict bool
 	err = tx.QueryRow(r.Context(), `SELECT EXISTS(SELECT 1 FROM mobile_reservations
 WHERE pc_ref_id=$1::uuid AND id<>$2::uuid AND status IN ('confirmed','checked_in')
-  AND starts_at - interval '30 minutes' < $4
+  AND starts_at - interval '15 minutes' < $4
   AND starts_at + make_interval(mins => duration_minutes + 15) > $3)`, pcID, id, windowStart, windowEnd).Scan(&conflict)
 	if err != nil {
 		mobileInternal(w)
@@ -278,7 +278,7 @@ WHERE pc_ref_id=$1::uuid AND status='accepted' AND (planned_ends_at IS NULL OR p
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"reservation": map[string]any{
-		"id": id, "pc_id": pcID, "status": "confirmed", "entry_code": entryCode,
+		"id": id, "pc_id": pcID, "status": "confirmed",
 		"club_name": clubName, "zone_name": zoneName, "pc_label": label,
 		"starts_at": start, "ends_at": start.Add(time.Duration(minutes) * time.Minute),
 		"held_from": start.Add(-reservationLeadTime), "checkin_deadline": start.Add(reservationArrivalWindow),
@@ -286,28 +286,16 @@ WHERE pc_ref_id=$1::uuid AND status='accepted' AND (planned_ends_at IS NULL OR p
 	}})
 }
 
-// handleMobileReservationCheckIn verifies the code visible on the reserved
-// PC. It deliberately keeps the reservation held until the normal mobile
-// payment/start flow succeeds, so another player cannot take the PC midway
-// through checkout.
-func (s *Server) handleMobileReservationCheckIn(w http.ResponseWriter, r *http.Request) {
+// handleMobileReservationStart opens the normal mobile payment/start flow for
+// the reservation owner. No code is displayed or entered on the PC.
+func (s *Server) handleMobileReservationStart(w http.ResponseWriter, r *http.Request) {
 	p, ok := s.requireMobile(w, r)
 	if !ok {
 		return
 	}
 	id := strings.TrimSpace(r.PathValue("reservation_id"))
-	var req struct {
-		EntryCode string `json:"entry_code"`
-	}
-	if id == "" || !mobileDecode(w, r, &req) {
-		if id == "" {
-			writeError(w, http.StatusBadRequest, "reservation_id_required")
-		}
-		return
-	}
-	req.EntryCode = strings.TrimSpace(req.EntryCode)
-	if len(req.EntryCode) != 6 {
-		writeError(w, http.StatusBadRequest, "invalid_reservation_code")
+	if id == "" {
+		writeError(w, http.StatusBadRequest, "reservation_id_required")
 		return
 	}
 
@@ -322,12 +310,12 @@ func (s *Server) handleMobileReservationCheckIn(w http.ResponseWriter, r *http.R
 			ORDER BY created_at DESC LIMIT 1
 		) q ON true
 		WHERE r.id=$1::uuid AND r.player_id=$2 AND r.status IN ('confirmed','checked_in')
-		  AND r.entry_code=$3 AND r.starts_at <= now()
+		  AND r.starts_at - interval '15 minutes' <= now()
 		  AND r.starts_at + interval '15 minutes' >= now()
 		FOR UPDATE OF r
-	`, id, p.ID, req.EntryCode).Scan(&token)
+	`, id, p.ID).Scan(&token)
 	if errors.Is(err, pgx.ErrNoRows) {
-		writeError(w, http.StatusConflict, "reservation_code_not_active")
+		writeError(w, http.StatusConflict, "reservation_not_active")
 		return
 	}
 	if err != nil {
@@ -342,12 +330,12 @@ func (s *Server) handleMobileReservationCheckIn(w http.ResponseWriter, r *http.R
 		mobileInternal(w)
 		return
 	}
-	_, _ = s.db.Exec(r.Context(), `INSERT INTO audit_logs(action,entity_type,entity_id,metadata) VALUES('mobile_reservation_checked_in','mobile_reservation',$1,'{}')`, id)
+	_, _ = s.db.Exec(r.Context(), `INSERT INTO audit_logs(action,entity_type,entity_id,metadata) VALUES('mobile_reservation_started','mobile_reservation',$1,'{}')`, id)
 	writeJSON(w, http.StatusOK, map[string]any{"success": true, "pc_token": token})
 }
 
 // reservationAllowsPlayerSession keeps a held PC private to its reservation
-// owner. A correct code in ClubPay changes the reservation to checked_in; only
+// owner. Starting the reservation in ClubPay changes it to checked_in; only
 // then may that player use the normal checkout or existing-balance flow.
 func reservationAllowsPlayerSession(ctx context.Context, q interface {
 	QueryRow(context.Context, string, ...any) pgx.Row
@@ -357,7 +345,7 @@ func reservationAllowsPlayerSession(ctx context.Context, q interface {
 		SELECT player_id::text,status
 		FROM mobile_reservations
 		WHERE pc_ref_id=$1::uuid AND status IN ('confirmed','checked_in')
-		  AND starts_at-interval '30 minutes'<=now()
+		  AND starts_at-interval '15 minutes'<=now()
 		  AND starts_at+interval '15 minutes'>=now()
 		ORDER BY starts_at ASC LIMIT 1
 	`, pcID).Scan(&reservationPlayerID, &status)
@@ -380,11 +368,11 @@ func (s *Server) handleMobileReservationCancel(w http.ResponseWriter, r *http.Re
 		writeError(w, http.StatusBadRequest, "reservation_id_required")
 		return
 	}
-	// The owner can cancel while the PC is still not in the protected 30 minute
+	// The owner can cancel while the PC is still not in the protected 15 minute
 	// window. A manager can handle exceptional late changes.
 	tag, err := s.db.Exec(r.Context(), `UPDATE mobile_reservations
 SET status='cancelled',cancelled_at=now(),updated_at=now()
-WHERE id=$1::uuid AND player_id=$2 AND status='confirmed' AND starts_at>now()+interval '30 minutes'`, id, p.ID)
+WHERE id=$1::uuid AND player_id=$2 AND status='confirmed' AND starts_at>now()+interval '15 minutes'`, id, p.ID)
 	if err != nil {
 		mobileInternal(w)
 		return

@@ -43,6 +43,7 @@ class PaymentProviderOption {
 class QrComputer {
   const QrComputer({
     required this.token,
+    required this.pcId,
     required this.clubId,
     required this.clubName,
     required this.label,
@@ -54,7 +55,7 @@ class QrComputer {
     required this.providers,
     this.previewOnly = false,
   });
-  final String token, clubId, clubName, label, status, zone, type;
+  final String token, pcId, clubId, clubName, label, status, zone, type;
   final int hourlyPrice;
   final List<Tariff> tariffs;
   final List<PaymentProviderOption> providers;
@@ -67,6 +68,7 @@ class QrComputer {
   factory QrComputer.fromJson(String token, Map<String, dynamic> j) =>
       QrComputer(
         token: token,
+        pcId: j['pc']['id'] as String? ?? '',
         clubId: j['club']['id'] as String,
         clubName: j['club']['name'] as String,
         label: j['pc']['label'] as String,

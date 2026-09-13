@@ -38,7 +38,7 @@ class _ReservationScreenState extends ConsumerState<ReservationScreen> {
   void initState() {
     super.initState();
     final reservation = widget.reservation;
-    final now = DateTime.now().add(const Duration(minutes: 30));
+    final now = DateTime.now().add(const Duration(minutes: 15));
     _startsAt =
         reservation?.startsAt ??
         DateTime(now.year, now.month, now.day, now.hour + 1);
@@ -60,7 +60,7 @@ class _ReservationScreenState extends ConsumerState<ReservationScreen> {
     final date = await showDatePicker(
       context: context,
       initialDate: _startsAt,
-      firstDate: DateTime.now().add(const Duration(minutes: 30)),
+      firstDate: DateTime.now().add(const Duration(minutes: 15)),
       lastDate: DateTime.now().add(const Duration(days: 30)),
     );
     if (date == null || !mounted) return;
@@ -88,10 +88,10 @@ class _ReservationScreenState extends ConsumerState<ReservationScreen> {
       );
       return;
     }
-    if (_startsAt.isBefore(DateTime.now().add(const Duration(minutes: 30)))) {
+    if (_startsAt.isBefore(DateTime.now().add(const Duration(minutes: 15)))) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
-          content: Text('Бронь можно оформить минимум за 30 минут.'),
+          content: Text('Бронь можно оформить минимум за 15 минут.'),
         ),
       );
       return;
@@ -154,7 +154,7 @@ class _ReservationScreenState extends ConsumerState<ReservationScreen> {
               icon: CupertinoIcons.calendar,
               color: ClubColors.blue,
               title: _dateTime(_startsAt),
-              subtitle: 'ПК будет отмечен как забронированный за 30 минут',
+              subtitle: 'ПК будет отмечен как забронированный за 15 минут',
               onTap: _chooseStart,
             ),
           ],
@@ -178,7 +178,7 @@ class _ReservationScreenState extends ConsumerState<ReservationScreen> {
             ),
             SizedBox(height: 10),
             Text(
-              'С начала брони у вас будет 15 минут, чтобы ввести код на ПК. Если не прийти, бронь отменится и ПК снова станет свободным.',
+              'За 15 минут до начала ПК будет заблокирован для вашей брони. Откройте бронь в ClubPay и нажмите «Начать игру». Если не начать игру в течение 15 минут после начала, бронь отменится.',
               style: TextStyle(color: ClubColors.muted),
             ),
           ],
@@ -210,7 +210,7 @@ class _ReservationScreenState extends ConsumerState<ReservationScreen> {
       ),
       const SizedBox(height: 18),
       Text(
-        'ПК будет отмечен как занятый с ${DateFormat('HH:mm').format(item.heldFrom)}. В начале брони на экране ПК появится код — введите его в ClubPay, чтобы продолжить к оплате или запуску игры.',
+        'ПК будет отмечен как занятый с ${DateFormat('HH:mm').format(item.heldFrom)}. В это время в ClubPay появится кнопка «Начать игру» — она откроет обычный выбор оплаты или запуск по уже оплаченному времени.',
       ),
       const SizedBox(height: 18),
       ActionButton(label: 'К брони', onPressed: () => context.go('/home')),

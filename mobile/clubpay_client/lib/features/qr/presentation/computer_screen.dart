@@ -193,6 +193,22 @@ class _ComputerScreenState extends ConsumerState<ComputerScreen> {
               ],
             ),
             if (!pc.previewOnly) ...[
+              const SizedBox(height: 20),
+              ActionButton(
+                label: 'Забронировать ПК',
+                icon: CupertinoIcons.calendar_badge_plus,
+                onPressed: _busy || pc.pcId.isEmpty
+                    ? null
+                    : () {
+                        ref.read(analyticsProvider).track(
+                          'reservation_opened',
+                          screen: 'computer',
+                        );
+                        context.push(
+                          '/reservation/${pc.pcId}?club=${Uri.encodeComponent(pc.clubName)}&zone=${Uri.encodeComponent(pc.zone)}&pc=${Uri.encodeComponent(pc.label)}',
+                        );
+                      },
+              ),
               const SizedBox(height: 28),
               InfoCard(
                 accent: true,
