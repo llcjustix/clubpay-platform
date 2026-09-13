@@ -19,6 +19,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"sync"
@@ -709,7 +710,7 @@ func (s *Server) handleBackofficeClubSettings(w http.ResponseWriter, r *http.Req
 		return
 	}
 	clubID := r.PathValue("club_id")
-	actorRole, ok := s.requireClubRole(w, r, auth, clubID, "owner")
+	actorRole, ok := s.requireClubRole(w, r, auth, clubID, "owner", "manager")
 	if !ok {
 		return
 	}
@@ -727,7 +728,7 @@ func (s *Server) handleBackofficeUpdateClub(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	clubID := r.PathValue("club_id")
-	actorRole, ok := s.requireClubRole(w, r, auth, clubID, "owner")
+	actorRole, ok := s.requireClubRole(w, r, auth, clubID, "owner", "manager")
 	if !ok {
 		return
 	}
@@ -805,6 +806,18 @@ func (s *Server) handleBackofficeUpdateClub(w http.ResponseWriter, r *http.Reque
 		}
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
+	}
+	// A manager/owner may set the map point through the same club form. Keep an
+	// existing point when an older client does not send coordinates.
+	if req.Latitude != nil || req.Longitude != nil {
+		if req.Latitude == nil || req.Longitude == nil || *req.Latitude < -90 || *req.Latitude > 90 || *req.Longitude < -180 || *req.Longitude > 180 {
+			writeError(w, http.StatusBadRequest, "both valid latitude and longitude are required")
+			return
+		}
+		if _, err = s.db.Exec(r.Context(), `UPDATE clubs SET latitude=$2,longitude=$3 WHERE id=$1`, clubID, *req.Latitude, *req.Longitude); err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"success": true})
 }
@@ -7056,30 +7069,182 @@ type loginRequest struct {
 }
 
 type clubSettingsRequest struct {
-	NetworkID               string `json:"network_id"`
-	Name                    string `json:"name"`
-	Slug                    string `json:"slug"`
-	LegalName               string `json:"legal_name"`
-	TIN                     string `json:"tin"`
-	Address                 string `json:"address"`
-	Timezone                string `json:"timezone"`
-	Status                  string `json:"status"`
-	ClickMerchantID         string `json:"click_merchant_id"`
-	ClickServiceID          string `json:"click_service_id"`
-	ClickMerchantUserID     string `json:"click_merchant_user_id"`
-	ClickSecretKey          string `json:"click_secret_key"`
-	ClickClubCntrgID        string `json:"click_club_cntrg_id"`
-	ClickPlatformCntrgID    string `json:"click_platform_cntrg_id"`
-	PaymeMerchantID         string `json:"payme_merchant_id"`
-	PaymeSecretKey          string `json:"payme_secret_key"`
-	PaymeClubReceiverID     string `json:"payme_club_receiver_id"`
-	PaymePlatformReceiverID string `json:"payme_platform_receiver_id"`
-	PlatformFeeBPS          int    `json:"platform_fee_bps"`
-	OFDMXIK                 string `json:"ofd_mxik"`
-	OFDPackageCode          string `json:"ofd_package_code"`
-	OFDServiceName          string `json:"ofd_service_name"`
-	OFDUnitCode             string `json:"ofd_unit_code"`
-	OFDVATPercent           int    `json:"ofd_vat_percent"`
+	NetworkID               string   `json:"network_id"`
+	Name                    string   `json:"name"`
+	Slug                    string   `json:"slug"`
+	LegalName               string   `json:"legal_name"`
+	TIN                     string   `json:"tin"`
+	Address                 string   `json:"address"`
+	Latitude                *float64 `json:"latitude"`
+	Longitude               *float64 `json:"longitude"`
+	Timezone                string   `json:"timezone"`
+	Status                  string   `json:"status"`
+	ClickMerchantID         string   `json:"click_merchant_id"`
+	ClickServiceID          string   `json:"click_service_id"`
+	ClickMerchantUserID     string   `json:"click_merchant_user_id"`
+	ClickSecretKey          string   `json:"click_secret_key"`
+	ClickClubCntrgID        string   `json:"click_club_cntrg_id"`
+	ClickPlatformCntrgID    string   `json:"click_platform_cntrg_id"`
+	PaymeMerchantID         string   `json:"payme_merchant_id"`
+	PaymeSecretKey          string   `json:"payme_secret_key"`
+	PaymeClubReceiverID     string   `json:"payme_club_receiver_id"`
+	PaymePlatformReceiverID string   `json:"payme_platform_receiver_id"`
+	PlatformFeeBPS          int      `json:"platform_fee_bps"`
+	OFDMXIK                 string   `json:"ofd_mxik"`
+	OFDPackageCode          string   `json:"ofd_package_code"`
+	OFDServiceName          string   `json:"ofd_service_name"`
+	OFDUnitCode             string   `json:"ofd_unit_code"`
+	OFDVATPercent           int      `json:"ofd_vat_percent"`
+}
+
+// handleMobileAnalyticsEvent records a compact product event for the signed-in
+// player. It intentionally accepts no arbitrary metadata or device identifier.
+func (s *Server) handleMobileAnalyticsEvent(w http.ResponseWriter, r *http.Request) {
+	p, ok := s.requireMobile(w, r)
+	if !ok {
+		return
+	}
+	var req struct {
+		EventName string `json:"event_name"`
+		Screen    string `json:"screen"`
+	}
+	if !mobileDecode(w, r, &req) {
+		return
+	}
+	if !regexp.MustCompile(`^[a-z][a-z0-9_]{1,63}$`).MatchString(req.EventName) || len([]rune(req.Screen)) > 64 {
+		writeError(w, http.StatusBadRequest, "invalid_analytics_event")
+		return
+	}
+	okRate, err := s.mobileRate(r.Context(), "event:"+p.ID, 240, time.Hour)
+	if err != nil {
+		mobileInternal(w)
+		return
+	}
+	if !okRate {
+		writeError(w, http.StatusTooManyRequests, "rate_limited")
+		return
+	}
+	if _, err = s.db.Exec(r.Context(), `INSERT INTO mobile_analytics_events(player_id,event_name,screen) VALUES($1,$2,$3)`, p.ID, req.EventName, req.Screen); err != nil {
+		mobileInternal(w)
+		return
+	}
+	writeJSON(w, http.StatusCreated, map[string]any{"success": true})
+}
+
+func (s *Server) handleMobileSupportMessages(w http.ResponseWriter, r *http.Request) {
+	p, ok := s.requireMobile(w, r)
+	if !ok {
+		return
+	}
+	rows, err := s.queryMaps(r.Context(), `SELECT m.id,m.sender,m.body,m.created_at
+FROM mobile_support_messages m JOIN mobile_support_tickets t ON t.id=m.ticket_id
+WHERE t.player_id=$1 ORDER BY m.created_at ASC LIMIT 100`, p.ID)
+	if err != nil {
+		mobileInternal(w)
+		return
+	}
+	if rows == nil {
+		rows = []map[string]any{}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"messages": rows})
+}
+
+func (s *Server) handleMobileSupportMessage(w http.ResponseWriter, r *http.Request) {
+	p, ok := s.requireMobile(w, r)
+	if !ok {
+		return
+	}
+	var req struct {
+		Body string `json:"body"`
+	}
+	if !mobileDecode(w, r, &req) {
+		return
+	}
+	body := strings.TrimSpace(req.Body)
+	if len([]rune(body)) == 0 || len([]rune(body)) > 2000 {
+		writeError(w, http.StatusBadRequest, "invalid_support_message")
+		return
+	}
+	okRate, err := s.mobileRate(r.Context(), "support:"+p.ID, 20, time.Hour)
+	if err != nil {
+		mobileInternal(w)
+		return
+	}
+	if !okRate {
+		writeError(w, http.StatusTooManyRequests, "rate_limited")
+		return
+	}
+	tx, err := s.db.Begin(r.Context())
+	if err != nil {
+		mobileInternal(w)
+		return
+	}
+	defer tx.Rollback(r.Context())
+	var ticketID string
+	err = tx.QueryRow(r.Context(), `INSERT INTO mobile_support_tickets(player_id) VALUES($1)
+ON CONFLICT (player_id) WHERE status='open' DO UPDATE SET updated_at=now()
+RETURNING id`, p.ID).Scan(&ticketID)
+	if err == nil {
+		_, err = tx.Exec(r.Context(), `INSERT INTO mobile_support_messages(ticket_id,sender,body) VALUES($1,'player',$2)`, ticketID, body)
+	}
+	if err == nil {
+		err = tx.Commit(r.Context())
+	}
+	if err != nil {
+		mobileInternal(w)
+		return
+	}
+	writeJSON(w, http.StatusCreated, map[string]any{"success": true, "ticket_id": ticketID})
+}
+
+// handleMobilePCWake gives a player the same Wake-on-LAN acknowledgement as
+// the manager panel, but only for an inactive PC that belongs to an active
+// public club. A wake request never starts a paid session.
+func (s *Server) handleMobilePCWake(w http.ResponseWriter, r *http.Request) {
+	p, ok := s.requireMobile(w, r)
+	if !ok {
+		return
+	}
+	pcID := strings.TrimSpace(r.PathValue("pc_id"))
+	if pcID == "" {
+		writeError(w, http.StatusBadRequest, "pc_id is required")
+		return
+	}
+	var externalPCID, status string
+	err := s.db.QueryRow(r.Context(), `SELECT p.external_pc_id,p.status_cache
+FROM pc_refs p JOIN clubs c ON c.id=p.club_id
+WHERE p.id=$1 AND p.status_cache<>'deleted' AND c.status='active'`, pcID).Scan(&externalPCID, &status)
+	if errors.Is(err, pgx.ErrNoRows) {
+		writeError(w, http.StatusNotFound, "pc not found")
+		return
+	}
+	if err != nil {
+		mobileInternal(w)
+		return
+	}
+	if status != "sleeping" && status != "offline" {
+		writeError(w, http.StatusConflict, "pc is already online")
+		return
+	}
+	okRate, err := s.mobileRate(r.Context(), "wake:"+p.ID, 5, 15*time.Minute)
+	if err != nil {
+		mobileInternal(w)
+		return
+	}
+	if !okRate {
+		writeError(w, http.StatusTooManyRequests, "rate_limited")
+		return
+	}
+	if s.wakePC == nil {
+		writeError(w, http.StatusConflict, "wake-on-LAN is not configured for this club")
+		return
+	}
+	if err := s.wakePC(r.Context(), externalPCID); err != nil {
+		writeError(w, http.StatusConflict, "wake failed: "+err.Error())
+		return
+	}
+	_, _ = s.db.Exec(r.Context(), `INSERT INTO audit_logs(action,entity_type,entity_id,metadata) VALUES('mobile_pc_wake','pc_ref',$1,$2)`, pcID, []byte(`{"player_id":"`+p.ID+`"}`))
+	writeJSON(w, http.StatusOK, map[string]any{"success": true, "pc_id": pcID, "status": "wake_requested"})
 }
 
 type controllerActivationRequest struct {
@@ -7768,7 +7933,7 @@ func isClubRole(role string) bool {
 func (s *Server) clubSettings(ctx context.Context, clubID string, includeTechnicalFields bool) (map[string]any, error) {
 	var club map[string]any
 	clubRows, err := s.db.Query(ctx, `
-		SELECT c.id, c.name, COALESCE(c.slug, ''), COALESCE(c.legal_name, ''), COALESCE(c.tin, ''), COALESCE(c.address, ''),
+		SELECT c.id, c.name, COALESCE(c.slug, ''), COALESCE(c.legal_name, ''), COALESCE(c.tin, ''), COALESCE(c.address, ''),c.latitude,c.longitude,
 		       c.timezone, c.status, COALESCE(c.network_id::text, ''), COALESCE(n.name, ''),
 		       COALESCE(click_merchant_id, ''), COALESCE(click_service_id, ''), COALESCE(click_merchant_user_id, ''), COALESCE(click_secret_key, ''),
 		       COALESCE(click_club_cntrg_id, ''), COALESCE(click_platform_cntrg_id, ''),
@@ -7786,12 +7951,13 @@ func (s *Server) clubSettings(ctx context.Context, clubID string, includeTechnic
 	defer clubRows.Close()
 	if clubRows.Next() {
 		var id, name, slug, legalName, tin, address, timezone, status, networkID, networkName string
+		var latitude, longitude *float64
 		var clickMerchantID, clickServiceID, clickMerchantUserID, clickSecretKey, clickClubCntrgID, clickPlatformCntrgID string
 		var paymeMerchantID, paymeSecretKey, paymeClubReceiverID, paymePlatformReceiverID, mxik, packageCode, serviceName, unitCode string
 		var feeBPS, vatPercent int
 		var createdAt time.Time
 		if err := clubRows.Scan(
-			&id, &name, &slug, &legalName, &tin, &address, &timezone, &status, &networkID, &networkName,
+			&id, &name, &slug, &legalName, &tin, &address, &latitude, &longitude, &timezone, &status, &networkID, &networkName,
 			&clickMerchantID, &clickServiceID, &clickMerchantUserID, &clickSecretKey, &clickClubCntrgID, &clickPlatformCntrgID,
 			&paymeMerchantID, &paymeSecretKey, &paymeClubReceiverID, &paymePlatformReceiverID,
 			&feeBPS, &mxik, &packageCode, &serviceName, &unitCode, &vatPercent, &createdAt,
@@ -7824,7 +7990,7 @@ func (s *Server) clubSettings(ctx context.Context, clubID string, includeTechnic
 			vatPercent = 0
 		}
 		club = map[string]any{
-			"id": id, "network_id": networkID, "network_name": networkName, "name": name, "slug": slug, "legal_name": legalName, "tin": tin, "address": address,
+			"id": id, "network_id": networkID, "network_name": networkName, "name": name, "slug": slug, "legal_name": legalName, "tin": tin, "address": address, "latitude": latitude, "longitude": longitude,
 			"timezone": timezone, "status": status,
 			"click_merchant_id": clickMerchantID, "click_service_id": clickServiceID,
 			"click_merchant_user_id": clickMerchantUserID, "click_secret_key": clickSecretKey,

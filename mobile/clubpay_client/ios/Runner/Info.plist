@@ -4,6 +4,8 @@
 <dict>
  <key>NSCameraUsageDescription</key>
  <string>Scan the ClubPay QR code on your club computer.</string>
+ <key>NSLocationWhenInUseUsageDescription</key>
+ <string>ClubPay uses your location only to sort nearby computer clubs.</string>
  <key>CFBundleLocalizations</key><array><string>ru</string><string>uz</string></array>
 
 	<key>CADisableMinimumFrameDurationOnPhone</key>

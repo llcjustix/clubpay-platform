@@ -4,6 +4,8 @@ import 'package:go_router/go_router.dart';
 import '../features/auth/presentation/auth_screen.dart';
 import '../features/catalog/presentation/club_browser_screen.dart';
 import '../features/profile/presentation/profile_screen.dart';
+import '../features/legal/presentation/public_offer_screen.dart';
+import '../features/support/presentation/support_screen.dart';
 import '../features/qr/presentation/computer_screen.dart';
 import '../features/payment/presentation/session_screen.dart';
 import '../l10n/generated/app_localizations.dart';
@@ -54,6 +56,9 @@ final routerProvider = Provider<GoRouter>((ref) {
       GoRoute(path: '/', builder: (_, _) => const SplashScreen()),
       GoRoute(path: '/splash', builder: (_, _) => const SplashScreen()),
       GoRoute(path: '/auth', builder: (_, _) => const AuthScreen()),
+
+      GoRoute(path: '/offer', builder: (_, _) => const PublicOfferScreen()),
+      GoRoute(path: '/support', builder: (_, _) => const SupportScreen()),
       GoRoute(path: '/home', builder: (_, _) => const ClubBrowserScreen()),
       GoRoute(
         path: '/profile',

@@ -597,18 +597,19 @@ func (s *Server) handleMobileClubs(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	rows, err := s.queryMaps(r.Context(), `
-		SELECT c.id AS club_id,c.name AS club_name,COALESCE(c.address,'') AS address,
+		SELECT c.id AS club_id,c.name AS club_name,COALESCE(c.address,'') AS address,c.latitude,c.longitude,
 		  CASE WHEN $2::boolean
 		    THEN COALESCE(c.controller_synced_at>now()-interval '45 seconds',false)
 		    ELSE EXISTS(SELECT 1 FROM pc_refs live WHERE live.club_id=c.id AND live.status_cache IN ('available','sleeping','occupied','frozen'))
 		  END AS club_online,
-		  COUNT(*) FILTER (WHERE p.status_cache IN ('available','sleeping'))::int AS available_pcs
+		  COUNT(*) FILTER (WHERE p.status_cache IN ('available','sleeping'))::int AS available_pcs,
+		  COUNT(*)::int AS total_pcs
 		FROM clubs c
 		JOIN pc_refs p ON p.club_id=c.id AND p.status_cache<>'deleted'
 		JOIN zones z ON z.id=p.zone_id AND z.status='active'
 		WHERE c.status='active'
 		  AND ($1='' OR c.name ILIKE '%' || $1 || '%' OR COALESCE(c.address,'') ILIKE '%' || $1 || '%')
-		GROUP BY c.id,c.name,c.address,c.controller_synced_at
+		GROUP BY c.id,c.name,c.address,c.latitude,c.longitude,c.controller_synced_at
 		ORDER BY (COUNT(*) FILTER (WHERE p.status_cache IN ('available','sleeping'))) DESC,c.name
 		LIMIT 50
 	`, query, s.localNodeMode())
@@ -633,7 +634,7 @@ func (s *Server) handleMobileClub(w http.ResponseWriter, r *http.Request) {
 	}
 	var club map[string]any
 	rows, err := s.queryMaps(r.Context(), `
-		SELECT c.id AS club_id,c.name AS club_name,COALESCE(c.address,'') AS address,
+		SELECT c.id AS club_id,c.name AS club_name,COALESCE(c.address,'') AS address,c.latitude,c.longitude,
 		  CASE WHEN $2::boolean
 		    THEN COALESCE(c.controller_synced_at>now()-interval '45 seconds',false)
 		    ELSE EXISTS(SELECT 1 FROM pc_refs live WHERE live.club_id=c.id AND live.status_cache IN ('available','sleeping','occupied','frozen'))

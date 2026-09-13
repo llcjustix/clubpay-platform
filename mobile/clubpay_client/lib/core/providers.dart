@@ -7,6 +7,7 @@ import '../features/profile/domain/club_balance.dart';
 import '../features/qr/data/qr_repository.dart';
 import '../features/payment/data/payment_repository.dart';
 import 'api_client.dart';
+import 'analytics.dart';
 import 'secure_store.dart';
 
 final secureStoreProvider = Provider<SecureStore>(
@@ -16,6 +17,7 @@ final vaultProvider = Provider(
   (ref) => SessionVault(ref.watch(secureStoreProvider)),
 );
 final apiProvider = Provider((ref) => ApiClient(ref.watch(vaultProvider)));
+final analyticsProvider = Provider((ref) => MobileAnalytics(ref.watch(apiProvider)));
 final authRepositoryProvider = Provider(
   (ref) => AuthRepository(ref.watch(apiProvider)),
 );

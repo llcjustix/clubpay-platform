@@ -146,9 +146,11 @@ class AppPage extends StatelessWidget {
               if (largeTitle)
                 Padding(
                   padding: const EdgeInsets.only(bottom: 16, left: 4),
-                  child: Text(
-                    title,
-                    style: Theme.of(context).textTheme.headlineLarge,
+                  child: Row(
+                    children: [
+                      Expanded(child: Text(title, style: Theme.of(context).textTheme.headlineLarge)),
+                      ...?actions,
+                    ],
                   ),
                 ),
               ...children,

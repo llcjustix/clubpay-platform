@@ -40,6 +40,7 @@ dependencies:
   flutter_secure_storage: ^11.0.0
   url_launcher: ^6.3.2
   uuid: ^4.6.0
+  geolocator: ^14.0.2
   flutter_localizations:
     sdk: flutter
   intl: ^0.20.2
@@ -68,6 +69,8 @@ flutter:
   # the material Icons class.
   uses-material-design: true
   generate: true
+  assets:
+    - assets/legal/public_offer_ru.md
 
   # To add assets to your application, add an assets section, like this:
   # assets:

@@ -4,6 +4,7 @@ import 'package:flutter/cupertino.dart';
 import '../../../core/club_theme.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:go_router/go_router.dart';
 import '../../../core/providers.dart';
 import '../../../core/ui.dart';
 import '../domain/auth_models.dart';
@@ -129,6 +130,13 @@ class _AuthScreenState extends ConsumerState<AuthScreen> {
               hintText: l.phoneHint,
             ),
             onSubmitted: (_) => _busy ? null : _start(),
+          ),
+          Align(
+            alignment: Alignment.centerLeft,
+            child: TextButton(
+              onPressed: () => context.push('/offer'),
+              child: const Text('Публичная оферта ClubPay'),
+            ),
           ),
           ActionButton(label: l.continueLabel, onPressed: _start, busy: _busy),
           gap,

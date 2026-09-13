@@ -21,4 +21,8 @@ class ClubCatalogRepository {
   Future<ClubCatalog> club(String id) async => ClubCatalog.fromJson(
     await api.get('/api/mobile/clubs/${Uri.encodeComponent(id)}'),
   );
+
+  Future<void> wake(String pcID) async {
+    await api.post('/api/mobile/pcs/${Uri.encodeComponent(pcID)}/wake', {});
+  }
 }

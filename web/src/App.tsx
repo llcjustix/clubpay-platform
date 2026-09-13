@@ -168,6 +168,8 @@ type ClubSettings = {
   legal_name: string;
   tin: string;
   address: string;
+  latitude?: number | null;
+  longitude?: number | null;
   timezone: string;
   status: string;
   click_merchant_id: string;
@@ -333,6 +335,8 @@ const EMPTY_CLUB_FORM: ClubSettings = {
   legal_name: '',
   tin: '',
   address: '',
+  latitude: null,
+  longitude: null,
   timezone: 'Asia/Tashkent',
   status: 'active',
   click_merchant_id: '',
@@ -2487,6 +2491,8 @@ function SettingsPage({ auth, selectedClubID, currentPath, onClubChange, onLogou
               <Field label="Юр. название" value={clubForm.legal_name} onChange={(value) => setClubForm({ ...clubForm, legal_name: value })} help="Официальное название юрлица для договора и чеков." />
               <Field label="ИНН" value={clubForm.tin} onChange={(value) => setClubForm({ ...clubForm, tin: value })} help="Налоговый номер клуба." />
               <Field label="Адрес" value={clubForm.address} onChange={(value) => setClubForm({ ...clubForm, address: value })} help="Адрес клуба или юрлица." />
+              <Field label="Широта точки на карте" type="number" value={clubForm.latitude == null ? '' : String(clubForm.latitude)} onChange={(value) => setClubForm({ ...clubForm, latitude: value === '' ? null : Number(value) })} help="Точка входа в клуб. Её увидят игроки в приложении." />
+              <Field label="Долгота точки на карте" type="number" value={clubForm.longitude == null ? '' : String(clubForm.longitude)} onChange={(value) => setClubForm({ ...clubForm, longitude: value === '' ? null : Number(value) })} help="Вставьте координаты из Яндекс Карт или 2ГИС." />
             </div>
             {!canManageNetwork && <ClubConnectionSummary club={clubForm} />}
             <div className="button-row settings-savebar">
