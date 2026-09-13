@@ -135,7 +135,7 @@ class _AuthScreenState extends ConsumerState<AuthScreen> {
             alignment: Alignment.centerLeft,
             child: TextButton(
               onPressed: () => context.push('/offer'),
-              child: const Text('Публичная оферта ClubPay'),
+              child: const Text('Вводя номер, вы соглашаетесь с публичной офертой'),
             ),
           ),
           ActionButton(label: l.continueLabel, onPressed: _start, busy: _busy),

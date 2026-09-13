@@ -35,7 +35,7 @@ final routerProvider = Provider<GoRouter>((ref) {
               ).toString();
       }
       if (auth.asData?.value == null) {
-        return path == '/auth'
+        return path == '/auth' || path == '/offer'
             ? null
             : Uri(
                 path: '/auth',

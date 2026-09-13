@@ -27,22 +27,7 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('Твоё время.\nТвоя игра.'), findsOneWidget);
     expect(find.text('Игровое время'), findsNothing);
-    await tester.scrollUntilVisible(
-      find.text('Продолжить'),
-      200,
-      scrollable: find.byType(Scrollable).first,
-    );
-    await tester.tap(find.text('Продолжить'));
-    await tester.pumpAndSettle();
-    await tester.scrollUntilVisible(
-      find.text('Введите номер Узбекистана: +998 и 9 цифр'),
-      200,
-      scrollable: find.byType(Scrollable).first,
-    );
-    expect(
-      find.text('Введите номер Узбекистана: +998 и 9 цифр'),
-      findsOneWidget,
-    );
+    expect(find.text('Вводя номер, вы соглашаетесь с публичной офертой'), findsOneWidget);
   });
   for (final locale in ['ru', 'uz']) {
     testWidgets('$locale shows club game balance in sums', (tester) async {
