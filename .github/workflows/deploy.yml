@@ -142,7 +142,7 @@ jobs:
           # migration or configuration change prevents the process from booting.
           echo "=== Waiting for API health ==="
           for attempt in $(seq 1 12); do
-            if curl --fail --silent --show-error http://127.0.0.1:2045/api/health; then
+            if docker compose exec -T api wget -q -O - http://127.0.0.1:8080/api/health; then
               echo
               echo "API is healthy"
               exit 0
