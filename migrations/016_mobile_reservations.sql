@@ -16,15 +16,11 @@ CREATE TABLE IF NOT EXISTS mobile_reservations (
   updated_at timestamptz NOT NULL DEFAULT now()
 );
 
--- 30 minutes before arrival through the requested game time plus the 15 minute
--- check-in allowance is unavailable to other reservations on the same PC.
-ALTER TABLE mobile_reservations DROP CONSTRAINT IF EXISTS mobile_reservations_pc_window_excl;
-ALTER TABLE mobile_reservations ADD CONSTRAINT mobile_reservations_pc_window_excl
-  EXCLUDE USING gist (
-    pc_ref_id WITH =,
-    tstzrange(starts_at - interval '30 minutes',
-      starts_at + make_interval(mins => duration_minutes + 15), '[)') WITH &&
-  ) WHERE (status IN ('confirmed','checked_in'));
+-- Overlapping reservations are checked inside the creation transaction while
+-- holding an advisory lock for the selected PC. An exclusion index cannot use
+-- these timestamptz expressions: PostgreSQL treats interval arithmetic around
+-- daylight-saving boundaries as non-immutable and refuses to boot the API.
+-- The lookup index below keeps that transactional check fast.
 
 CREATE INDEX IF NOT EXISTS mobile_reservations_player_idx
   ON mobile_reservations(player_id, starts_at DESC);

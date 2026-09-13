@@ -7,7 +7,6 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgconn"
 )
 
 const (
@@ -93,6 +92,28 @@ FOR SHARE OF p`, req.PCID).Scan(&clubID, &clubName, &zoneName, &label)
 		mobileInternal(w)
 		return
 	}
+	// Serialize reservation creation for one PC. This is deliberately held in
+	// the transaction rather than delegated to an exclusion index: PostgreSQL
+	// rejects the timestamptz interval expression in that index as non-immutable.
+	if _, err = tx.Exec(r.Context(), `SELECT pg_advisory_xact_lock(hashtext($1::text))`, req.PCID); err != nil {
+		mobileInternal(w)
+		return
+	}
+	windowStart := start.Add(-reservationLeadTime)
+	windowEnd := start.Add(time.Duration(durationMinutes)*time.Minute + reservationArrivalWindow)
+	var alreadyReserved bool
+	err = tx.QueryRow(r.Context(), `SELECT EXISTS(SELECT 1 FROM mobile_reservations
+WHERE pc_ref_id=$1 AND status IN ('confirmed','checked_in')
+  AND starts_at - interval '30 minutes' < $3
+  AND starts_at + make_interval(mins => duration_minutes + 15) > $2)`, req.PCID, windowStart, windowEnd).Scan(&alreadyReserved)
+	if err != nil {
+		mobileInternal(w)
+		return
+	}
+	if alreadyReserved {
+		writeError(w, http.StatusConflict, "pc_already_reserved")
+		return
+	}
 	// A currently accepted session with no planned end is treated as occupied;
 	// otherwise its planned end must clear the reservation hold window.
 	var busy bool
@@ -110,11 +131,6 @@ WHERE pc_ref_id=$1 AND status='accepted' AND (planned_ends_at IS NULL OR planned
 	err = tx.QueryRow(r.Context(), `INSERT INTO mobile_reservations(player_id,club_id,pc_ref_id,starts_at,duration_minutes)
 VALUES($1,$2::uuid,$3::uuid,$4,$5) RETURNING id::text`, p.ID, clubID, req.PCID, start, durationMinutes).Scan(&id)
 	if err != nil {
-		var pgErr *pgconn.PgError
-		if errors.As(err, &pgErr) && pgErr.Code == "23P01" {
-			writeError(w, http.StatusConflict, "pc_already_reserved")
-			return
-		}
 		mobileInternal(w)
 		return
 	}
