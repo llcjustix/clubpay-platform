@@ -354,11 +354,7 @@ class ActionButton extends StatelessWidget {
   Widget build(BuildContext context) {
     final child = Text(label, textAlign: TextAlign.center);
     final symbol = busy
-        ? const SizedBox(
-            width: 20,
-            height: 20,
-            child: CupertinoActivityIndicator(color: Colors.white),
-          )
+        ? const SkeletonBox(width: 24, height: 16, color: Color(0x55ffffff))
         : (icon == null ? null : Icon(icon, size: 20));
     return Padding(
       padding: const EdgeInsets.only(top: 12),
@@ -434,6 +430,70 @@ class LanguagePicker extends ConsumerWidget {
       },
     );
   }
+}
+
+class SkeletonBox extends StatelessWidget {
+  const SkeletonBox({super.key, this.width, required this.height, this.color});
+  final double? width;
+  final double height;
+  final Color? color;
+
+  @override
+  Widget build(BuildContext context) => Container(
+    width: width,
+    height: height,
+    decoration: BoxDecoration(
+      color: color ?? ClubColors.elevated,
+      borderRadius: BorderRadius.circular(height / 2),
+    ),
+  );
+}
+
+class PageSkeleton extends StatelessWidget {
+  const PageSkeleton({super.key, this.rows = 3});
+  final int rows;
+
+  @override
+  Widget build(BuildContext context) => Padding(
+    padding: const EdgeInsets.fromLTRB(16, 24, 16, 32),
+    child: Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const SkeletonBox(width: 150, height: 24),
+        const SizedBox(height: 28),
+        for (var index = 0; index < rows; index++) ...[
+          Container(
+            height: 74,
+            padding: const EdgeInsets.all(16),
+            decoration: BoxDecoration(
+              color: ClubColors.surface,
+              borderRadius: BorderRadius.circular(
+                index == 0 || index == rows - 1 ? 18 : 0,
+              ),
+            ),
+            child: Row(
+              children: [
+                const SkeletonBox(width: 34, height: 34),
+                const SizedBox(width: 14),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      SkeletonBox(width: index.isEven ? 160 : 124, height: 14),
+                      const SizedBox(height: 9),
+                      const SkeletonBox(width: 96, height: 11),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+          if (index < rows - 1) const SizedBox(height: 1),
+        ],
+      ],
+    ),
+  );
 }
 
 const gap = SizedBox(height: 16);

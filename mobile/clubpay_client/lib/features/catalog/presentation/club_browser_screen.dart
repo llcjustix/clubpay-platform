@@ -283,10 +283,7 @@ class _ClubBrowserScreenState extends ConsumerState<ClubBrowserScreen> {
           const SizedBox(height: 18),
         ],
         if (_loadingInitialCatalog)
-          const Padding(
-            padding: EdgeInsets.all(32),
-            child: Center(child: CupertinoActivityIndicator()),
-          )
+          const PageSkeleton(rows: 4)
         else if (_catalogError != null)
           SettingsGroup(
             children: [
@@ -369,6 +366,28 @@ class _ReservationCard extends StatelessWidget {
                     : 'ПК будет отмечен как забронированный за 30 минут до начала.',
                 style: const TextStyle(color: ClubColors.muted),
               ),
+              const SizedBox(height: 14),
+              Text(
+                'Код для начала игры',
+                style: Theme.of(
+                  context,
+                ).textTheme.bodySmall?.copyWith(color: ClubColors.muted),
+              ),
+              const SizedBox(height: 3),
+              Text(
+                booking.entryCode,
+                style: Theme.of(context).textTheme.headlineSmall?.copyWith(
+                  fontFeatures: const [FontFeature.tabularFigures()],
+                  letterSpacing: 2,
+                ),
+              ),
+              if (!held) ...[
+                const SizedBox(height: 4),
+                Text(
+                  'Код можно ввести на ПК с ${_time(booking.startsAt)}.',
+                  style: const TextStyle(color: ClubColors.muted, fontSize: 13),
+                ),
+              ],
             ],
           ),
         ),
@@ -491,15 +510,26 @@ class _ClubDetailScreenState extends ConsumerState<ClubDetailScreen> {
         title: title,
         actions: [
           if (snapshot.data != null)
-            IconButton(
-              tooltip: snapshot.data!.favorite
-                  ? 'Убрать из избранного'
-                  : 'Добавить в избранное',
-              onPressed: () => _toggleFavorite(snapshot.data!),
-              icon: Icon(
-                snapshot.data!.favorite
-                    ? CupertinoIcons.heart_fill
-                    : CupertinoIcons.heart,
+            DecoratedBox(
+              decoration: BoxDecoration(
+                color: snapshot.data!.favorite
+                    ? ClubColors.favorite
+                    : Colors.transparent,
+                shape: BoxShape.circle,
+              ),
+              child: IconButton(
+                tooltip: snapshot.data!.favorite
+                    ? 'Убрать из избранного'
+                    : 'Добавить в избранное',
+                onPressed: () => _toggleFavorite(snapshot.data!),
+                icon: Icon(
+                  snapshot.data!.favorite
+                      ? CupertinoIcons.heart_fill
+                      : CupertinoIcons.heart,
+                  color: snapshot.data!.favorite
+                      ? Colors.white
+                      : ClubColors.text,
+                ),
               ),
             ),
           IconButton(
@@ -522,10 +552,7 @@ class _ClubDetailScreenState extends ConsumerState<ClubDetailScreen> {
                 ],
               )
             else
-              const Padding(
-                padding: EdgeInsets.all(36),
-                child: Center(child: CupertinoActivityIndicator()),
-              ),
+              const PageSkeleton(rows: 3),
           ] else ...[
             if (snapshot.data!.address.isNotEmpty)
               Padding(
@@ -668,29 +695,14 @@ class ClubCatalogRow extends StatelessWidget {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Row(
-                    children: [
-                      Expanded(
-                        child: Text(
-                          club.name,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: const TextStyle(
-                            fontSize: 17,
-                            fontWeight: FontWeight.w500,
-                          ),
-                        ),
-                      ),
-                      if (club.favorite)
-                        const Padding(
-                          padding: EdgeInsets.only(left: 8),
-                          child: Icon(
-                            CupertinoIcons.heart_fill,
-                            color: ClubColors.purple,
-                            size: 16,
-                          ),
-                        ),
-                    ],
+                  Text(
+                    club.name,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      fontSize: 17,
+                      fontWeight: FontWeight.w500,
+                    ),
                   ),
                   const SizedBox(height: 4),
                   Text(
@@ -794,11 +806,9 @@ class _FavoritesScreenState extends ConsumerState<FavoritesScreen> {
         FutureBuilder<List<ClubSearchResult>>(
           future: _clubs,
           builder: (context, snapshot) {
-            if (snapshot.connectionState != ConnectionState.done) {
-              return const Padding(
-                padding: EdgeInsets.all(32),
-                child: Center(child: CupertinoActivityIndicator()),
-              );
+            if (!snapshot.hasData &&
+                snapshot.connectionState != ConnectionState.done) {
+              return const PageSkeleton(rows: 3);
             }
             if (snapshot.hasError) {
               return InfoCard(

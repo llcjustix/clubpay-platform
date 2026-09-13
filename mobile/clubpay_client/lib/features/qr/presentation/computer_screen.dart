@@ -49,10 +49,12 @@ class _ComputerScreenState extends ConsumerState<ComputerScreen> {
       return;
     }
     setState(() => _busy = true);
-    ref.read(analyticsProvider).track(
-      redeem ? 'paid_time_used' : 'checkout_started',
-      screen: 'computer',
-    );
+    ref
+        .read(analyticsProvider)
+        .track(
+          redeem ? 'paid_time_used' : 'checkout_started',
+          screen: 'computer',
+        );
     final repo = ref.read(paymentRepositoryProvider);
     final provider =
         _provider ?? pc.providers.where((p) => p.available).firstOrNull?.id;
@@ -71,7 +73,9 @@ class _ComputerScreenState extends ConsumerState<ComputerScreen> {
       // Once submission was persisted, only recovery/status is offered.
       final pending = await repo.pending();
       if (mounted) {
-        ref.read(analyticsProvider).track('checkout_failed', screen: 'computer');
+        ref
+            .read(analyticsProvider)
+            .track('checkout_failed', screen: 'computer');
         if (pending != null) {
           context.push('/session');
         } else {
@@ -100,7 +104,7 @@ class _ComputerScreenState extends ConsumerState<ComputerScreen> {
                   onPressed: () => setState(_load),
                 ),
               ] else
-                const Center(child: CircularProgressIndicator()),
+                const PageSkeleton(rows: 3),
             ],
           );
         }

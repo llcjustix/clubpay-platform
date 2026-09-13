@@ -85,7 +85,7 @@ class _ClubMapScreenState extends ConsumerState<ClubMapScreen> {
           ),
         ),
         body: snapshot.connectionState != ConnectionState.done
-            ? const Center(child: CupertinoActivityIndicator())
+            ? const SafeArea(child: PageSkeleton(rows: 3))
             : snapshot.hasError
             ? Center(child: Text(errorLabel(context, snapshot.error!)))
             : _yandexMapsKey.isEmpty
@@ -124,7 +124,11 @@ class _ClubMapScreenState extends ConsumerState<ClubMapScreen> {
                       heroTag: 'player-location',
                       onPressed: _locating ? null : _locatePlayer,
                       child: _locating
-                          ? const CupertinoActivityIndicator()
+                          ? const SkeletonBox(
+                              width: 20,
+                              height: 20,
+                              color: ClubColors.muted,
+                            )
                           : const Icon(CupertinoIcons.location_solid),
                     ),
                   ),

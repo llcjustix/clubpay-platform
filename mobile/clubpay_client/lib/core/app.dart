@@ -173,9 +173,7 @@ class SplashScreen extends ConsumerWidget {
             onPressed: () => ref.invalidate(authProvider),
           ),
         ] else ...[
-          Center(child: Text(context.l.loading)),
-          gap,
-          const Center(child: CircularProgressIndicator()),
+          const PageSkeleton(rows: 2),
         ],
       ],
     );

@@ -13,6 +13,7 @@ abstract final class ClubColors {
   static const green = Color(0xff30d158);
   static const orange = Color(0xffff9f0a);
   static const purple = Color(0xffbf5af2);
+  static const favorite = Color(0xff8f1d3f);
   static const red = Color(0xffff453a);
 }
 

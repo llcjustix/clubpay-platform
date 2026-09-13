@@ -8,25 +8,29 @@ class PublicOfferScreen extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) => AppPage(
-        title: 'Публичная оферта',
-        children: [
-          Text('Публичная оферта ClubPay',
-              style: Theme.of(context).textTheme.headlineSmall),
-          const SizedBox(height: 12),
-          const Text('Условия использования сервиса и игрового времени.'),
-          const SizedBox(height: 20),
-          FutureBuilder<String>(
-            future: rootBundle.loadString('assets/legal/public_offer_ru.md'),
-            builder: (context, snapshot) {
-              if (!snapshot.hasData) {
-                return const Center(child: CircularProgressIndicator());
-              }
-              return SelectableText(
-                snapshot.data!,
-                style: Theme.of(context).textTheme.bodyMedium?.copyWith(height: 1.45),
-              );
-            },
-          ),
-        ],
-      );
+    title: 'Публичная оферта',
+    children: [
+      Text(
+        'Публичная оферта ClubPay',
+        style: Theme.of(context).textTheme.headlineSmall,
+      ),
+      const SizedBox(height: 12),
+      const Text('Условия использования сервиса и игрового времени.'),
+      const SizedBox(height: 20),
+      FutureBuilder<String>(
+        future: rootBundle.loadString('assets/legal/public_offer_ru.md'),
+        builder: (context, snapshot) {
+          if (!snapshot.hasData) {
+            return const PageSkeleton(rows: 5);
+          }
+          return SelectableText(
+            snapshot.data!,
+            style: Theme.of(
+              context,
+            ).textTheme.bodyMedium?.copyWith(height: 1.45),
+          );
+        },
+      ),
+    ],
+  );
 }

@@ -200,6 +200,7 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("POST /api/payments/mock/success/{invoice_id}", s.handleMockPaymentSuccess)
 	mux.HandleFunc("POST /api/core/events", s.handleCoreEvent)
 	mux.HandleFunc("GET /api/core/bootstrap", s.handleCoreBootstrap)
+	mux.HandleFunc("POST /api/core/reservations/check-in", s.handleReservationCheckIn)
 	// Called only by an authenticated Agent when a player ends their own session from the kiosk UI.
 	// It deliberately uses the same voucher/Telegram delivery flow as the admin endpoint below.
 	mux.HandleFunc("POST /api/core/agent/session/end", s.handleAgentEndSession)

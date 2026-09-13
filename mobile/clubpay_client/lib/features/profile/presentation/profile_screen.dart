@@ -124,7 +124,7 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen>
     final l = context.l;
     final player = ref.watch(authProvider).asData?.value;
     if (player == null) {
-      return const Scaffold(body: Center(child: CupertinoActivityIndicator()));
+      return const Scaffold(body: SafeArea(child: PageSkeleton(rows: 3)));
     }
     final balances = ref.watch(balancesProvider);
     final name = player.firstName.isEmpty ? l.yourAccount : player.firstName;
@@ -173,7 +173,11 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen>
                 child: CupertinoButton(
                   onPressed: _loggingOut ? null : _logout,
                   child: _loggingOut
-                      ? const CupertinoActivityIndicator()
+                      ? const SkeletonBox(
+                          width: 64,
+                          height: 16,
+                          color: ClubColors.elevated,
+                        )
                       : Text(
                           l.logout,
                           style: const TextStyle(
@@ -241,7 +245,7 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen>
             data: (items) => BalanceList(balances: items),
             loading: () => const Padding(
               padding: EdgeInsets.all(24),
-              child: Center(child: CupertinoActivityIndicator()),
+              child: PageSkeleton(rows: 2),
             ),
             error: (e, _) => SettingsGroup(
               children: [
