@@ -30,12 +30,14 @@ const (
 
 var releaseHTTPClient = &http.Client{Timeout: 20 * time.Second}
 
-// runAutomaticUpdateLoop is intentionally run only by an installed local
-// node. Cloud has no right to rewrite a club LAN process; every update is
-// pulled by the machine that owns its own configuration and data.
+// Controllers update themselves only on an installed local node. Agents that
+// are connected directly to Cloud are different: Cloud already owns their
+// authenticated command socket and can ask a free Agent to fetch a signed
+// public release. This keeps direct-cloud clubs on the same safe update path
+// as edge-controller clubs without allowing Cloud to replace a Controller.
 func runAutomaticUpdateLoop(ctx context.Context, cfg config.Config, server *httpapi.Server, currentVersion string) {
 	mode := strings.ToLower(strings.TrimSpace(cfg.NodeMode))
-	if !cfg.AutoUpdateEnabled || (mode != "edge" && mode != "manager") {
+	if !cfg.AutoUpdateEnabled || (mode != "cloud" && mode != "edge" && mode != "manager") {
 		return
 	}
 	interval := time.Duration(cfg.AutoUpdateCheckSeconds) * time.Second
@@ -62,7 +64,7 @@ func runAutomaticUpdateLoop(ctx context.Context, cfg config.Config, server *http
 
 func checkAutomaticUpdates(ctx context.Context, cfg config.Config, server *httpapi.Server, currentVersion string) {
 	mode := strings.ToLower(strings.TrimSpace(cfg.NodeMode))
-	if mode == "edge" {
+	if mode == "edge" || mode == "cloud" {
 		agentArtifact, err := release.Latest(ctx, releaseHTTPClient, agentReleasesAPI, "v", "ClubPay-Agent-win-x64.zip")
 		if err != nil {
 			log.Printf("automatic Agent update lookup: %v", err)
@@ -70,12 +72,24 @@ func checkAutomaticUpdates(ctx context.Context, cfg config.Config, server *httpa
 			server.SetAgentUpdateRelease(core.AgentUpdateCommand{
 				Version: agentArtifact.Version, DownloadURL: agentArtifact.DownloadURL, ChecksumURL: agentArtifact.ChecksumURL,
 			})
+			if mode == "cloud" {
+				// Direct-cloud Agents are not part of an edge synchronization loop, so
+				// schedule their safe, one-at-a-time roll-out immediately after a
+				// release check.
+				server.ScheduleAvailableAgentUpdates(ctx)
+			}
+		}
+
+		// Cloud never replaces its own process from this loop. It publishes Agent
+		// releases only; Controller and Manager replacement stays local below.
+		if mode == "cloud" {
+			return
 		}
 	}
 
 	var (
-		artifact     release.Artifact
-		err          error
+		artifact    release.Artifact
+		err         error
 		archiveName string
 		updaterName string
 	)

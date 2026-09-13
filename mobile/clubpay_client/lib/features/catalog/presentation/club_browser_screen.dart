@@ -27,8 +27,12 @@ class _ClubBrowserScreenState extends ConsumerState<ClubBrowserScreen> {
   final _search = TextEditingController();
   Timer? _debounce;
   Timer? _refreshTimer;
-  late Future<List<ClubSearchResult>> _clubs;
-  late Future<List<MobileReservation>> _reservations;
+  List<ClubSearchResult>? _clubs;
+  List<MobileReservation> _reservations = const [];
+  Object? _catalogError;
+  bool _loadingInitialCatalog = true;
+  bool _refreshingCatalog = false;
+  bool _refreshQueued = false;
   bool _searchOpen = false;
   bool _hasFavorites = false;
   int _catalogRevision = -1;
@@ -36,8 +40,7 @@ class _ClubBrowserScreenState extends ConsumerState<ClubBrowserScreen> {
   @override
   void initState() {
     super.initState();
-    _clubs = ref.read(clubCatalogRepositoryProvider).search('');
-    _reservations = _loadReservations();
+    _load();
     _refreshTimer = Timer.periodic(const Duration(seconds: 15), (_) => _load());
   }
 
@@ -49,12 +52,65 @@ class _ClubBrowserScreenState extends ConsumerState<ClubBrowserScreen> {
     super.dispose();
   }
 
-  void _load() {
-    if (!mounted) return;
-    setState(() {
-      _clubs = ref.read(clubCatalogRepositoryProvider).search(_search.text);
-      _reservations = _loadReservations();
-    });
+  Future<void> _load() async {
+    if (_refreshingCatalog) {
+      _refreshQueued = true;
+      return;
+    }
+    _refreshingCatalog = true;
+    final query = _search.text;
+    try {
+      final repository = ref.read(clubCatalogRepositoryProvider);
+      final result = await Future.wait([
+        repository.search(query),
+        _loadReservations(),
+      ]);
+      if (!mounted) return;
+      // A user can change the query while an earlier request is in flight.
+      // Keep the visible list intact and fetch that newer query next.
+      if (query != _search.text) {
+        _refreshQueued = true;
+        return;
+      }
+      final clubs = result[0] as List<ClubSearchResult>;
+      final reservations = result[1] as List<MobileReservation>;
+      final clubsChanged = !_sameClubResults(_clubs, clubs);
+      final reservationsChanged = !_sameReservations(
+        _reservations,
+        reservations,
+      );
+      final favoriteStateChanged =
+          query.trim().isEmpty &&
+          _hasFavorites != clubs.any((club) => club.favorite);
+      if (clubsChanged ||
+          reservationsChanged ||
+          favoriteStateChanged ||
+          _loadingInitialCatalog ||
+          _catalogError != null) {
+        setState(() {
+          if (clubsChanged || _clubs == null) _clubs = clubs;
+          if (reservationsChanged) _reservations = reservations;
+          if (query.trim().isEmpty) {
+            _hasFavorites = clubs.any((club) => club.favorite);
+          }
+          _catalogError = null;
+          _loadingInitialCatalog = false;
+        });
+      }
+    } catch (error) {
+      if (mounted && _clubs == null) {
+        setState(() {
+          _catalogError = error;
+          _loadingInitialCatalog = false;
+        });
+      }
+    } finally {
+      _refreshingCatalog = false;
+      if (_refreshQueued) {
+        _refreshQueued = false;
+        unawaited(_load());
+      }
+    }
   }
 
   void _track(String event) {
@@ -200,53 +256,7 @@ class _ClubBrowserScreenState extends ConsumerState<ClubBrowserScreen> {
             label: const Text('Открыть карту клубов'),
           ),
         ),
-        FutureBuilder<List<MobileReservation>>(
-          future: _reservations,
-          builder: (context, snapshot) {
-            final now = DateTime.now();
-            final reservation = (snapshot.data ?? const <MobileReservation>[])
-                .cast<MobileReservation?>()
-                .firstWhere(
-                  (item) =>
-                      item != null &&
-                      item.status == 'confirmed' &&
-                      item.checkinDeadline.isAfter(now),
-                  orElse: () => null,
-                );
-            if (reservation == null) return const SizedBox.shrink();
-            final held = !reservation.heldFrom.isAfter(now);
-            return Padding(
-              padding: const EdgeInsets.only(bottom: 16),
-              child: Material(
-                color: Colors.transparent,
-                child: InkWell(
-                  borderRadius: BorderRadius.circular(24),
-                  onTap: () => _openReservation(reservation),
-                  child: InfoCard(
-                    children: [
-                      Text(
-                        'Ваша бронь · ${reservation.clubName}',
-                        style: Theme.of(context).textTheme.titleMedium,
-                      ),
-                      const SizedBox(height: 6),
-                      Text(
-                        '${reservation.pcLabel} · ${_reservationDate(reservation.startsAt)}',
-                        style: const TextStyle(color: ClubColors.muted),
-                      ),
-                      const SizedBox(height: 6),
-                      Text(
-                        held
-                            ? 'ПК зарезервирован для вас. Введите код на ПК до ${_time(reservation.checkinDeadline)}.'
-                            : 'ПК будет отмечен как забронированный за 30 минут до начала.',
-                        style: const TextStyle(color: ClubColors.muted),
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-            );
-          },
-        ),
+        _ReservationCard(reservations: _reservations, onTap: _openReservation),
         if (_searchOpen) ...[
           TextField(
             controller: _search,
@@ -272,64 +282,145 @@ class _ClubBrowserScreenState extends ConsumerState<ClubBrowserScreen> {
           ),
           const SizedBox(height: 18),
         ],
-        FutureBuilder<List<ClubSearchResult>>(
-          future: _clubs,
-          builder: (context, snapshot) {
-            if (snapshot.connectionState != ConnectionState.done) {
-              return const Padding(
-                padding: EdgeInsets.all(32),
-                child: Center(child: CupertinoActivityIndicator()),
-              );
-            }
-            if (snapshot.hasError) {
-              return SettingsGroup(
-                children: [
-                  SettingsRow(
-                    icon: CupertinoIcons.exclamationmark_triangle,
-                    color: ClubColors.orange,
-                    title: errorLabel(context, snapshot.error!),
-                    onTap: _load,
-                  ),
-                ],
-              );
-            }
-            final clubs = snapshot.data ?? const <ClubSearchResult>[];
-            final hasFavorites = clubs.any((club) => club.favorite);
-            if (hasFavorites != _hasFavorites) {
-              WidgetsBinding.instance.addPostFrameCallback((_) {
-                if (mounted) setState(() => _hasFavorites = hasFavorites);
-              });
-            }
-            if (clubs.isEmpty) {
-              return Padding(
-                padding: const EdgeInsets.symmetric(
-                  vertical: 36,
-                  horizontal: 16,
+        if (_loadingInitialCatalog)
+          const Padding(
+            padding: EdgeInsets.all(32),
+            child: Center(child: CupertinoActivityIndicator()),
+          )
+        else if (_catalogError != null)
+          SettingsGroup(
+            children: [
+              SettingsRow(
+                icon: CupertinoIcons.exclamationmark_triangle,
+                color: ClubColors.orange,
+                title: errorLabel(context, _catalogError!),
+                onTap: _load,
+              ),
+            ],
+          )
+        else if ((_clubs ?? const <ClubSearchResult>[]).isEmpty)
+          Padding(
+            padding: const EdgeInsets.symmetric(vertical: 36, horizontal: 16),
+            child: Text(
+              context.l.clubSearchEmpty,
+              textAlign: TextAlign.center,
+              style: const TextStyle(color: ClubColors.muted),
+            ),
+          )
+        else
+          SettingsGroup(
+            children: [
+              for (final club in _clubs!)
+                ClubCatalogRow(
+                  club: club,
+                  onTap: () {
+                    _track('club_opened');
+                    context.push('/clubs/${club.id}');
+                  },
                 ),
-                child: Text(
-                  context.l.clubSearchEmpty,
-                  textAlign: TextAlign.center,
-                  style: const TextStyle(color: ClubColors.muted),
-                ),
-              );
-            }
-            return SettingsGroup(
-              children: [
-                for (final club in clubs)
-                  ClubCatalogRow(
-                    club: club,
-                    onTap: () {
-                      _track('club_opened');
-                      context.push('/clubs/${club.id}');
-                    },
-                  ),
-              ],
-            );
-          },
-        ),
+            ],
+          ),
       ],
     );
   }
+}
+
+class _ReservationCard extends StatelessWidget {
+  const _ReservationCard({required this.reservations, required this.onTap});
+
+  final List<MobileReservation> reservations;
+  final ValueChanged<MobileReservation> onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final now = DateTime.now();
+    MobileReservation? reservation;
+    for (final item in reservations) {
+      if (item.status == 'confirmed' && item.checkinDeadline.isAfter(now)) {
+        reservation = item;
+        break;
+      }
+    }
+    if (reservation == null) return const SizedBox.shrink();
+    final booking = reservation;
+    final held = !booking.heldFrom.isAfter(now);
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 16),
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
+          borderRadius: BorderRadius.circular(24),
+          onTap: () => onTap(booking),
+          child: InfoCard(
+            children: [
+              Text(
+                'Ваша бронь · ${booking.clubName}',
+                style: Theme.of(context).textTheme.titleMedium,
+              ),
+              const SizedBox(height: 6),
+              Text(
+                '${booking.pcLabel} · ${_reservationDate(booking.startsAt)}',
+                style: const TextStyle(color: ClubColors.muted),
+              ),
+              const SizedBox(height: 6),
+              Text(
+                held
+                    ? 'ПК зарезервирован для вас. Введите код на ПК до ${_time(booking.checkinDeadline)}.'
+                    : 'ПК будет отмечен как забронированный за 30 минут до начала.',
+                style: const TextStyle(color: ClubColors.muted),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+bool _sameClubResults(
+  List<ClubSearchResult>? before,
+  List<ClubSearchResult> after,
+) {
+  if (before == null || before.length != after.length) return false;
+  for (var index = 0; index < before.length; index++) {
+    final left = before[index];
+    final right = after[index];
+    if (left.id != right.id ||
+        left.name != right.name ||
+        left.address != right.address ||
+        left.online != right.online ||
+        left.availablePCs != right.availablePCs ||
+        left.totalPCs != right.totalPCs ||
+        left.latitude != right.latitude ||
+        left.longitude != right.longitude ||
+        left.favorite != right.favorite) {
+      return false;
+    }
+  }
+  return true;
+}
+
+bool _sameReservations(
+  List<MobileReservation> before,
+  List<MobileReservation> after,
+) {
+  if (before.length != after.length) return false;
+  for (var index = 0; index < before.length; index++) {
+    final left = before[index];
+    final right = after[index];
+    if (left.id != right.id ||
+        left.pcID != right.pcID ||
+        left.status != right.status ||
+        left.entryCode != right.entryCode ||
+        left.startsAt != right.startsAt ||
+        left.endsAt != right.endsAt ||
+        left.heldFrom != right.heldFrom ||
+        left.checkinDeadline != right.checkinDeadline ||
+        left.durationHours != right.durationHours) {
+      return false;
+    }
+  }
+  return true;
 }
 
 class ClubDetailScreen extends ConsumerStatefulWidget {

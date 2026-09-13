@@ -361,6 +361,10 @@ func (s *Server) managerNodeMode() bool {
 	return strings.EqualFold(s.cfg.NodeMode, "manager")
 }
 
+func (s *Server) cloudNodeMode() bool {
+	return strings.EqualFold(s.cfg.NodeMode, "cloud")
+}
+
 func (s *Server) onlinePaymentsDisabledForNode() bool {
 	return s.managerNodeMode() && !s.cfg.ManagerOnlinePayments
 }
@@ -3528,7 +3532,7 @@ func (s *Server) syncEdgeOnce(ctx context.Context) error {
 // never asked to update; an idle Agent schedules its own restart after ACKing
 // this command, so there is no chance of dropping an active player session.
 func (s *Server) scheduleOneAvailableAgentUpdate(ctx context.Context, clubID string) {
-	if !s.edgeNodeMode() || strings.TrimSpace(clubID) == "" {
+	if (!s.edgeNodeMode() && !s.cloudNodeMode()) || strings.TrimSpace(clubID) == "" {
 		return
 	}
 	dispatcher, ok := s.core.(core.AgentUpdateDispatcher)
@@ -3581,6 +3585,32 @@ func (s *Server) scheduleOneAvailableAgentUpdate(ctx context.Context, clubID str
 		s.agentUpdateScheduled[externalPCID] = update.Version
 		s.agentUpdateMu.Unlock()
 		return
+	}
+}
+
+// ScheduleAvailableAgentUpdates rolls direct-cloud clubs forward after Cloud
+// discovers a new Agent release. A club receives at most one update command
+// per check; busy Agents reject the command and are retried on the next check.
+// Local edge nodes keep calling scheduleOneAvailableAgentUpdate after sync.
+func (s *Server) ScheduleAvailableAgentUpdates(ctx context.Context) {
+	if !s.cloudNodeMode() {
+		return
+	}
+	rows, err := s.db.Query(ctx, `
+		SELECT DISTINCT club_id::text
+		FROM pc_refs
+		WHERE status_cache = 'available'
+		ORDER BY club_id
+	`)
+	if err != nil {
+		return
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var clubID string
+		if rows.Scan(&clubID) == nil {
+			s.scheduleOneAvailableAgentUpdate(ctx, clubID)
+		}
 	}
 }
 
