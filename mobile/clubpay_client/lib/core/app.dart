@@ -63,6 +63,7 @@ final routerProvider = Provider<GoRouter>((ref) {
       GoRoute(path: '/support', builder: (_, _) => const SupportScreen()),
       GoRoute(path: '/home', builder: (_, _) => const ClubBrowserScreen()),
       GoRoute(path: '/clubs-map', builder: (_, _) => const ClubMapScreen()),
+      GoRoute(path: '/favorites', builder: (_, _) => const FavoritesScreen()),
       GoRoute(
         path: '/profile',
         builder: (_, _) => const ProfileScreen(profile: true),

@@ -92,6 +92,25 @@ FOR SHARE OF p`, req.PCID).Scan(&clubID, &clubName, &zoneName, &label)
 		mobileInternal(w)
 		return
 	}
+	// One player can hold one future/current reservation at a time. Lock the
+	// player first, so two simultaneous requests for different clubs cannot
+	// create two bookings.
+	if _, err = tx.Exec(r.Context(), `SELECT pg_advisory_xact_lock(hashtext($1::text))`, p.ID); err != nil {
+		mobileInternal(w)
+		return
+	}
+	var playerAlreadyReserved bool
+	err = tx.QueryRow(r.Context(), `SELECT EXISTS(SELECT 1 FROM mobile_reservations
+WHERE player_id=$1 AND status IN ('confirmed','checked_in')
+  AND starts_at + interval '15 minutes' >= now())`, p.ID).Scan(&playerAlreadyReserved)
+	if err != nil {
+		mobileInternal(w)
+		return
+	}
+	if playerAlreadyReserved {
+		writeError(w, http.StatusConflict, "player_already_has_reservation")
+		return
+	}
 	// Serialize reservation creation for one PC. This is deliberately held in
 	// the transaction rather than delegated to an exclusion index: PostgreSQL
 	// rejects the timestamptz interval expression in that index as non-immutable.

@@ -6,8 +6,13 @@ import 'club_theme.dart';
 import 'ui.dart';
 
 class ClubNavigation extends StatelessWidget {
-  const ClubNavigation({super.key, required this.profile});
-  final bool profile;
+  const ClubNavigation({
+    super.key,
+    required this.profile,
+    this.showFavorites = false,
+    this.favorites = false,
+  });
+  final bool profile, showFavorites, favorites;
 
   @override
   Widget build(BuildContext context) => ClipRect(
@@ -38,6 +43,17 @@ class ClubNavigation extends StatelessWidget {
                         onTap: () => context.go('/home'),
                       ),
                     ),
+                    if (showFavorites)
+                      Expanded(
+                        child: _Tab(
+                          icon: favorites
+                              ? CupertinoIcons.heart_fill
+                              : CupertinoIcons.heart,
+                          label: 'Избранное',
+                          selected: favorites,
+                          onTap: () => context.go('/favorites'),
+                        ),
+                      ),
                     Expanded(
                       child: _Tab(
                         icon: CupertinoIcons.person_crop_circle,

@@ -30,6 +30,9 @@ func (s *Server) mobileRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/mobile/clubs/{club_id}", s.handleMobileClub)
 	mux.HandleFunc("POST /api/mobile/pcs/{pc_id}/wake", s.handleMobilePCWake)
 	mux.HandleFunc("GET /api/mobile/reservations", s.handleMobileReservations)
+	mux.HandleFunc("GET /api/mobile/favorites", s.handleMobileFavorites)
+	mux.HandleFunc("POST /api/mobile/favorites/{club_id}", s.mobileMutation(s.handleMobileFavoriteAdd))
+	mux.HandleFunc("POST /api/mobile/favorites/{club_id}/remove", s.mobileMutation(s.handleMobileFavoriteRemove))
 	mux.HandleFunc("POST /api/mobile/reservations", s.mobileMutation(s.handleMobileReservationCreate))
 	mux.HandleFunc("POST /api/mobile/reservations/{reservation_id}/cancel", s.mobileMutation(s.handleMobileReservationCancel))
 	mux.HandleFunc("POST /api/mobile/events", s.handleMobileAnalyticsEvent)
@@ -99,10 +102,10 @@ func (s *Server) mobileMutation(next http.HandlerFunc) http.HandlerFunc {
 		r.Body = io.NopCloser(bytes.NewReader(body))
 		recorder := httptest.NewRecorder()
 		next(recorder, r)
+		// Preserve the handler error for the client and for idempotent retries.
+		// Replacing it with a generic error hid actionable conflicts such as an
+		// already reserved PC.
 		response := recorder.Body.Bytes()
-		if recorder.Code >= 400 {
-			response = []byte(`{"error":"operation_failed"}`)
-		}
 		_, err = s.db.Exec(ctx, `UPDATE mobile_operations SET http_status=$3,response=$4 WHERE player_id=$1 AND request_key=$2`, p.ID, key, recorder.Code, response)
 		if err != nil {
 			mobileInternal(w)

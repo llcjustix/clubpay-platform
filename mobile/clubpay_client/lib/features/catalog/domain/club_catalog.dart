@@ -8,9 +8,10 @@ class ClubSearchResult {
     required this.totalPCs,
     this.latitude,
     this.longitude,
+    this.favorite = false,
   });
   final String id, name, address;
-  final bool online;
+  final bool online, favorite;
   final int availablePCs, totalPCs;
   final double? latitude, longitude;
   factory ClubSearchResult.fromJson(Map<String, dynamic> json) =>
@@ -23,6 +24,7 @@ class ClubSearchResult {
         totalPCs: (json['total_pcs'] as num?)?.toInt() ?? 0,
         latitude: (json['latitude'] as num?)?.toDouble(),
         longitude: (json['longitude'] as num?)?.toDouble(),
+        favorite: json['favorite'] == true,
       );
 }
 
@@ -33,9 +35,14 @@ class ClubComputer {
     required this.number,
     required this.status,
     required this.token,
+    this.reservationStartsAt,
+    this.reservationEndsAt,
+    this.reservedByMe = false,
   });
   final String id, label, status, token;
   final int number;
+  final DateTime? reservationStartsAt, reservationEndsAt;
+  final bool reservedByMe;
   bool get selectable =>
       token.isNotEmpty && (status == 'available' || status == 'sleeping');
   bool get wakeable => status == 'sleeping' || status == 'offline';
@@ -45,6 +52,13 @@ class ClubComputer {
     number: (json['number'] as num).toInt(),
     status: json['status'] as String,
     token: json['qr_token'] as String? ?? '',
+    reservationStartsAt: json['reservation_starts_at'] == null
+        ? null
+        : DateTime.parse(json['reservation_starts_at'] as String).toLocal(),
+    reservationEndsAt: json['reservation_ends_at'] == null
+        ? null
+        : DateTime.parse(json['reservation_ends_at'] as String).toLocal(),
+    reservedByMe: json['reserved_by_me'] == true,
   );
 }
 
@@ -80,9 +94,10 @@ class ClubCatalog {
     required this.zones,
     this.latitude,
     this.longitude,
+    this.favorite = false,
   });
   final String id, name, address;
-  final bool online;
+  final bool online, favorite;
   final List<ClubZone> zones;
   final double? latitude, longitude;
   factory ClubCatalog.fromJson(Map<String, dynamic> json) {
@@ -94,6 +109,7 @@ class ClubCatalog {
       online: club['club_online'] != false,
       latitude: (club['latitude'] as num?)?.toDouble(),
       longitude: (club['longitude'] as num?)?.toDouble(),
+      favorite: club['favorite'] == true,
       zones: ((club['zones'] as List?) ?? [])
           .map(
             (item) => ClubZone.fromJson(Map<String, dynamic>.from(item as Map)),

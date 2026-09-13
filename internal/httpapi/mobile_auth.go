@@ -588,7 +588,8 @@ func (s *Server) handleMobileBalances(w http.ResponseWriter, r *http.Request) {
 // internal routing detail: the client chooses a visible PC and receives its
 // opaque static token only for the existing checkout flow.
 func (s *Server) handleMobileClubs(w http.ResponseWriter, r *http.Request) {
-	if _, ok := s.requireMobile(w, r); !ok {
+	p, ok := s.requireMobile(w, r)
+	if !ok {
 		return
 	}
 	query := strings.TrimSpace(r.URL.Query().Get("q"))
@@ -596,23 +597,25 @@ func (s *Server) handleMobileClubs(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "search query is too long")
 		return
 	}
+	// A reservation holds a PC only in its 30-minute arrival window and during
+	// play. Use precisely that window in the discovery count.
 	rows, err := s.queryMaps(r.Context(), `
 		SELECT c.id AS club_id,c.name AS club_name,COALESCE(c.address,'') AS address,c.latitude,c.longitude,
-		  CASE WHEN $2::boolean
-		    THEN COALESCE(c.controller_synced_at>now()-interval '45 seconds',false)
-		    ELSE EXISTS(SELECT 1 FROM pc_refs live WHERE live.club_id=c.id AND live.status_cache IN ('available','sleeping','occupied','frozen'))
-		  END AS club_online,
-		  COUNT(*) FILTER (WHERE p.status_cache IN ('available','sleeping'))::int AS available_pcs,
-		  COUNT(*)::int AS total_pcs
-		FROM clubs c
-		JOIN pc_refs p ON p.club_id=c.id AND p.status_cache<>'deleted'
+		  CASE WHEN $2::boolean THEN COALESCE(c.controller_synced_at>now()-interval '45 seconds',false)
+		    ELSE EXISTS(SELECT 1 FROM pc_refs live WHERE live.club_id=c.id AND live.status_cache IN ('available','sleeping','occupied','frozen')) END AS club_online,
+		  COUNT(*) FILTER (WHERE p.status_cache IN ('available','sleeping') AND held.pc_ref_id IS NULL)::int AS available_pcs,
+		  COUNT(*)::int AS total_pcs,
+		  EXISTS(SELECT 1 FROM mobile_favorite_clubs f WHERE f.player_id=$3 AND f.club_id=c.id) AS favorite
+		FROM clubs c JOIN pc_refs p ON p.club_id=c.id AND p.status_cache<>'deleted'
 		JOIN zones z ON z.id=p.zone_id AND z.status='active'
-		WHERE c.status='active'
-		  AND ($1='' OR c.name ILIKE '%' || $1 || '%' OR COALESCE(c.address,'') ILIKE '%' || $1 || '%')
+		LEFT JOIN LATERAL (SELECT r.pc_ref_id FROM mobile_reservations r
+			WHERE r.pc_ref_id=p.id AND r.status IN ('confirmed','checked_in')
+			AND r.starts_at-interval '30 minutes'<=now()
+			AND r.starts_at+make_interval(mins=>r.duration_minutes+15)>now() LIMIT 1) held ON true
+		WHERE c.status='active' AND ($1='' OR c.name ILIKE '%' || $1 || '%' OR COALESCE(c.address,'') ILIKE '%' || $1 || '%')
 		GROUP BY c.id,c.name,c.address,c.latitude,c.longitude,c.controller_synced_at
-		ORDER BY (COUNT(*) FILTER (WHERE p.status_cache IN ('available','sleeping'))) DESC,c.name
-		LIMIT 50
-	`, query, s.localNodeMode())
+		ORDER BY (COUNT(*) FILTER (WHERE p.status_cache IN ('available','sleeping') AND held.pc_ref_id IS NULL)) DESC,c.name LIMIT 50
+	`, query, s.localNodeMode(), p.ID)
 	if err != nil {
 		mobileInternal(w)
 		return
@@ -624,7 +627,8 @@ func (s *Server) handleMobileClubs(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleMobileClub(w http.ResponseWriter, r *http.Request) {
-	if _, ok := s.requireMobile(w, r); !ok {
+	p, ok := s.requireMobile(w, r)
+	if !ok {
 		return
 	}
 	clubID := strings.TrimSpace(r.PathValue("club_id"))
@@ -632,15 +636,15 @@ func (s *Server) handleMobileClub(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "club_id is required")
 		return
 	}
-	var club map[string]any
 	rows, err := s.queryMaps(r.Context(), `
 		SELECT c.id AS club_id,c.name AS club_name,COALESCE(c.address,'') AS address,c.latitude,c.longitude,
 		  CASE WHEN $2::boolean
 		    THEN COALESCE(c.controller_synced_at>now()-interval '45 seconds',false)
 		    ELSE EXISTS(SELECT 1 FROM pc_refs live WHERE live.club_id=c.id AND live.status_cache IN ('available','sleeping','occupied','frozen'))
-		  END AS club_online
+		  END AS club_online,
+		  EXISTS(SELECT 1 FROM mobile_favorite_clubs f WHERE f.player_id=$3 AND f.club_id=c.id) AS favorite
 		FROM clubs c WHERE c.id=$1 AND c.status='active'
-	`, clubID, s.localNodeMode())
+	`, clubID, s.localNodeMode(), p.ID)
 	if err != nil {
 		mobileInternal(w)
 		return
@@ -649,15 +653,26 @@ func (s *Server) handleMobileClub(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "club not found")
 		return
 	}
-	club = rows[0]
+	club := rows[0]
 	zones, err := s.queryMaps(r.Context(), `
 		SELECT z.id AS zone_id,z.name AS zone_name,z.sort_order,z.hourly_price_tiyin/100 AS hourly_price_uzs,
 		  COALESCE(jsonb_agg(jsonb_build_object(
-			'id',p.id,'label',p.label,'number',p.number,'status',p.status_cache,
-			'qr_token',COALESCE(q.public_token,'')
+			'id',p.id,'label',p.label,'number',p.number,
+			'status',CASE WHEN reservation.pc_ref_id IS NULL THEN p.status_cache ELSE 'reserved' END,
+			'qr_token',COALESCE(q.public_token,''),
+			'reservation_starts_at',reservation.starts_at,
+			'reservation_ends_at',reservation.ends_at,
+			'reserved_by_me',COALESCE(reservation.player_id=$2::uuid,false)
 		  ) ORDER BY p.number,p.label) FILTER (WHERE p.id IS NOT NULL),'[]'::jsonb) AS pcs
 		FROM zones z
 		LEFT JOIN pc_refs p ON p.zone_id=z.id AND p.status_cache<>'deleted'
+		LEFT JOIN LATERAL (
+			SELECT r.pc_ref_id,r.player_id,r.starts_at,r.starts_at+make_interval(mins=>r.duration_minutes) AS ends_at
+			FROM mobile_reservations r WHERE r.pc_ref_id=p.id AND r.status IN ('confirmed','checked_in')
+			  AND r.starts_at-interval '30 minutes'<=now()
+			  AND r.starts_at+make_interval(mins=>r.duration_minutes+15)>now()
+			ORDER BY r.starts_at LIMIT 1
+		) reservation ON true
 		LEFT JOIN LATERAL (
 			SELECT public_token FROM qr_codes
 			WHERE pc_ref_id=p.id AND type='static_pc' AND status='active'
@@ -666,7 +681,7 @@ func (s *Server) handleMobileClub(w http.ResponseWriter, r *http.Request) {
 		WHERE z.club_id=$1 AND z.status='active'
 		GROUP BY z.id,z.name,z.sort_order,z.hourly_price_tiyin
 		ORDER BY z.sort_order,z.name
-	`, clubID)
+	`, clubID, p.ID)
 	if err != nil {
 		mobileInternal(w)
 		return

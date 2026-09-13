@@ -23,6 +23,28 @@ class ClubCatalogRepository {
     await api.get('/api/mobile/clubs/${Uri.encodeComponent(id)}'),
   );
 
+  Future<List<ClubSearchResult>> favorites() async {
+    final data = await api.get('/api/mobile/favorites');
+    return ((data['clubs'] as List?) ?? [])
+        .map(
+          (item) =>
+              ClubSearchResult.fromJson(Map<String, dynamic>.from(item as Map)),
+        )
+        .toList();
+  }
+
+  Future<bool> toggleFavorite(String clubID, {required bool favorite}) async {
+    final suffix = favorite ? 'remove' : '';
+    final path =
+        '/api/mobile/favorites/${Uri.encodeComponent(clubID)}${suffix.isEmpty ? '' : '/$suffix'}';
+    final data = await api.post(
+      path,
+      {},
+      key: const Uuid().v4().replaceAll('-', ''),
+    );
+    return data['favorite'] == true;
+  }
+
   Future<void> wake(String pcID) async {
     await api.post('/api/mobile/pcs/${Uri.encodeComponent(pcID)}/wake', {});
   }
