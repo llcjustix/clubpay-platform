@@ -6861,6 +6861,13 @@ func (s *Server) sendTelegramMessageWithMarkup(ctx context.Context, chatID, text
 	if s.cfg.TelegramBotToken == "" || chatID == "" {
 		return fmt.Errorf("telegram bot is not configured")
 	}
+	return sendTelegramMessageWithToken(ctx, s.cfg.TelegramBotToken, chatID, text, replyMarkup)
+}
+
+func sendTelegramMessageWithToken(ctx context.Context, token, chatID, text string, replyMarkup any) error {
+	if token == "" || chatID == "" {
+		return fmt.Errorf("telegram bot is not configured")
+	}
 	payloadMap := map[string]any{"chat_id": chatID, "text": text}
 	if replyMarkup != nil {
 		payloadMap["reply_markup"] = replyMarkup
@@ -6868,7 +6875,7 @@ func (s *Server) sendTelegramMessageWithMarkup(ctx context.Context, chatID, text
 	payload, _ := json.Marshal(payloadMap)
 	var lastErr error
 	for attempt := 0; attempt < 2; attempt++ {
-		req, err := http.NewRequestWithContext(ctx, http.MethodPost, "https://api.telegram.org/bot"+s.cfg.TelegramBotToken+"/sendMessage", bytes.NewReader(payload))
+		req, err := http.NewRequestWithContext(ctx, http.MethodPost, "https://api.telegram.org/bot"+token+"/sendMessage", bytes.NewReader(payload))
 		if err == nil {
 			req.Header.Set("Content-Type", "application/json")
 			var resp *http.Response
@@ -7194,7 +7201,20 @@ RETURNING id`, p.ID).Scan(&ticketID)
 		mobileInternal(w)
 		return
 	}
+	// Telegram delivery follows the committed database write. A transient bot
+	// outage cannot make the player's support request disappear.
+	s.sendMobileSupportTelegram(r.Context(), ticketID, p.ID, body)
 	writeJSON(w, http.StatusCreated, map[string]any{"success": true, "ticket_id": ticketID})
+}
+
+func (s *Server) sendMobileSupportTelegram(ctx context.Context, ticketID, playerID, body string) {
+	if strings.TrimSpace(s.cfg.SupportTelegramBotToken) == "" || len(s.cfg.SupportTelegramChatIDs) == 0 {
+		return
+	}
+	text := fmt.Sprintf("Новое обращение ClubPay\n№ %s\nПользователь: %s\n\n%s", ticketID, playerID, body)
+	for _, chatID := range s.cfg.SupportTelegramChatIDs {
+		_ = sendTelegramMessageWithToken(ctx, s.cfg.SupportTelegramBotToken, chatID, text, nil)
+	}
 }
 
 // handleMobilePCWake gives a player the same Wake-on-LAN acknowledgement as
