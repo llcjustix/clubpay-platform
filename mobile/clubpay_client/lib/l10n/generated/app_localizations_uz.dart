@@ -31,17 +31,17 @@ class AppLocalizationsUz extends AppLocalizations {
   String get continueLabel => 'Davom etish';
 
   @override
-  String get telegramTitle => 'Raqamni tasdiqlang';
+  String get telegramTitle => 'SMS kodni kiriting';
 
   @override
   String get telegramHelp =>
-      'Agar raqam ClubPay botiga ulangan bo‘lsa, kod darhol keladi. Birinchi marta kirayotgan bo‘lsangiz, botni oching, Start tugmasini bosing va kontaktingizni yuboring. Kodni 3 daqiqa ichida shu yerga kiriting.';
+      'Olti xonali kod telefon raqamingizga yuborildi. Uni 3 daqiqa ichida kiriting.';
 
   @override
-  String get openTelegram => 'Telegramni ochish';
+  String get openTelegram => 'SMSni qayta yuborish';
 
   @override
-  String get otp => 'Telegramdagi kod';
+  String get otp => 'SMS kodi';
 
   @override
   String get verify => 'Kirish';
@@ -62,7 +62,7 @@ class AppLocalizationsUz extends AppLocalizations {
 
   @override
   String get serviceUnavailable =>
-      'Telegram orqali kirish hozir ishlamayapti. Keyinroq urinib ko‘ring.';
+      'SMS orqali kirish hozir ishlamayapti. Keyinroq urinib ko‘ring.';
 
   @override
   String get networkError =>
@@ -312,7 +312,7 @@ class AppLocalizationsUz extends AppLocalizations {
 
   @override
   String get signInHelp =>
-      'Raqam Telegram orqali tasdiqlanadi. Saqlangan vaqtingiz kirganingizdan keyin ko‘rinadi.';
+      'Tasdiqlash kodi SMS orqali yuboriladi. Saqlangan vaqtingiz kirgandan keyin ko‘rinadi.';
 
   @override
   String get readyToPlay => 'O‘ynashga tayyormisiz?';

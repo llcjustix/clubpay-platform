@@ -26,7 +26,6 @@ void main() {
               201,
               {
                 'challenge': 'm_fixture',
-                'telegram_link': 'https://t.me/clubpay_test',
                 'expires_at': DateTime.now()
                     .add(const Duration(minutes: 5))
                     .toIso8601String(),

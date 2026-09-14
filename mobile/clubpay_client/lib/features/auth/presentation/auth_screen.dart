@@ -20,7 +20,6 @@ class _AuthScreenState extends ConsumerState<AuthScreen> {
   final _otp = TextEditingController();
   AuthChallenge? _challenge;
   bool _busy = false;
-  bool _openingTelegram = false;
   String? _error;
   Timer? _timer;
   @override
@@ -113,9 +112,7 @@ class _AuthScreenState extends ConsumerState<AuthScreen> {
         ),
         gap,
         Text(
-          _challenge == null
-              ? l.intro
-              : l.telegramHelp,
+          _challenge == null ? l.intro : l.telegramHelp,
           style: Theme.of(context).textTheme.bodyLarge,
         ),
         const SizedBox(height: 32),
@@ -135,15 +132,14 @@ class _AuthScreenState extends ConsumerState<AuthScreen> {
             alignment: Alignment.centerLeft,
             child: TextButton(
               onPressed: () => context.push('/offer'),
-              child: const Text('Вводя номер, вы соглашаетесь с публичной офертой'),
+              child: const Text(
+                'Вводя номер, вы соглашаетесь с публичной офертой',
+              ),
             ),
           ),
           ActionButton(label: l.continueLabel, onPressed: _start, busy: _busy),
           gap,
-          Text(
-            l.signInHelp,
-            style: Theme.of(context).textTheme.bodySmall,
-          ),
+          Text(l.signInHelp, style: Theme.of(context).textTheme.bodySmall),
         ] else ...[
           InfoCard(
             children: [
@@ -151,26 +147,10 @@ class _AuthScreenState extends ConsumerState<AuthScreen> {
                 normalizeUzPhone(_phone.text)!,
                 style: Theme.of(context).textTheme.titleLarge,
               ),
-              gap,
-              ActionButton(
-                label: l.openTelegram,
-                icon: Icons.open_in_new,
-                onPressed: expired || _openingTelegram
-                    ? null
-                    : () async {
-                        setState(() => _openingTelegram = true);
-                        try {
-                          await openTelegramAuthorization(_challenge!.telegramLink);
-                        } catch (e) {
-                          if (context.mounted) showFailure(context, e);
-                        } finally {
-                          if (mounted) {
-                            setState(() => _openingTelegram = false);
-                          }
-                        }
-                      },
-                secondary: true,
-                busy: _openingTelegram,
+              const SizedBox(height: 8),
+              const Text(
+                'Код отправлен в SMS. Не сообщайте его другим людям.',
+                style: TextStyle(color: ClubColors.muted),
               ),
             ],
           ),
@@ -183,9 +163,7 @@ class _AuthScreenState extends ConsumerState<AuthScreen> {
               LengthLimitingTextInputFormatter(6),
             ],
             onChanged: (_) => setState(() {}),
-            decoration: InputDecoration(
-              labelText: l.otp,
-            ),
+            decoration: InputDecoration(labelText: l.otp),
             onSubmitted: (_) =>
                 !_busy && !expired && _otp.text.length == 6 ? _verify() : null,
           ),

@@ -17,58 +17,57 @@ Map<String, dynamic> challenge() => {
 };
 
 void main() {
-  testWidgets(
-    'The app always directs the player to Telegram and never displays an API OTP',
-    (tester) async {
-      await tester.binding.setSurfaceSize(const Size(600, 1800));
-      addTearDown(() => tester.binding.setSurfaceSize(null));
-      final store = MemoryStore();
-      var verified = false;
-      final api = ApiClient(
-        SessionVault(store),
-        dio: widgetDio((request) async {
-          switch (request.path) {
-            case '/api/mobile/auth/challenge':
-              return (201, challenge());
-            case '/api/mobile/auth/verify':
-              expect(request.data['otp'], '018910');
-              verified = true;
-              return (
-                200,
-                {'access_token': 'access', 'refresh_token': 'refresh'},
-              );
-            case '/api/mobile/me':
-              expect(verified, isTrue);
-              return (200, {'id': 'local', 'phone': '+998900000001'});
-            case '/api/mobile/clubs':
-              return (200, {'clubs': []});
-          }
-          fail('Unexpected API call ${request.path}');
-        }),
-      );
-      await tester.pumpWidget(
-        ProviderScope(
-          overrides: [
-            secureStoreProvider.overrideWithValue(store),
-            apiProvider.overrideWithValue(api),
-          ],
-          child: const ClubPayApp(),
-        ),
-      );
-      await tester.pumpAndSettle();
-      await tester.enterText(find.byType(TextField), '+998900000001');
-      await tester.tap(find.text('Продолжить'));
-      await tester.pumpAndSettle();
-      expect(find.text('018910'), findsNothing);
-      expect(find.text('Открыть Telegram'), findsOneWidget);
-      expect(find.text('Код из Telegram'), findsOneWidget);
-      expect(verified, isFalse);
-      await tester.enterText(find.byType(TextField).last, '018910');
-      await tester.pumpAndSettle();
-      await tester.tap(find.text('Войти'));
-      await tester.pumpAndSettle();
-      expect(find.text('Выберите компьютерный клуб'), findsOneWidget);
-      await tester.pumpWidget(const SizedBox.shrink());
-    },
-  );
+  testWidgets('The app sends SMS OTP and never requires Telegram', (
+    tester,
+  ) async {
+    await tester.binding.setSurfaceSize(const Size(600, 1800));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    final store = MemoryStore();
+    var verified = false;
+    final api = ApiClient(
+      SessionVault(store),
+      dio: widgetDio((request) async {
+        switch (request.path) {
+          case '/api/mobile/auth/challenge':
+            return (201, challenge());
+          case '/api/mobile/auth/verify':
+            expect(request.data['otp'], '018910');
+            verified = true;
+            return (
+              200,
+              {'access_token': 'access', 'refresh_token': 'refresh'},
+            );
+          case '/api/mobile/me':
+            expect(verified, isTrue);
+            return (200, {'id': 'local', 'phone': '+998900000001'});
+          case '/api/mobile/clubs':
+            return (200, {'clubs': []});
+        }
+        fail('Unexpected API call ${request.path}');
+      }),
+    );
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          secureStoreProvider.overrideWithValue(store),
+          apiProvider.overrideWithValue(api),
+        ],
+        child: const ClubPayApp(),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byType(TextField), '+998900000001');
+    await tester.tap(find.text('Продолжить'));
+    await tester.pumpAndSettle();
+    expect(find.text('018910'), findsNothing);
+    expect(find.text('Открыть Telegram'), findsNothing);
+    expect(find.text('Код из SMS'), findsOneWidget);
+    expect(verified, isFalse);
+    await tester.enterText(find.byType(TextField).last, '018910');
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Войти'));
+    await tester.pumpAndSettle();
+    expect(find.text('Выберите компьютерный клуб'), findsOneWidget);
+    await tester.pumpWidget(const SizedBox.shrink());
+  });
 }

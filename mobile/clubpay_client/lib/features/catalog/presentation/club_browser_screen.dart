@@ -181,6 +181,7 @@ class _ClubBrowserScreenState extends ConsumerState<ClubBrowserScreen> {
                                     .read(catalogRevisionProvider.notifier)
                                     .bump();
                                 if (!mounted || !sheet.mounted) return;
+                                setState(() => _reservations = const []);
                                 Navigator.pop(sheet);
                                 context.push(
                                   '/computer/$token',
@@ -205,54 +206,52 @@ class _ClubBrowserScreenState extends ConsumerState<ClubBrowserScreen> {
                       style: const TextStyle(color: ClubColors.muted),
                     ),
                   const SizedBox(height: 14),
-                  ListTile(
-                    enabled: DateTime.now().isBefore(reservation.heldFrom),
-                    leading: const Icon(CupertinoIcons.calendar),
-                    title: const Text('Перенести бронь'),
-                    subtitle: const Text('Изменить время и длительность'),
-                    onTap: () {
-                      Navigator.pop(sheet);
-                      context.push(
-                        '/reservation/${reservation.pcID}',
-                        extra: reservation,
-                      );
-                    },
-                  ),
-                  ListTile(
-                    enabled: DateTime.now().isBefore(reservation.heldFrom),
-                    leading: const Icon(
-                      CupertinoIcons.xmark_circle,
-                      color: ClubColors.red,
+                  if (DateTime.now().isBefore(reservation.heldFrom)) ...[
+                    ActionButton(
+                      label: 'Изменить бронь',
+                      icon: CupertinoIcons.calendar,
+                      secondary: true,
+                      onPressed: () {
+                        Navigator.pop(sheet);
+                        context.push(
+                          '/reservation/${reservation.pcID}?club=${Uri.encodeComponent(reservation.clubName)}&zone=${Uri.encodeComponent(reservation.zoneName)}&pc=${Uri.encodeComponent(reservation.pcLabel)}',
+                          extra: reservation,
+                        );
+                      },
                     ),
-                    title: const Text(
-                      'Отменить бронь',
-                      style: TextStyle(color: ClubColors.red),
-                    ),
-                    onTap: () async {
-                      Navigator.pop(sheet);
-                      try {
-                        await ref
-                            .read(clubCatalogRepositoryProvider)
-                            .cancelReservation(reservation.id);
-                        ref
-                            .read(analyticsProvider)
-                            .track(
-                              'reservation_cancelled',
-                              screen: 'club_catalog',
+                    const SizedBox(height: 8),
+                    OutlinedButton.icon(
+                      onPressed: () async {
+                        Navigator.pop(sheet);
+                        try {
+                          await ref
+                              .read(clubCatalogRepositoryProvider)
+                              .cancelReservation(reservation.id);
+                          ref
+                              .read(analyticsProvider)
+                              .track(
+                                'reservation_cancelled',
+                                screen: 'club_catalog',
+                              );
+                          ref.read(catalogRevisionProvider.notifier).bump();
+                          if (mounted) {
+                            setState(() => _reservations = const []);
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              const SnackBar(content: Text('Бронь отменена.')),
                             );
-                        ref.read(catalogRevisionProvider.notifier).bump();
-                        if (mounted) {
-                          ScaffoldMessenger.of(context).showSnackBar(
-                            const SnackBar(content: Text('Бронь отменена.')),
-                          );
+                          }
+                        } catch (error) {
+                          if (mounted) showFailure(context, error);
                         }
-                      } catch (error) {
-                        if (mounted) {
-                          showFailure(context, error);
-                        }
-                      }
-                    },
-                  ),
+                      },
+                      icon: const Icon(CupertinoIcons.xmark_circle),
+                      label: const Text('Отменить бронь'),
+                      style: OutlinedButton.styleFrom(
+                        foregroundColor: ClubColors.red,
+                        side: const BorderSide(color: ClubColors.red),
+                      ),
+                    ),
+                  ],
                 ],
               ),
             ),
@@ -302,7 +301,9 @@ class _ClubBrowserScreenState extends ConsumerState<ClubBrowserScreen> {
           icon: const Icon(CupertinoIcons.question_circle),
         ),
       ],
-      bottom: ClubNavigation(profile: false, showFavorites: _hasFavorites),
+      bottom: _loadingInitialCatalog
+          ? const SizedBox.shrink()
+          : ClubNavigation(profile: false, showFavorites: _hasFavorites),
       children: [
         SectionCaption(context.l.clubSearchTitle),
         Align(
@@ -423,8 +424,8 @@ class _ReservationCard extends StatelessWidget {
               const SizedBox(height: 8),
               Text(
                 held
-                    ? 'ПК зарезервирован для вас. Откройте бронь и введите код с экрана ПК, чтобы продолжить к запуску игры.'
-                    : 'ПК будет отмечен как забронированный за 30 минут до начала. Код появится на экране ПК в начале брони.',
+                    ? 'ПК зарезервирован для вас. Откройте бронь и нажмите «Начать игру», чтобы выбрать оплату или использовать уже оплаченное время.'
+                    : 'ПК будет отмечен как забронированный за 15 минут до начала. В это время в ClubPay станет доступна кнопка «Начать игру».',
                 style: const TextStyle(color: ClubColors.muted),
               ),
             ],

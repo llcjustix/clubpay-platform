@@ -48,5 +48,6 @@ class AuthRepository {
     }
     await api.vault.clear();
     await api.vault.store.delete('mobile.pending');
+    await api.vault.store.delete('mobile.has_favorites');
   }
 }

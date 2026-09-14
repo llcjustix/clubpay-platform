@@ -31,17 +31,17 @@ class AppLocalizationsRu extends AppLocalizations {
   String get continueLabel => 'Продолжить';
 
   @override
-  String get telegramTitle => 'Подтвердите номер';
+  String get telegramTitle => 'Введите код из SMS';
 
   @override
   String get telegramHelp =>
-      'Если номер уже привязан к боту ClubPay, код придёт сразу. Если вы заходите впервые, откройте бота, нажмите Start и отправьте свой контакт. Введите код здесь в течение 3 минут.';
+      'Мы отправили шестизначный код на ваш номер. Введите его в течение 3 минут.';
 
   @override
-  String get openTelegram => 'Открыть Telegram';
+  String get openTelegram => 'Отправить SMS повторно';
 
   @override
-  String get otp => 'Код из Telegram';
+  String get otp => 'Код из SMS';
 
   @override
   String get verify => 'Войти';
@@ -61,7 +61,7 @@ class AppLocalizationsRu extends AppLocalizations {
 
   @override
   String get serviceUnavailable =>
-      'Вход через Telegram сейчас недоступен. Попробуйте позже.';
+      'Вход по SMS сейчас недоступен. Попробуйте позже.';
 
   @override
   String get networkError =>
@@ -311,7 +311,7 @@ class AppLocalizationsRu extends AppLocalizations {
 
   @override
   String get signInHelp =>
-      'Подтверждение номера через Telegram. Ваши остатки времени будут доступны после входа.';
+      'Мы отправим одно SMS с кодом. Ваши остатки времени будут доступны после входа.';
 
   @override
   String get readyToPlay => 'Готовы играть?';

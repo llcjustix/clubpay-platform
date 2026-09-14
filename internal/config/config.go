@@ -58,6 +58,9 @@ type Config struct {
 	TelegramMiniAppEnabled    bool
 	TelegramWebhookSecret     string
 	TelegramPollingEnabled    bool
+	SMSUsername               string
+	SMSSecretKey              string
+	SMSService                int
 	SupportTelegramBotToken   string
 	SupportTelegramChatIDs    []string
 	MobileTestPaymentsEnabled bool
@@ -122,6 +125,9 @@ func Load() (Config, error) {
 		TelegramMiniAppEnabled:    envBool("TELEGRAM_MINI_APP_ENABLED", false),
 		TelegramWebhookSecret:     env("TELEGRAM_WEBHOOK_SECRET", ""),
 		TelegramPollingEnabled:    envBool("TELEGRAM_POLLING_ENABLED", !strings.EqualFold(appEnv, "production")),
+		SMSUsername:               env("SMS_USERNAME", ""),
+		SMSSecretKey:              env("SMS_SECRET_KEY", ""),
+		SMSService:                envInt("SMS_SERVICE", 1),
 		SupportTelegramBotToken:   env("SUPPORT_TELEGRAM_BOT_TOKEN", ""),
 		SupportTelegramChatIDs:    envCSV("SUPPORT_TELEGRAM_CHAT_IDS"),
 		MobileTestPaymentsEnabled: envBool("MOBILE_TEST_PAYMENTS_ENABLED", false),

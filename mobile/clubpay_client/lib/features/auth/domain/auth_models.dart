@@ -27,16 +27,12 @@ class TokenPair {
 }
 
 class AuthChallenge {
-  const AuthChallenge(
-    this.token,
-    this.telegramLink,
-    this.expiresAt,
-  );
+  const AuthChallenge(this.token, this.telegramLink, this.expiresAt);
   final String token, telegramLink;
   final DateTime expiresAt;
   factory AuthChallenge.fromJson(Map<String, dynamic> json) => AuthChallenge(
     json['challenge'] as String,
-    json['telegram_link'] as String,
+    json['telegram_link'] as String? ?? '',
     DateTime.parse(json['expires_at'] as String),
   );
 }

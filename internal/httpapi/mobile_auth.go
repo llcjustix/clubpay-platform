@@ -37,8 +37,8 @@ func mobileSecret(prefix string) string {
 	return prefix + hex.EncodeToString(b)
 }
 
-// The bot secret is an application-side pepper, combined with the challenge
-// hash by callers. A database dump alone cannot brute force six-digit codes.
+// The configured SMS secret is an application-side pepper, combined with the
+// challenge hash by callers. A database dump alone cannot brute force six-digit codes.
 func mobileOTPHash(challenge, otp string) string {
 	m := hmac.New(sha256.New, []byte(challenge))
 	_, _ = m.Write([]byte(otp))
@@ -106,8 +106,8 @@ func (s *Server) handleMobileChallenge(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 400, "invalid_phone_or_device")
 		return
 	}
-	if s.cfg.TelegramBotToken == "" {
-		writeError(w, 503, "telegram_unavailable")
+	if strings.TrimSpace(s.cfg.SMSUsername) == "" || strings.TrimSpace(s.cfg.SMSSecretKey) == "" {
+		writeError(w, 503, "sms_unavailable")
 		return
 	}
 	host, _, _ := net.SplitHostPort(r.RemoteAddr)
@@ -126,24 +126,35 @@ func (s *Server) handleMobileChallenge(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	username, err := s.telegramBotUsername(r.Context())
+
+	token := mobileSecret("m_")[:62]
+	code, err := newReservationEntryCode()
 	if err != nil {
-		writeError(w, 503, "telegram_unavailable")
+		mobileInternal(w)
 		return
 	}
-	// Telegram start parameters are capped at 64 characters.
-	token := mobileSecret("m_")[:62]
+	expires := time.Now().UTC().Add(mobileChallengeTTL)
 	tx, err := s.db.Begin(r.Context())
 	if err != nil {
 		mobileInternal(w)
 		return
 	}
 	defer tx.Rollback(r.Context())
-	var id string
-	expires := time.Now().UTC().Add(mobileChallengeTTL)
-	err = tx.QueryRow(r.Context(), `INSERT INTO mobile_auth_challenges(token_hash,phone,device_hash,expires_at) VALUES($1,$2,$3,$4) RETURNING id`, hashToken(token), req.Phone, hashToken(req.Device), expires).Scan(&id)
+	var playerID, challengeID string
+	err = tx.QueryRow(r.Context(), `INSERT INTO players(phone,phone_verified_at) VALUES($1,now())
+		ON CONFLICT(phone) DO UPDATE SET phone_verified_at=COALESCE(players.phone_verified_at,now()),updated_at=now()
+		WHERE players.status='active' RETURNING id`, req.Phone).Scan(&playerID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		writeError(w, 403, "account_unavailable")
+		return
+	}
 	if err == nil {
-		err = mobileAudit(r.Context(), tx, "mobile.challenge_created", id)
+		err = tx.QueryRow(r.Context(), `INSERT INTO mobile_auth_challenges(token_hash,phone,device_hash,player_id,otp_hash,otp_expires_at,status,expires_at)
+			VALUES($1,$2,$3,$4,$5,LEAST($6,now()+interval '3 minutes'),'otp',$6) RETURNING id`,
+			hashToken(token), req.Phone, hashToken(req.Device), playerID, mobileOTPHash(s.cfg.SMSSecretKey+hashToken(token), code), expires).Scan(&challengeID)
+	}
+	if err == nil {
+		err = mobileAudit(r.Context(), tx, "mobile.challenge_created", challengeID)
 	}
 	if err == nil {
 		err = tx.Commit(r.Context())
@@ -152,22 +163,13 @@ func (s *Server) handleMobileChallenge(w http.ResponseWriter, r *http.Request) {
 		mobileInternal(w)
 		return
 	}
-	// A Telegram deep link only carries its `start` payload while Telegram
-	// decides to show its own Start action. Once a player has already opened
-	// the bot, opening the same link merely focuses the existing chat and the
-	// payload is lost. A verified bot binding is enough to deliver the OTP
-	// safely, so do that immediately instead of depending on client-specific
-	// deep-link behaviour.
-	delivery := "sent"
-	if err := s.deliverMobileOTPToBoundTelegram(r.Context(), token, req.Phone); err != nil {
-		// Keep the signed Telegram link usable if Telegram temporarily rejects a
-		// proactive message (for example, after a player changes their Telegram
-		// account). The bot can finish the same pending challenge after /start
-		// and a contact confirmation, so a transient send error must not block
-		// the player from logging in.
-		delivery = "open_link"
+	if err := s.sendMobileOTP(r.Context(), req.Phone, code); err != nil {
+		// Do not leave a valid code after the provider rejected delivery.
+		_, _ = s.db.Exec(r.Context(), `UPDATE mobile_auth_challenges SET status='expired',otp_hash=NULL WHERE id=$1 AND status='otp'`, challengeID)
+		writeError(w, 503, "sms_unavailable")
+		return
 	}
-	writeJSON(w, 201, map[string]any{"challenge": token, "expires_at": expires, "telegram_link": "https://t.me/" + username + "?start=" + token, "telegram_delivery": delivery})
+	writeJSON(w, 201, map[string]any{"challenge": token, "expires_at": expires})
 }
 
 // deliverMobileOTPToBoundTelegram completes a challenge only when this exact
@@ -407,7 +409,7 @@ func (s *Server) handleMobileVerify(w http.ResponseWriter, r *http.Request) {
 		mobileInternal(w)
 		return
 	}
-	if !hmac.Equal([]byte(otp), []byte(mobileOTPHash(s.cfg.TelegramBotToken+hashToken(req.Challenge), req.OTP))) {
+	if !hmac.Equal([]byte(otp), []byte(mobileOTPHash(s.cfg.SMSSecretKey+hashToken(req.Challenge), req.OTP))) {
 		if mobileAudit(ctx, tx, "mobile.otp_rejected", id) != nil || tx.Commit(ctx) != nil {
 			mobileInternal(w)
 			return

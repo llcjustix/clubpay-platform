@@ -143,25 +143,25 @@ abstract class AppLocalizations {
   /// No description provided for @telegramTitle.
   ///
   /// In ru, this message translates to:
-  /// **'Подтвердите номер'**
+  /// **'Введите код из SMS'**
   String get telegramTitle;
 
   /// No description provided for @telegramHelp.
   ///
   /// In ru, this message translates to:
-  /// **'Если номер уже привязан к боту ClubPay, код придёт сразу. Если вы заходите впервые, откройте бота, нажмите Start и отправьте свой контакт. Введите код здесь в течение 3 минут.'**
+  /// **'Мы отправили шестизначный код на ваш номер. Введите его в течение 3 минут.'**
   String get telegramHelp;
 
   /// No description provided for @openTelegram.
   ///
   /// In ru, this message translates to:
-  /// **'Открыть Telegram'**
+  /// **'Отправить SMS повторно'**
   String get openTelegram;
 
   /// No description provided for @otp.
   ///
   /// In ru, this message translates to:
-  /// **'Код из Telegram'**
+  /// **'Код из SMS'**
   String get otp;
 
   /// No description provided for @verify.
@@ -197,7 +197,7 @@ abstract class AppLocalizations {
   /// No description provided for @serviceUnavailable.
   ///
   /// In ru, this message translates to:
-  /// **'Вход через Telegram сейчас недоступен. Попробуйте позже.'**
+  /// **'Вход по SMS сейчас недоступен. Попробуйте позже.'**
   String get serviceUnavailable;
 
   /// No description provided for @networkError.
@@ -653,7 +653,7 @@ abstract class AppLocalizations {
   /// No description provided for @signInHelp.
   ///
   /// In ru, this message translates to:
-  /// **'Подтверждение номера через Telegram. Ваши остатки времени будут доступны после входа.'**
+  /// **'Мы отправим одно SMS с кодом. Ваши остатки времени будут доступны после входа.'**
   String get signInHelp;
 
   /// No description provided for @readyToPlay.

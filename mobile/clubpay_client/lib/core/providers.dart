@@ -83,8 +83,24 @@ final favoriteTabProvider = NotifierProvider<FavoriteTabController, bool>(
 
 class FavoriteTabController extends Notifier<bool> {
   @override
-  bool build() => false;
-  void set(bool value) => state = value;
+  bool build() {
+    ref
+        .read(secureStoreProvider)
+        .read('mobile.has_favorites')
+        .then((value) {
+          if (ref.mounted && value != null) state = value == '1';
+        })
+        .catchError((_) {});
+    return false;
+  }
+
+  void set(bool value) {
+    state = value;
+    ref
+        .read(secureStoreProvider)
+        .write('mobile.has_favorites', value ? '1' : '0')
+        .catchError((_) {});
+  }
 }
 
 final localeProvider = NotifierProvider<LocaleController, Locale>(

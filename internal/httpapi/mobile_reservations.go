@@ -35,7 +35,7 @@ func (s *Server) handleMobileReservations(w http.ResponseWriter, r *http.Request
 	// the PC even if a background worker was temporarily unavailable.
 	_, _ = s.db.Exec(r.Context(), `UPDATE mobile_reservations
 SET status='expired',updated_at=now()
-WHERE status IN ('confirmed','checked_in') AND starts_at + interval '15 minutes' < now()`)
+WHERE status IN ('confirmed','checked_in','started') AND starts_at + interval '15 minutes' < now()`)
 	_, _ = s.db.Exec(r.Context(), `UPDATE mobile_reservations r
 SET status='started',updated_at=now()
 WHERE r.status='checked_in' AND EXISTS (
@@ -332,7 +332,7 @@ func (s *Server) handleMobileReservationStart(w http.ResponseWriter, r *http.Req
 		writeError(w, http.StatusConflict, "reservation_pc_unavailable")
 		return
 	}
-	if _, err = s.db.Exec(r.Context(), `UPDATE mobile_reservations SET status='checked_in',updated_at=now() WHERE id=$1::uuid AND player_id=$2`, id, p.ID); err != nil {
+	if _, err = s.db.Exec(r.Context(), `UPDATE mobile_reservations SET status='started',updated_at=now() WHERE id=$1::uuid AND player_id=$2`, id, p.ID); err != nil {
 		mobileInternal(w)
 		return
 	}
@@ -350,7 +350,7 @@ func reservationAllowsPlayerSession(ctx context.Context, q interface {
 	err := q.QueryRow(ctx, `
 		SELECT player_id::text,status
 		FROM mobile_reservations
-		WHERE pc_ref_id=$1::uuid AND status IN ('confirmed','checked_in')
+		WHERE pc_ref_id=$1::uuid AND status IN ('confirmed','checked_in','started')
 		  AND starts_at-interval '15 minutes'<=now()
 		  AND starts_at+interval '15 minutes'>=now()
 		ORDER BY starts_at ASC LIMIT 1
@@ -361,7 +361,7 @@ func reservationAllowsPlayerSession(ctx context.Context, q interface {
 	if err != nil {
 		return false, err
 	}
-	return status == "checked_in" && playerID != "" && reservationPlayerID == playerID, nil
+	return (status == "checked_in" || status == "started") && playerID != "" && reservationPlayerID == playerID, nil
 }
 
 func (s *Server) handleMobileReservationCancel(w http.ResponseWriter, r *http.Request) {
