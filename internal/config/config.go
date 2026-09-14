@@ -43,16 +43,23 @@ type Config struct {
 	WOLBroadcastAddr string
 	WOLWaitSeconds   int
 
-	EdgeNodeID                string
-	EdgeClubID                string
-	EdgeSyncToken             string
-	EdgeWOLToken              string
-	EdgeSyncIntervalSeconds   int
-	ManagerNodeID             string
-	ManagerClubID             string
-	ManagerOnlinePayments     bool
-	AutoUpdateEnabled         bool
-	AutoUpdateCheckSeconds    int
+	EdgeNodeID              string
+	EdgeClubID              string
+	EdgeSyncToken           string
+	EdgeWOLToken            string
+	EdgeSyncIntervalSeconds int
+	ManagerNodeID           string
+	ManagerClubID           string
+	ManagerOnlinePayments   bool
+	AutoUpdateEnabled       bool
+	AutoUpdateCheckSeconds  int
+	// AutoUpdateRing deliberately defaults to canary. A new release must never
+	// silently reach every club just because a Controller restarted.
+	AutoUpdateRing            string
+	AutoUpdateCanaryPCIDs     []string
+	AutoUpdateCanaryNodeIDs   []string
+	AutoUpdatePilotClubIDs    []string
+	AutoUpdateSelectedClubIDs []string
 	TelegramBotToken          string
 	TelegramBotUsername       string
 	TelegramMiniAppEnabled    bool
@@ -120,6 +127,11 @@ func Load() (Config, error) {
 		ManagerOnlinePayments:     envBool("MANAGER_ONLINE_PAYMENTS_ENABLED", false),
 		AutoUpdateEnabled:         envBool("AUTO_UPDATE_ENABLED", true),
 		AutoUpdateCheckSeconds:    envInt("AUTO_UPDATE_CHECK_SECONDS", 3600),
+		AutoUpdateRing:            strings.ToLower(strings.TrimSpace(env("AUTO_UPDATE_RING", "canary"))),
+		AutoUpdateCanaryPCIDs:     envCSV("AUTO_UPDATE_CANARY_PC_IDS"),
+		AutoUpdateCanaryNodeIDs:   envCSV("AUTO_UPDATE_CANARY_NODE_IDS"),
+		AutoUpdatePilotClubIDs:    envCSV("AUTO_UPDATE_PILOT_CLUB_IDS"),
+		AutoUpdateSelectedClubIDs: envCSV("AUTO_UPDATE_SELECTED_CLUB_IDS"),
 		TelegramBotToken:          env("TELEGRAM_BOT_TOKEN", ""),
 		TelegramBotUsername:       strings.TrimPrefix(strings.TrimSpace(env("TELEGRAM_BOT_USERNAME", "")), "@"),
 		TelegramMiniAppEnabled:    envBool("TELEGRAM_MINI_APP_ENABLED", false),

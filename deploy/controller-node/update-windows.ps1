@@ -32,7 +32,9 @@ Write-Host "Updating active Controller: $target" -ForegroundColor Cyan
 # Keep the currently working program files until the replacement has passed
 # its local health check. Config, PostgreSQL data and runtime stay in place and
 # are never part of either the update or this rollback copy.
-$backupRoot = Join-Path $env:TEMP ('clubpay-controller-backup-' + [guid]::NewGuid().ToString())
+$versionsRoot = Join-Path $target 'updates\versions'
+$backupRoot = Join-Path $versionsRoot 'previous'
+if (Test-Path $backupRoot) { Remove-Item -Path $backupRoot -Recurse -Force }
 New-Item -ItemType Directory -Path $backupRoot -Force | Out-Null
 Copy-Item -Path (Join-Path $target 'ClubPay.Controller.exe') -Destination $backupRoot -Force
 foreach ($directory in @('web', 'migrations')) {
@@ -68,7 +70,7 @@ try {
 # local endpoint rather than treating a normal cold start as a failed update.
     $lastError = ''
     $healthy = $false
-    for ($attempt = 1; $attempt -le 18; $attempt++) {
+    for ($attempt = 1; $attempt -le 20; $attempt++) {
         try {
             $status = Invoke-RestMethod -Uri 'http://127.0.0.1:8080/api/node/status' -TimeoutSec 5
             if ($status.ok) {
@@ -83,7 +85,7 @@ try {
         Start-Sleep -Seconds 3
     }
     if (-not $healthy) {
-        throw "Controller did not become healthy after 54 seconds. $lastError"
+        throw "Controller did not become healthy after 60 seconds. $lastError"
     }
 }
 catch {
@@ -101,10 +103,6 @@ catch {
     schtasks.exe /Run /TN 'ClubPay Controller Node' | Out-Null
     throw $updateError
 }
-finally {
-    Remove-Item -Path $backupRoot -Recurse -Force -ErrorAction SilentlyContinue
-}
-
 Write-Host ''
 Write-Host 'Controller updated successfully.' -ForegroundColor Green
 Write-Host 'Open http://localhost:8080/admin to prepare Agent packages.' -ForegroundColor Green

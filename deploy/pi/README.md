@@ -5,32 +5,32 @@
 
 ## Установить
 
-Подключите Pi к сети клуба по Ethernet. На ней должны быть Docker Engine и Docker Compose.
+Подключите Pi к сети клуба по Ethernet. Для автоматических безопасных обновлений
+используется обычный systemd-сервис: отдельный updater проверяет SHA-256,
+перезапускает relay и за минуту возвращает предыдущую версию, если процесс не
+стал стабильно работать.
 
 ```bash
-sudo git clone https://github.com/llcjustix/clubpay-platform.git /opt/clubpay-platform
-cd /opt/clubpay-platform
-sudo install -d -m 700 /etc/clubpay
-sudo cp deploy/pi/edge-wol.env.example /etc/clubpay/edge-wol.env
+Распакуйте релиз `clubpay-edge-wol-linux-arm64.tar.gz`, затем:
+
+```bash
+sudo ./install-edge-wol.sh
 sudo nano /etc/clubpay/edge-wol.env
+```
 ```
 
 В файле укажите только выданный отдельно `EDGE_WOL_TOKEN`. Не используйте `CORE_TOKEN` и не
 публикуйте этот файл.
 
 ```bash
-sudo docker compose -f deploy/pi/docker-compose.edge-wol.yml up -d --build
-sudo docker compose -f deploy/pi/docker-compose.edge-wol.yml logs -f edge-wol
+sudo systemctl status clubpay-edge-wol
 ```
 
 Готово, если в логе есть `connected to ClubPay Cloud`.
 
-## Обновить
+## Обновление
 
-```bash
-cd /opt/clubpay-platform
-sudo git pull --ff-only origin main
-sudo docker compose -f deploy/pi/docker-compose.edge-wol.yml up -d --build
-```
-
-Если Pi уже работает — не копируйте заново `/etc/clubpay/edge-wol.env`: в нём хранится секрет.
+Таймер проверяет релизы каждые 5 минут. Он не заменяет текущий relay, пока
+архив и SHA-256 не совпали. Состояние: `systemctl status clubpay-edge-wol-update.timer`.
+При переходе со старого Docker-варианта остановите compose один раз и выполните
+установку выше. Не копируйте заново `/etc/clubpay/edge-wol.env`: в нём секрет.

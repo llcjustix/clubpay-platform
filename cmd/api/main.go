@@ -14,8 +14,8 @@ import (
 	"net/http"
 	"net/url"
 	"os"
-	"os/signal"
 	"os/exec"
+	"os/signal"
 	"path/filepath"
 	"runtime"
 	"strconv"
@@ -328,6 +328,11 @@ func setupControllerNode(configPath, activationCode, activationURL, nodeName str
 		"MANAGER_ONLINE_PAYMENTS_ENABLED=false",
 		"AUTO_UPDATE_ENABLED=true",
 		"AUTO_UPDATE_CHECK_SECONDS=300",
+		"AUTO_UPDATE_RING=canary",
+		"AUTO_UPDATE_CANARY_PC_IDS=",
+		"AUTO_UPDATE_CANARY_NODE_IDS=",
+		"AUTO_UPDATE_PILOT_CLUB_IDS=",
+		"AUTO_UPDATE_SELECTED_CLUB_IDS=",
 		"EDGE_SYNC_INTERVAL_SECONDS=2",
 		"VOUCHER_MIN_MINUTES=5",
 		"VOUCHER_TTL_DAYS=30",

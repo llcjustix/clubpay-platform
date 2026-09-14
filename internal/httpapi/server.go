@@ -3575,6 +3575,9 @@ func (s *Server) scheduleOneAvailableAgentUpdate(ctx context.Context, clubID str
 		if rows.Scan(&externalPCID) != nil || strings.TrimSpace(externalPCID) == "" {
 			continue
 		}
+		if !s.autoUpdateAllowsAgent(clubID, externalPCID) {
+			continue
+		}
 		s.agentUpdateMu.Lock()
 		alreadyScheduled := s.agentUpdateScheduled[externalPCID] == update.Version
 		s.agentUpdateMu.Unlock()
@@ -3596,11 +3599,39 @@ func (s *Server) scheduleOneAvailableAgentUpdate(ctx context.Context, clubID str
 			}
 			continue
 		}
+		// This is intentionally structured: it is collected by the existing
+		// Controller logs and gives the rollout dashboard a stable event to
+		// aggregate by version, club and PC.
+		fmt.Printf("update_event component=agent action=scheduled version=%s club_id=%s external_pc_id=%s ring=%s\n", update.Version, clubID, externalPCID, s.cfg.AutoUpdateRing)
 		s.agentUpdateMu.Lock()
 		s.agentUpdateScheduled[externalPCID] = update.Version
 		s.agentUpdateMu.Unlock()
 		return
 	}
+}
+
+func (s *Server) autoUpdateAllowsAgent(clubID, externalPCID string) bool {
+	switch strings.ToLower(strings.TrimSpace(s.cfg.AutoUpdateRing)) {
+	case "all":
+		return true
+	case "selected":
+		return containsUpdateID(s.cfg.AutoUpdateSelectedClubIDs, clubID)
+	case "pilot":
+		return containsUpdateID(s.cfg.AutoUpdatePilotClubIDs, clubID)
+	case "canary":
+		return containsUpdateID(s.cfg.AutoUpdateCanaryPCIDs, externalPCID)
+	default:
+		return false
+	}
+}
+
+func containsUpdateID(values []string, value string) bool {
+	for _, candidate := range values {
+		if strings.EqualFold(strings.TrimSpace(candidate), strings.TrimSpace(value)) {
+			return true
+		}
+	}
+	return false
 }
 
 // ScheduleAvailableAgentUpdates rolls direct-cloud clubs forward after Cloud

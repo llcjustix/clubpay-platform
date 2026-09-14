@@ -98,8 +98,13 @@ func checkAutomaticUpdates(ctx context.Context, cfg config.Config, server *httpa
 		updaterName = "update-manager.ps1"
 		artifact, err = release.Latest(ctx, releaseHTTPClient, agentReleasesAPI, "v", archiveName)
 	} else {
-		archiveName = "ClubPay-Controller-win-x64.zip"
-		updaterName = "update-windows.ps1"
+		if runtime.GOOS == "linux" {
+			archiveName = "ClubPay-Controller-linux-arm64.tar.gz"
+			updaterName = "update-linux.sh"
+		} else {
+			archiveName = "ClubPay-Controller-win-x64.zip"
+			updaterName = "update-windows.ps1"
+		}
 		artifact, err = release.Latest(ctx, releaseHTTPClient, platformReleasesAPI, "controller-v", archiveName)
 	}
 	if err != nil {
@@ -114,11 +119,46 @@ func checkAutomaticUpdates(ctx context.Context, cfg config.Config, server *httpa
 		clearCompletedUpdateMarker()
 		return
 	}
-	if err := scheduleWindowsUpdate(artifact, updaterName); err != nil {
+	if !autoUpdateAllowsLocalNode(cfg) {
+		log.Printf("update_event component=%s action=held version=%s ring=%s node_id=%s club_id=%s", mode, artifact.Version, cfg.AutoUpdateRing, localUpdateNodeID(cfg), cfg.EdgeClubID)
+		return
+	}
+	if err := scheduleLocalUpdate(artifact, updaterName); err != nil {
 		log.Printf("schedule automatic %s update to %s: %v", mode, artifact.Version, err)
 		return
 	}
-	log.Printf("automatic %s update to %s was scheduled", mode, artifact.Version)
+	log.Printf("update_event component=%s action=scheduled version=%s ring=%s node_id=%s club_id=%s", mode, artifact.Version, cfg.AutoUpdateRing, localUpdateNodeID(cfg), cfg.EdgeClubID)
+}
+
+func localUpdateNodeID(cfg config.Config) string {
+	if strings.TrimSpace(cfg.EdgeNodeID) != "" {
+		return strings.TrimSpace(cfg.EdgeNodeID)
+	}
+	return strings.TrimSpace(cfg.ManagerNodeID)
+}
+
+func autoUpdateAllowsLocalNode(cfg config.Config) bool {
+	switch strings.ToLower(strings.TrimSpace(cfg.AutoUpdateRing)) {
+	case "all":
+		return true
+	case "selected":
+		return containsConfigID(cfg.AutoUpdateSelectedClubIDs, cfg.EdgeClubID)
+	case "pilot":
+		return containsConfigID(cfg.AutoUpdatePilotClubIDs, cfg.EdgeClubID)
+	case "canary":
+		return containsConfigID(cfg.AutoUpdateCanaryNodeIDs, localUpdateNodeID(cfg))
+	default:
+		return false
+	}
+}
+
+func containsConfigID(values []string, wanted string) bool {
+	for _, value := range values {
+		if strings.EqualFold(strings.TrimSpace(value), strings.TrimSpace(wanted)) {
+			return true
+		}
+	}
+	return false
 }
 
 // A Manager contains a local read-only Controller. Its Controller build tag
@@ -160,9 +200,12 @@ func clearCompletedUpdateMarker() {
 	}
 }
 
-func scheduleWindowsUpdate(artifact release.Artifact, updaterName string) error {
+func scheduleLocalUpdate(artifact release.Artifact, updaterName string) error {
+	if runtime.GOOS == "linux" {
+		return scheduleLinuxUpdate(artifact, updaterName)
+	}
 	if runtime.GOOS != "windows" {
-		return fmt.Errorf("automatic local updates are currently supported on Windows Controllers")
+		return fmt.Errorf("automatic local updates are supported on Windows and Linux Controllers")
 	}
 	root := controllerInstallRoot()
 	if root == "" {
@@ -198,6 +241,38 @@ func scheduleWindowsUpdate(artifact release.Artifact, updaterName string) error 
 	if err != nil {
 		_ = os.Remove(marker)
 		return fmt.Errorf("run automatic update task: %w: %s", err, strings.TrimSpace(string(result)))
+	}
+	return nil
+}
+
+func scheduleLinuxUpdate(artifact release.Artifact, updaterName string) error {
+	root := controllerInstallRoot()
+	if root == "" {
+		return fmt.Errorf("locate Controller install directory")
+	}
+	marker := updateMarkerPath()
+	if data, err := os.ReadFile(marker); err == nil && strings.TrimSpace(string(data)) == artifact.Version {
+		return nil
+	}
+	updatesDir := filepath.Join(root, "updates")
+	if err := os.MkdirAll(updatesDir, 0o700); err != nil {
+		return err
+	}
+	if err := os.WriteFile(marker, []byte(artifact.Version+"\n"), 0o600); err != nil {
+		return err
+	}
+	scriptPath := filepath.Join(updatesDir, "apply-"+safeUpdateFilePart(artifact.Version)+".sh")
+	if err := os.WriteFile(scriptPath, []byte(automaticLinuxUpdateScript(artifact, updaterName, marker)), 0o700); err != nil {
+		_ = os.Remove(marker)
+		return err
+	}
+	// systemd-run puts the helper outside the Controller service cgroup. The
+	// updater can then stop and restart the Controller without being killed
+	// together with it.
+	result, err := exec.Command("systemd-run", "--unit=clubpay-controller-update", "--collect", "/bin/sh", scriptPath).CombinedOutput()
+	if err != nil {
+		_ = os.Remove(marker)
+		return fmt.Errorf("start Linux update helper: %w: %s", err, strings.TrimSpace(string(result)))
 	}
 	return nil
 }
@@ -244,4 +319,26 @@ finally {
   Remove-Item -LiteralPath $stage -Recurse -Force -ErrorAction SilentlyContinue
 }
 `, clean(artifact.DownloadURL), clean(artifact.ChecksumURL), clean(updaterName), clean(markerPath))
+}
+
+func automaticLinuxUpdateScript(artifact release.Artifact, updaterName, markerPath string) string {
+	clean := func(value string) string { return strings.ReplaceAll(value, "'", "") }
+	return fmt.Sprintf(`#!/usr/bin/env bash
+set -euo pipefail
+stage="$(mktemp -d)"
+archive="$(mktemp)"
+checksum="$(mktemp)"
+cleanup() { rm -rf "$stage" "$archive" "$checksum"; }
+trap cleanup EXIT
+curl --fail --location --silent --show-error '%s' -o "$archive"
+curl --fail --location --silent --show-error '%s' -o "$checksum"
+expected="$(awk '{print $1}' "$checksum" | tr '[:upper:]' '[:lower:]')"
+actual="$(sha256sum "$archive" | awk '{print $1}')"
+[[ "$expected" =~ ^[a-f0-9]{64}$ && "$actual" == "$expected" ]] || { rm -f '%s'; echo 'ClubPay release checksum verification failed.' >&2; exit 1; }
+tar -xzf "$archive" -C "$stage"
+updater="$(find "$stage" -type f -name '%s' -print -quit)"
+[[ -n "$updater" ]] || { rm -f '%s'; echo 'ClubPay release does not contain its updater.' >&2; exit 1; }
+chmod +x "$updater"
+exec "$updater" --no-prompt
+`, clean(artifact.DownloadURL), clean(artifact.ChecksumURL), clean(markerPath), clean(updaterName), clean(markerPath))
 }
