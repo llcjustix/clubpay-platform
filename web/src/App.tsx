@@ -2906,6 +2906,7 @@ function workspaceNavItems(auth: AuthPayload, clubID: string): WorkspaceNavItem[
     return [
       { href: '/reports', label: 'Обзор', icon: <Activity size={18} /> },
       { href: '/admin', label: 'Операции', icon: <Monitor size={18} /> },
+      { href: '/admin/games', label: 'Каталог игр', icon: <Gamepad2 size={18} /> },
       { href: '/settings/networks', label: 'Сети', icon: <Network size={18} /> },
       { href: '/settings', label: 'Клубы', icon: <Building2 size={18} /> },
       { href: '/settings/connections', label: 'Подключения', icon: <CreditCard size={18} /> },
@@ -2916,6 +2917,7 @@ function workspaceNavItems(auth: AuthPayload, clubID: string): WorkspaceNavItem[
     return [
       { href: '/reports', label: 'Обзор', icon: <Activity size={18} /> },
       { href: '/admin', label: 'Зал', icon: <Monitor size={18} /> },
+      { href: '/admin/games', label: 'Каталог игр', icon: <Gamepad2 size={18} /> },
       { href: '/admin/payments', label: 'Оплаты', icon: <ReceiptText size={18} /> },
       { href: '/settings', label: 'Настройки', icon: <Settings size={18} />, prefix: true },
       { href: '/settings/users', label: 'Команда', icon: <Users size={18} /> },
@@ -2923,6 +2925,7 @@ function workspaceNavItems(auth: AuthPayload, clubID: string): WorkspaceNavItem[
   }
   return [
     { href: '/admin', label: 'Зал', icon: <Monitor size={18} /> },
+    { href: '/admin/games', label: 'Каталог игр', icon: <Gamepad2 size={18} /> },
     { href: '/admin/sessions', label: 'Сессии', icon: <Gamepad2 size={18} /> },
     { href: '/admin/payments', label: 'Оплаты', icon: <ReceiptText size={18} /> },
   ];
