@@ -32,6 +32,17 @@ void main() {
     );
     expect(await AuthRepository(api).restore(), isNull);
   });
+  test('Logout clears local credentials even if server revocation is offline',
+      () async {
+    final vault = SessionVault(MemoryStore());
+    await vault.save(const TokenPair('access', 'refresh'));
+    final api = ApiClient(
+      vault,
+      dio: stubDio((_) async => throw StateError('offline')),
+    );
+    await AuthRepository(api).logout();
+    expect(await vault.tokens(), isNull);
+  });
   test(
     'Verification persists mobile credentials and loads real profile',
     () async {

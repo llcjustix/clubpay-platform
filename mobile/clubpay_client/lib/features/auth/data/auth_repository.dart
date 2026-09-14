@@ -40,11 +40,16 @@ class AuthRepository {
   Future<void> logout() async {
     final pair = await api.vault.tokens();
     if (pair != null) {
-      // Preserve the credential on network failure so logout can be retried.
-      await api.post('/api/mobile/auth/logout', {
-        'refresh_token': pair.refresh,
-        'device_id': await api.vault.device(),
-      }, auth: false);
+      // Logging out must always return the player to a usable signed-out
+      // state.  The server-side revocation is best effort: keeping a broken
+      // local session after a network error can otherwise leave the app stuck
+      // on splash on its next launch.
+      try {
+        await api.post('/api/mobile/auth/logout', {
+          'refresh_token': pair.refresh,
+          'device_id': await api.vault.device(),
+        }, auth: false);
+      } catch (_) {}
     }
     await api.vault.clear();
     await api.vault.store.delete('mobile.pending');

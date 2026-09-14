@@ -263,6 +263,9 @@ class _ClubBrowserScreenState extends ConsumerState<ClubBrowserScreen> {
 
   @override
   Widget build(BuildContext context) {
+    // Keep the navigation mounted while the catalogue refreshes. Recreating
+    // the home screen must not make the bottom bar flash or disappear.
+    final hasFavorites = ref.watch(favoriteTabProvider);
     final revision = ref.watch(catalogRevisionProvider);
     if (revision != _catalogRevision) {
       _catalogRevision = revision;
@@ -301,9 +304,7 @@ class _ClubBrowserScreenState extends ConsumerState<ClubBrowserScreen> {
           icon: const Icon(CupertinoIcons.question_circle),
         ),
       ],
-      bottom: _loadingInitialCatalog
-          ? const SizedBox.shrink()
-          : ClubNavigation(profile: false, showFavorites: _hasFavorites),
+      bottom: ClubNavigation(profile: false, showFavorites: hasFavorites),
       children: [
         SectionCaption(context.l.clubSearchTitle),
         Align(
