@@ -25,12 +25,22 @@ jobs:
           GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o dist/linux-arm64/clubpay-edge-wol ./cmd/edge-wol
           cp deploy/windows/edge-wol.env.example dist/windows/edge-wol.env.example
           cp deploy/pi/edge-wol.env.example dist/linux-arm64/edge-wol.env.example
+          cp deploy/pi/install-edge-wol.sh dist/linux-arm64/
+          cp deploy/pi/update-edge-wol.sh dist/linux-arm64/
+          cp deploy/pi/check-edge-wol-update.sh dist/linux-arm64/
+          printf '%s
+' "${GITHUB_REF_NAME}" > dist/linux-arm64/clubpay-edge-wol-version
+          chmod +x dist/linux-arm64/*.sh dist/linux-arm64/clubpay-edge-wol
           cd dist/windows && zip -r ../clubpay-edge-wol-windows-amd64.zip .
           cd ../linux-arm64 && tar -czf ../clubpay-edge-wol-linux-arm64.tar.gz .
+          cd .. && sha256sum clubpay-edge-wol-windows-amd64.zip > clubpay-edge-wol-windows-amd64.zip.sha256
+          sha256sum clubpay-edge-wol-linux-arm64.tar.gz > clubpay-edge-wol-linux-arm64.tar.gz.sha256
       - name: Publish GitHub release
         uses: softprops/action-gh-release@v2
         with:
           generate_release_notes: true
           files: |
             dist/clubpay-edge-wol-windows-amd64.zip
+            dist/clubpay-edge-wol-windows-amd64.zip.sha256
             dist/clubpay-edge-wol-linux-arm64.tar.gz
+            dist/clubpay-edge-wol-linux-arm64.tar.gz.sha256
