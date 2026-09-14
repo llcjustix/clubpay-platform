@@ -1,5 +1,6 @@
 name: Build and Deploy Clubpay
 
+
 on:
   push:
     branches:
@@ -126,6 +127,9 @@ jobs:
 
           export TELEGRAM_MINI_APP_ENABLED="${{ vars.TELEGRAM_MINI_APP_ENABLED || 'false' }}"
           export TELEGRAM_POLLING_ENABLED="true"
+                    export SMS_USERNAME="${{ secrets.SMS_USERNAME }}"
+          export SMS_SECRET_KEY="${{ secrets.SMS_SECRET_KEY }}"
+          export SMS_SERVICE="${{ vars.SMS_SERVICE || '1' }}"
 
           echo "=== Pulling images ==="
           docker compose pull api web
