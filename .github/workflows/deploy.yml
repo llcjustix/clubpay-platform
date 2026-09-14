@@ -103,6 +103,18 @@ jobs:
           export WOL_ENABLED="${{ vars.WOL_ENABLED || 'false' }}"
           export WOL_WAIT_SECONDS="${{ vars.WOL_WAIT_SECONDS || '60' }}"
 
+          # Keep the cloud rollout policy in GitHub Actions variables rather
+          # than silently falling back to an empty canary list in the
+          # container. Defaults remain conservative: no Agent is selected
+          # until its PC/club is explicitly assigned to a rollout ring.
+          export AUTO_UPDATE_ENABLED="${{ vars.AUTO_UPDATE_ENABLED || 'true' }}"
+          export AUTO_UPDATE_CHECK_SECONDS="${{ vars.AUTO_UPDATE_CHECK_SECONDS || '300' }}"
+          export AUTO_UPDATE_RING="${{ vars.AUTO_UPDATE_RING || 'canary' }}"
+          export AUTO_UPDATE_CANARY_PC_IDS="${{ vars.AUTO_UPDATE_CANARY_PC_IDS }}"
+          export AUTO_UPDATE_CANARY_NODE_IDS="${{ vars.AUTO_UPDATE_CANARY_NODE_IDS }}"
+          export AUTO_UPDATE_PILOT_CLUB_IDS="${{ vars.AUTO_UPDATE_PILOT_CLUB_IDS }}"
+          export AUTO_UPDATE_SELECTED_CLUB_IDS="${{ vars.AUTO_UPDATE_SELECTED_CLUB_IDS }}"
+
           export TELEGRAM_BOT_TOKEN="${{ secrets.TELEGRAM_BOT_TOKEN }}"
           export TELEGRAM_BOT_USERNAME="clubPay_tg_bot"
 
