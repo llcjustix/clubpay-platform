@@ -33,7 +33,8 @@ jobs:
           pwsh -NoProfile -Command "[scriptblock]::Create((Get-Content -Path 'deploy/controller-node/update-windows.ps1' -Raw)) | Out-Null"
           mkdir -p dist/windows/ClubPay-Controller/web dist/windows/ClubPay-Controller/migrations
           GOOS=windows GOARCH=amd64 CGO_ENABLED=0 go build -trimpath -ldflags="-s -w -X main.buildVersion=${GITHUB_REF_NAME}" -o dist/windows/ClubPay-Controller/ClubPay.Controller.exe ./cmd/api
-          printf '{"version":"%s"}\n' "${GITHUB_REF_NAME}" > dist/windows/ClubPay-Controller/clubpay-version.json
+          printf '{"version":"%s"}
+' "${GITHUB_REF_NAME}" > dist/windows/ClubPay-Controller/clubpay-version.json
           cp deploy/controller-node/controller.env.example dist/windows/ClubPay-Controller/
           cp deploy/controller-node/install-windows.cmd dist/windows/ClubPay-Controller/
           cp deploy/controller-node/update-windows.cmd dist/windows/ClubPay-Controller/
@@ -49,8 +50,9 @@ jobs:
           GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go build -trimpath -ldflags="-s -w -X main.buildVersion=${GITHUB_REF_NAME}" -o dist/linux-arm64/clubpay-controller/clubpay-controller ./cmd/api
           cp deploy/controller-node/controller.env.example dist/linux-arm64/clubpay-controller/
           cp deploy/controller-node/install-linux.sh dist/linux-arm64/clubpay-controller/
+          cp deploy/controller-node/update-linux.sh dist/linux-arm64/clubpay-controller/
           cp deploy/controller-node/README.md dist/linux-arm64/clubpay-controller/
-          chmod +x dist/linux-arm64/clubpay-controller/install-linux.sh
+          chmod +x dist/linux-arm64/clubpay-controller/install-linux.sh dist/linux-arm64/clubpay-controller/update-linux.sh
           cp migrations/*.sql dist/linux-arm64/clubpay-controller/migrations/
           cp -R web/dist/. dist/linux-arm64/clubpay-controller/web/
           cd dist/linux-arm64 && tar -czf ../ClubPay-Controller-linux-arm64.tar.gz clubpay-controller
