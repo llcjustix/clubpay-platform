@@ -206,6 +206,20 @@ type ClubSettingsPayload = {
   users: ClubUser[];
 };
 
+type LauncherCatalogApp = {
+  id: string;
+  app_key: string;
+  name: string;
+  exe_path: string;
+  args: string;
+  category: 'shooter' | 'strategy' | 'other';
+  source: string;
+  last_seen_at: string;
+  pc_id: string;
+  pc_label: string;
+  external_pc_id: string;
+};
+
 type Order = {
   id: string;
   invoice_id: string;
@@ -653,6 +667,10 @@ function AuthenticatedApp({ path }: { path: string }) {
     if (!canViewSettings(auth, currentClubID)) return <AdminPage {...commonProps} currentPath="/admin" />;
     return <SettingsPage {...commonProps} onReloadAuth={loadMe} />;
   }
+  if (path.startsWith('/admin/games')) {
+    if (!canViewAdmin(auth, currentClubID)) return <Centered text="Недостаточно прав" />;
+    return <LauncherCatalogPage {...commonProps} />;
+  }
   if (path.startsWith('/admin')) {
     if (!canViewAdmin(auth, currentClubID)) return <Centered text="Недостаточно прав" />;
     return <AdminPage {...commonProps} />;
@@ -754,6 +772,7 @@ function HomePage(props: WorkspaceProps) {
         <div className="link-grid">
           {canOpenSettings && <LinkButton href="/settings/pcs" icon={<QrCode size={18} />}>QR-коды компьютеров</LinkButton>}
           <LinkButton href="/admin" icon={<Activity size={18} />}>Панель менеджера</LinkButton>
+          <LinkButton href="/admin/games" icon={<Gamepad2 size={18} />}>Каталог игр</LinkButton>
           {canOpenOwner && <LinkButton href="/reports" icon={<Banknote size={18} />}>Дашборд</LinkButton>}
           {canOpenSettings && <LinkButton href="/settings" icon={<Settings size={18} />}>Настройки клуба</LinkButton>}
         </div>
@@ -1717,6 +1736,7 @@ function AdminPage({ auth, selectedClubID, currentPath, onClubChange, onLogout }
     <main className="shell workspace-shell">
       <WorkspaceHeader auth={auth} selectedClubID={selectedClubID} currentPath={currentPath} onClubChange={onClubChange} onLogout={onLogout} eyebrow="Операции клуба" title={pageTitle} />
 
+      <div className="button-row"><LinkButton href="/admin/games" variant="secondary" icon={<Gamepad2 size={16} />}>Каталог игр</LinkButton></div>
       {message && <Notice tone="success">{message}</Notice>}
       {telegramPrompt && <TelegramVoucherModal prompt={telegramPrompt} onClose={() => setTelegramPrompt(null)} onCopied={() => setMessage('Ссылка Telegram скопирована')} />}
       {endSessionDraft && (
@@ -1898,6 +1918,48 @@ function ReportsPage({ auth, selectedClubID, currentPath, onClubChange, onLogout
       )}
     </main>
   );
+}
+
+function LauncherCatalogPage({ auth, selectedClubID, currentPath, onClubChange, onLogout }: WorkspaceProps) {
+  const [apps, setApps] = useState<LauncherCatalogApp[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
+  const [message, setMessage] = useState('');
+  const [pcFilter, setPcFilter] = useState('');
+
+  async function load() {
+    if (!selectedClubID) return;
+    setLoading(true);
+    try {
+      const payload = await api<{ apps: LauncherCatalogApp[] }>(`/api/backoffice/clubs/${selectedClubID}/launcher-apps`);
+      setApps(payload.apps || []);
+      setError('');
+    } catch (err) {
+      setError(String((err as Error).message || err));
+    } finally { setLoading(false); }
+  }
+  useEffect(() => { load(); }, [selectedClubID]);
+
+  async function setCategory(app: LauncherCatalogApp, category: LauncherCatalogApp['category']) {
+    try {
+      await api(`/api/backoffice/launcher-apps/${app.id}/category`, { method: 'POST', body: JSON.stringify({ category }) });
+      setApps((current) => current.map((item) => item.id === app.id ? { ...item, category } : item));
+      setMessage(`Категория «${app.name}» сохранена`);
+    } catch (err) { setError(String((err as Error).message || err)); }
+  }
+  const pcs = Array.from(new Map(apps.map((app) => [app.pc_id, app.pc_label])).entries());
+  const visible = apps.filter((app) => !pcFilter || app.pc_id === pcFilter);
+  return <main className="shell workspace-shell">
+    <WorkspaceHeader auth={auth} selectedClubID={selectedClubID} currentPath={currentPath} onClubChange={onClubChange} onLogout={onLogout} eyebrow="Панель менеджера" title="Каталог игр" />
+    {message && <Notice tone="success">{message}</Notice>}
+    {error && <Notice tone="danger">{error}</Notice>}
+    <Panel className="stack">
+      <SectionTitle icon={<Gamepad2 size={18} />} title="Игры и приложения" caption="Agent Core сам добавляет приложения с каждого ПК. Неизвестные игры, браузеры и Discord попадают в «Другое»; менеджер может изменить категорию." />
+      <div className="button-row"><LinkButton href="/admin" variant="ghost" icon={<Activity size={16} />}>Зал</LinkButton><Button size="sm" variant="secondary" icon={<RefreshCw size={15} />} onClick={load}>Обновить</Button></div>
+      <label className="form-block">Компьютер<select value={pcFilter} onChange={(event) => setPcFilter(event.target.value)}><option value="">Все компьютеры</option>{pcs.map(([id, label]) => <option key={id} value={id}>{label}</option>)}</select></label>
+      {loading ? <EmptyState text="Загружаем каталог" /> : visible.length === 0 ? <EmptyState text="Агент пока не прислал приложения. Откройте лаунчер на нужном ПК или дождитесь ближайшей синхронизации." /> : <div className="table-wrap"><table><thead><tr><th>Приложение</th><th>Компьютер</th><th>Категория</th><th>Последняя синхронизация</th></tr></thead><tbody>{visible.map((app) => <tr key={app.id}><td><strong>{app.name}</strong><small>{app.args || app.exe_path}</small></td><td>{app.pc_label}</td><td><select value={app.category} onChange={(event) => setCategory(app, event.target.value as LauncherCatalogApp['category'])}><option value="shooter">Шутеры</option><option value="strategy">Стратегии</option><option value="other">Другое</option></select></td><td>{formatDateTime(app.last_seen_at)}</td></tr>)}</tbody></table></div>}
+    </Panel>
+  </main>;
 }
 
 function defaultZoneForm(_zones: Zone[] = []): Partial<Zone> {

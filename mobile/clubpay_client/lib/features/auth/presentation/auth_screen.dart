@@ -63,6 +63,20 @@ class _AuthScreenState extends ConsumerState<AuthScreen> {
     }
   }
 
+  Future<void> _testLogin() async {
+    setState(() {
+      _busy = true;
+      _error = null;
+    });
+    try {
+      await ref.read(authProvider.notifier).testLogin();
+    } catch (e) {
+      if (mounted) setState(() => _error = errorLabel(context, e));
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
   Future<void> _verify() async {
     setState(() {
       _busy = true;
@@ -140,6 +154,14 @@ class _AuthScreenState extends ConsumerState<AuthScreen> {
           ActionButton(label: l.continueLabel, onPressed: _start, busy: _busy),
           gap,
           Text(l.signInHelp, style: Theme.of(context).textTheme.bodySmall),
+          const SizedBox(height: 10),
+          OutlinedButton.icon(
+            onPressed: _busy ? null : _testLogin,
+            icon: const Icon(CupertinoIcons.play_circle_fill),
+            label: Text(l.testLogin),
+          ),
+          const SizedBox(height: 6),
+          Text(l.testLoginHelp, style: Theme.of(context).textTheme.bodySmall),
         ] else ...[
           InfoCard(
             children: [

@@ -1009,6 +1009,18 @@ abstract class AppLocalizations {
   /// In ru, this message translates to:
   /// **'Бронирование сейчас временно недоступно. Попробуйте позже.'**
   String get reservationUnavailable;
+
+  /// No description provided for @testLogin.
+  ///
+  /// In ru, this message translates to:
+  /// **'Войти тестовым профилем'**
+  String get testLogin;
+
+  /// No description provided for @testLoginHelp.
+  ///
+  /// In ru, this message translates to:
+  /// **'Доступно только для разрешённого тестового номера.'**
+  String get testLoginHelp;
 }
 
 class _AppLocalizationsDelegate

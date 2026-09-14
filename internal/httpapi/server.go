@@ -200,6 +200,7 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("POST /api/payments/mock/success/{invoice_id}", s.handleMockPaymentSuccess)
 	mux.HandleFunc("POST /api/core/events", s.handleCoreEvent)
 	mux.HandleFunc("GET /api/core/bootstrap", s.handleCoreBootstrap)
+	mux.HandleFunc("POST /api/core/launcher/catalog", s.handleCoreLauncherCatalog)
 	// Called only by an authenticated Agent when a player ends their own session from the kiosk UI.
 	// It deliberately uses the same voucher/Telegram delivery flow as the admin endpoint below.
 	mux.HandleFunc("POST /api/core/agent/session/end", s.handleAgentEndSession)
@@ -237,6 +238,8 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("POST /api/backoffice/networks", s.handleBackofficeCreateNetwork)
 	mux.HandleFunc("POST /api/backoffice/networks/{network_id}", s.handleBackofficeUpdateNetwork)
 	mux.HandleFunc("GET /api/backoffice/clubs/{club_id}/settings", s.handleBackofficeClubSettings)
+	mux.HandleFunc("GET /api/backoffice/clubs/{club_id}/launcher-apps", s.handleBackofficeLauncherApps)
+	mux.HandleFunc("POST /api/backoffice/launcher-apps/{app_id}/category", s.handleBackofficeLauncherAppCategory)
 	mux.HandleFunc("POST /api/backoffice/clubs/{club_id}", s.handleBackofficeUpdateClub)
 	mux.HandleFunc("DELETE /api/backoffice/clubs/{club_id}", s.handleBackofficeDeleteClub)
 	mux.HandleFunc("POST /api/backoffice/clubs/{club_id}/zones", s.handleBackofficeCreateZone)

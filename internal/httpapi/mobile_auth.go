@@ -439,6 +439,87 @@ func (s *Server) handleMobileVerify(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, 200, result)
 }
+
+// handleMobileTestLogin is a temporary QA entry point. It is available only when
+// test payments are explicitly enabled AND the requested phone is in the non-empty
+// server-side allow-list. No credentials or OTP secrets are shipped to the mobile app.
+func (s *Server) handleMobileTestLogin(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Phone  string `json:"phone"`
+		Device string `json:"device_id"`
+	}
+	if !mobileDecode(w, r, &req) {
+		return
+	}
+	if !mobilePhonePattern.MatchString(req.Phone) || !mobileDevicePattern.MatchString(req.Device) {
+		writeError(w, http.StatusBadRequest, "invalid_phone_or_device")
+		return
+	}
+	if !s.mobileTestLoginAllowed(req.Phone) {
+		writeError(w, http.StatusNotFound, "test_login_unavailable")
+		return
+	}
+	host, _, _ := net.SplitHostPort(r.RemoteAddr)
+	allowed, err := s.mobileRate(r.Context(), "test-login:"+host+":"+req.Phone, 10, 15*time.Minute)
+	if err != nil {
+		mobileInternal(w)
+		return
+	}
+	if !allowed {
+		writeError(w, http.StatusTooManyRequests, "rate_limited")
+		return
+	}
+	ctx := r.Context()
+	tx, err := s.db.Begin(ctx)
+	if err != nil {
+		mobileInternal(w)
+		return
+	}
+	defer tx.Rollback(ctx)
+	var playerID string
+	err = tx.QueryRow(ctx, `INSERT INTO players(phone,phone_verified_at) VALUES($1,now())
+		ON CONFLICT(phone) DO UPDATE SET phone_verified_at=COALESCE(players.phone_verified_at,now()),updated_at=now()
+		WHERE players.status='active' RETURNING id`, req.Phone).Scan(&playerID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		writeError(w, http.StatusForbidden, "account_unavailable")
+		return
+	}
+	if err != nil {
+		mobileInternal(w)
+		return
+	}
+	expiry := time.Now().UTC().Add(mobileSessionTTL)
+	var session string
+	err = tx.QueryRow(ctx, `INSERT INTO mobile_sessions(player_id,device_hash,expires_at) VALUES($1,$2,$3) RETURNING id`, playerID, hashToken(req.Device), expiry).Scan(&session)
+	var result map[string]any
+	if err == nil {
+		result, err = mobileIssue(ctx, tx, session, expiry)
+	}
+	if err == nil {
+		err = mobileAudit(ctx, tx, "mobile.test_login", session)
+	}
+	if err == nil {
+		err = tx.Commit(ctx)
+	}
+	if err != nil {
+		mobileInternal(w)
+		return
+	}
+	writeJSON(w, http.StatusOK, result)
+}
+
+func (s *Server) mobileTestLoginAllowed(phone string) bool {
+	if !s.cfg.MobileTestPaymentsEnabled || len(s.cfg.MobileTestPaymentPhones) == 0 {
+		return false
+	}
+	for _, allowed := range s.cfg.MobileTestPaymentPhones {
+		if allowed == phone {
+			return true
+		}
+	}
+	return false
+}
+
 func (s *Server) handleMobileRefresh(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Refresh string `json:"refresh_token"`

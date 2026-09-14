@@ -55,6 +55,22 @@ func TestMobileInputAndSecrets(t *testing.T) {
 	}
 }
 
+func TestMobileTestLoginAccess(t *testing.T) {
+	s := &Server{cfg: config.Config{MobileTestPaymentsEnabled: true, MobileTestPaymentPhones: []string{"+998908062614"}}}
+	if !s.mobileTestLoginAllowed("+998908062614") {
+		t.Fatal("explicit test phone must be allowed")
+	}
+	if s.mobileTestLoginAllowed("+998901234567") {
+		t.Fatal("other numbers must not receive a test session")
+	}
+	if (&Server{cfg: config.Config{MobileTestPaymentsEnabled: true}}).mobileTestLoginAllowed("+998908062614") {
+		t.Fatal("test login requires a non-empty allow-list")
+	}
+	if (&Server{cfg: config.Config{MobileTestPaymentsEnabled: false, MobileTestPaymentPhones: []string{"+998908062614"}}}).mobileTestLoginAllowed("+998908062614") {
+		t.Fatal("disabled test payments must disable test login")
+	}
+}
+
 func TestMobileTestPaymentAccess(t *testing.T) {
 	profile := playerIdentity{Phone: "+998901234567"}
 	if !(&Server{cfg: config.Config{MobileTestPaymentsEnabled: true}}).mobileTestPaymentAllowed(profile) {
