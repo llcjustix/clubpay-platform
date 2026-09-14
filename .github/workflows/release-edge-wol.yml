@@ -28,8 +28,7 @@ jobs:
           cp deploy/pi/install-edge-wol.sh dist/linux-arm64/
           cp deploy/pi/update-edge-wol.sh dist/linux-arm64/
           cp deploy/pi/check-edge-wol-update.sh dist/linux-arm64/
-          printf '%s
-' "${GITHUB_REF_NAME}" > dist/linux-arm64/clubpay-edge-wol-version
+          printf '%s\n' "$GITHUB_REF_NAME" > dist/linux-arm64/clubpay-edge-wol-version
           chmod +x dist/linux-arm64/*.sh dist/linux-arm64/clubpay-edge-wol
           cd dist/windows && zip -r ../clubpay-edge-wol-windows-amd64.zip .
           cd ../linux-arm64 && tar -czf ../clubpay-edge-wol-linux-arm64.tar.gz .
