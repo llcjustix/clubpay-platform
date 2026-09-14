@@ -331,7 +331,11 @@ func (s *Server) nodeStatusPayload() map[string]any {
 		"manager_online_payments_enabled": s.cfg.ManagerOnlinePayments,
 		"online_payments_enabled":         !s.onlinePaymentsDisabledForNode(),
 		"split_payments_enabled":          s.cfg.SplitPaymentsEnabled,
-		"capabilities":                    s.nodeCapabilities(),
+		// Expose configuration readiness, never credential values. This lets
+		// deployment monitoring distinguish a missing secret from a provider
+		// delivery failure without leaking SMS credentials.
+		"sms_configured": strings.TrimSpace(s.cfg.SMSUsername) != "" && strings.TrimSpace(s.cfg.SMSSecretKey) != "" && s.cfg.SMSService > 0,
+		"capabilities":   s.nodeCapabilities(),
 	}
 }
 
