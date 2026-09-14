@@ -92,6 +92,7 @@ class _ClubBrowserScreenState extends ConsumerState<ClubBrowserScreen> {
           if (reservationsChanged) _reservations = reservations;
           if (query.trim().isEmpty) {
             _hasFavorites = clubs.any((club) => club.favorite);
+            ref.read(favoriteTabProvider.notifier).set(_hasFavorites);
           }
           _catalogError = null;
           _loadingInitialCatalog = false;
@@ -130,130 +131,135 @@ class _ClubBrowserScreenState extends ConsumerState<ClubBrowserScreen> {
   Future<void> _openReservation(MobileReservation reservation) async {
     var starting = false;
     await showModalBottomSheet<void>(
-        context: context,
-        builder: (sheet) => StatefulBuilder(
-          builder: (sheet, setSheetState) {
-            final canStart =
-                !DateTime.now().isBefore(reservation.heldFrom) &&
-                DateTime.now().isBefore(reservation.checkinDeadline);
-            return SafeArea(
-              child: Padding(
-                padding: const EdgeInsets.fromLTRB(20, 20, 20, 28),
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
-                    Text(
-                      'Ваша бронь',
-                      style: Theme.of(context).textTheme.titleLarge,
+      context: context,
+      builder: (sheet) => StatefulBuilder(
+        builder: (sheet, setSheetState) {
+          final canStart =
+              !DateTime.now().isBefore(reservation.heldFrom) &&
+              DateTime.now().isBefore(reservation.checkinDeadline);
+          return SafeArea(
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(20, 20, 20, 28),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Text(
+                    'Ваша бронь',
+                    style: Theme.of(context).textTheme.titleLarge,
+                  ),
+                  const SizedBox(height: 8),
+                  Text(
+                    '${reservation.clubName} · ${reservation.pcLabel}',
+                    style: const TextStyle(color: ClubColors.muted),
+                  ),
+                  const SizedBox(height: 20),
+                  if (canStart) ...[
+                    const Text(
+                      'Вы на месте? Начните игру в ClubPay — затем выберите оплату или используйте уже оплаченное время.',
                     ),
-                    const SizedBox(height: 8),
+                    const SizedBox(height: 14),
+                    ActionButton(
+                      label: 'Начать игру',
+                      icon: CupertinoIcons.play_fill,
+                      busy: starting,
+                      onPressed: starting
+                          ? null
+                          : () async {
+                              setSheetState(() => starting = true);
+                              try {
+                                final token = await ref
+                                    .read(clubCatalogRepositoryProvider)
+                                    .startReservation(id: reservation.id);
+                                ref
+                                    .read(analyticsProvider)
+                                    .track(
+                                      'reservation_started',
+                                      screen: 'club_catalog',
+                                    );
+                                ref
+                                    .read(catalogRevisionProvider.notifier)
+                                    .bump();
+                                if (!mounted || !sheet.mounted) return;
+                                Navigator.pop(sheet);
+                                context.push(
+                                  '/computer/$token',
+                                  extra: reservation.id,
+                                );
+                              } catch (error) {
+                                if (mounted) {
+                                  showFailure(context, error);
+                                }
+                              } finally {
+                                if (sheet.mounted) {
+                                  setSheetState(() => starting = false);
+                                }
+                              }
+                            },
+                    ),
+                  ] else
                     Text(
-                      '${reservation.clubName} · ${reservation.pcLabel}',
+                      DateTime.now().isBefore(reservation.heldFrom)
+                          ? 'Кнопка «Начать игру» станет доступна в ${_time(reservation.heldFrom)} — за 15 минут до начала брони.'
+                          : 'Время для начала игры закончилось. Бронь больше недоступна.',
                       style: const TextStyle(color: ClubColors.muted),
                     ),
-                    const SizedBox(height: 20),
-                    if (canStart) ...[
-                      const Text('Вы на месте? Начните игру в ClubPay — затем выберите оплату или используйте уже оплаченное время.'),
-                      const SizedBox(height: 14),
-                      ActionButton(
-                        label: 'Начать игру',
-                        icon: CupertinoIcons.play_fill,
-                        busy: starting,
-                        onPressed: starting
-                            ? null
-                            : () async {
-                                setSheetState(() => starting = true);
-                                try {
-                                  final token = await ref
-                                      .read(clubCatalogRepositoryProvider)
-                                      .startReservation(id: reservation.id);
-                                  ref
-                                      .read(analyticsProvider)
-                                      .track(
-                                        'reservation_started',
-                                        screen: 'club_catalog',
-                                      );
-                                  ref
-                                      .read(catalogRevisionProvider.notifier)
-                                      .bump();
-                                  if (!mounted || !sheet.mounted) return;
-                                  Navigator.pop(sheet);
-                                  context.push('/computer/$token');
-                                } catch (error) {
-                                  if (mounted) {
-                                    showFailure(context, error);
-                                  }
-                                } finally {
-                                  if (sheet.mounted) {
-                                    setSheetState(() => starting = false);
-                                  }
-                                }
-                              },
-                      ),
-                    ] else
-                      Text(
-                        DateTime.now().isBefore(reservation.heldFrom)
-                            ? 'Кнопка «Начать игру» станет доступна в ${_time(reservation.heldFrom)} — за 15 минут до начала брони.'
-                            : 'Время для начала игры закончилось. Бронь больше недоступна.',
-                        style: const TextStyle(color: ClubColors.muted),
-                      ),
-                    const SizedBox(height: 14),
-                    ListTile(
-                      enabled: DateTime.now().isBefore(reservation.heldFrom),
-                      leading: const Icon(CupertinoIcons.calendar),
-                      title: const Text('Перенести бронь'),
-                      subtitle: const Text('Изменить время и длительность'),
-                      onTap: () {
-                        Navigator.pop(sheet);
-                        context.push(
-                          '/reservation/${reservation.pcID}',
-                          extra: reservation,
-                        );
-                      },
+                  const SizedBox(height: 14),
+                  ListTile(
+                    enabled: DateTime.now().isBefore(reservation.heldFrom),
+                    leading: const Icon(CupertinoIcons.calendar),
+                    title: const Text('Перенести бронь'),
+                    subtitle: const Text('Изменить время и длительность'),
+                    onTap: () {
+                      Navigator.pop(sheet);
+                      context.push(
+                        '/reservation/${reservation.pcID}',
+                        extra: reservation,
+                      );
+                    },
+                  ),
+                  ListTile(
+                    enabled: DateTime.now().isBefore(reservation.heldFrom),
+                    leading: const Icon(
+                      CupertinoIcons.xmark_circle,
+                      color: ClubColors.red,
                     ),
-                    ListTile(
-                      enabled: DateTime.now().isBefore(reservation.heldFrom),
-                      leading: const Icon(
-                        CupertinoIcons.xmark_circle,
-                        color: ClubColors.red,
-                      ),
-                      title: const Text(
-                        'Отменить бронь',
-                        style: TextStyle(color: ClubColors.red),
-                      ),
-                      onTap: () async {
-                        Navigator.pop(sheet);
-                        try {
-                          await ref
-                              .read(clubCatalogRepositoryProvider)
-                              .cancelReservation(reservation.id);
-                          ref
-                              .read(analyticsProvider)
-                              .track(
-                                'reservation_cancelled',
-                                screen: 'club_catalog',
-                              );
-                          ref.read(catalogRevisionProvider.notifier).bump();
-                          if (mounted) {
-                            ScaffoldMessenger.of(context).showSnackBar(
-                              const SnackBar(content: Text('Бронь отменена.')),
+                    title: const Text(
+                      'Отменить бронь',
+                      style: TextStyle(color: ClubColors.red),
+                    ),
+                    onTap: () async {
+                      Navigator.pop(sheet);
+                      try {
+                        await ref
+                            .read(clubCatalogRepositoryProvider)
+                            .cancelReservation(reservation.id);
+                        ref
+                            .read(analyticsProvider)
+                            .track(
+                              'reservation_cancelled',
+                              screen: 'club_catalog',
                             );
-                          }
-                        } catch (error) {
-                          if (mounted) {
-                            showFailure(context, error);
-                          }
+                        ref.read(catalogRevisionProvider.notifier).bump();
+                        if (mounted) {
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            const SnackBar(content: Text('Бронь отменена.')),
+                          );
                         }
-                      },
-                    ),
-                  ],
-                ),
+                      } catch (error) {
+                        if (mounted) {
+                          showFailure(context, error);
+                        }
+                      }
+                    },
+                  ),
+                ],
               ),
-            );
-          },
-        ),
-      );
+            ),
+          );
+        },
+      ),
+    );
   }
 
   @override
@@ -506,9 +512,10 @@ class _ClubDetailScreenState extends ConsumerState<ClubDetailScreen> {
 
   Future<void> _toggleFavorite(ClubCatalog club) async {
     try {
-      await ref
+      final favorite = await ref
           .read(clubCatalogRepositoryProvider)
           .toggleFavorite(club.id, favorite: club.favorite);
+      ref.read(favoriteTabProvider.notifier).set(favorite);
       ref.read(catalogRevisionProvider.notifier).bump();
       if (mounted) _reload();
     } catch (error) {
@@ -645,11 +652,7 @@ class _ClubDetailScreenState extends ConsumerState<ClubDetailScreen> {
     },
   );
 
-  void _selectPC(
-    ClubCatalog club,
-    ClubZone zone,
-    ClubComputer pc,
-  ) async {
+  void _selectPC(ClubCatalog club, ClubZone zone, ClubComputer pc) async {
     ref.read(analyticsProvider).track('pc_selected', screen: 'club_detail');
     context.push('/computer/${pc.token}');
   }

@@ -71,12 +71,17 @@ class _SessionScreenState extends ConsumerState<SessionScreen>
       if (!mounted) return;
       setState(() => _status = result);
       if (result?.terminal == true) {
-        ref.read(analyticsProvider).track(
-          result?.phase == SessionPhase.active ? 'session_started' : 'session_finished',
-          screen: 'session',
-        );
+        ref
+            .read(analyticsProvider)
+            .track(
+              result?.phase == SessionPhase.active
+                  ? 'session_started'
+                  : 'session_finished',
+              screen: 'session',
+            );
         await repo.clear();
         ref.invalidate(balancesProvider);
+        ref.read(catalogRevisionProvider.notifier).bump();
       } else if (++_checks < 60) {
         _timer = Timer(const Duration(seconds: 3), _check);
       } else {

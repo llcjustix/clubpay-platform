@@ -141,31 +141,35 @@ class AppPage extends StatelessWidget {
                     : null),
           ),
     bottomNavigationBar: bottom,
-    body: SafeArea(
-      child: Align(
-        alignment: Alignment.topCenter,
-        child: ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: 560),
-          child: ListView(
-            padding: EdgeInsets.fromLTRB(16, largeTitle ? 48 : 24, 16, 32),
-            children: [
-              if (largeTitle)
-                Padding(
-                  padding: const EdgeInsets.only(bottom: 16, left: 4),
-                  child: Row(
-                    children: [
-                      Expanded(
-                        child: Text(
-                          title,
-                          style: Theme.of(context).textTheme.headlineLarge,
+    body: GestureDetector(
+      behavior: HitTestBehavior.translucent,
+      onTap: () => FocusManager.instance.primaryFocus?.unfocus(),
+      child: SafeArea(
+        child: Align(
+          alignment: Alignment.topCenter,
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 560),
+            child: ListView(
+              padding: EdgeInsets.fromLTRB(16, largeTitle ? 48 : 24, 16, 32),
+              children: [
+                if (largeTitle)
+                  Padding(
+                    padding: const EdgeInsets.only(bottom: 16, left: 4),
+                    child: Row(
+                      children: [
+                        Expanded(
+                          child: Text(
+                            title,
+                            style: Theme.of(context).textTheme.headlineLarge,
+                          ),
                         ),
-                      ),
-                      ...?actions,
-                    ],
+                        ...?actions,
+                      ],
+                    ),
                   ),
-                ),
-              ...children,
-            ],
+                ...children,
+              ],
+            ),
           ),
         ),
       ),
@@ -461,36 +465,36 @@ class PageSkeleton extends StatelessWidget {
       children: [
         const SkeletonBox(width: 150, height: 24),
         const SizedBox(height: 28),
-        for (var index = 0; index < rows; index++) ...[
-          Container(
-            height: 74,
-            padding: const EdgeInsets.all(16),
-            decoration: BoxDecoration(
-              color: ClubColors.surface,
-              borderRadius: BorderRadius.circular(
-                index == 0 || index == rows - 1 ? 18 : 0,
-              ),
-            ),
-            child: Row(
-              children: [
-                const SkeletonBox(width: 34, height: 34),
-                const SizedBox(width: 14),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      SkeletonBox(width: index.isEven ? 160 : 124, height: 14),
-                      const SizedBox(height: 9),
-                      const SkeletonBox(width: 96, height: 11),
-                    ],
-                  ),
+        SettingsGroup(
+          inset: 0,
+          children: [
+            for (var index = 0; index < rows; index++)
+              Container(
+                height: 74,
+                padding: const EdgeInsets.all(16),
+                child: Row(
+                  children: [
+                    const SkeletonBox(width: 34, height: 34),
+                    const SizedBox(width: 14),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          SkeletonBox(
+                            width: index.isEven ? 160 : 124,
+                            height: 14,
+                          ),
+                          const SizedBox(height: 9),
+                          const SkeletonBox(width: 96, height: 11),
+                        ],
+                      ),
+                    ),
+                  ],
                 ),
-              ],
-            ),
-          ),
-          if (index < rows - 1) const SizedBox(height: 1),
-        ],
+              ),
+          ],
+        ),
       ],
     ),
   );

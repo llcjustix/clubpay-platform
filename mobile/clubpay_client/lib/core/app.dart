@@ -101,7 +101,10 @@ final routerProvider = Provider<GoRouter>((ref) {
       ),
       GoRoute(
         path: '/computer/:token',
-        builder: (_, s) => ComputerScreen(token: s.pathParameters['token']!),
+        builder: (_, s) => ComputerScreen(
+          token: s.pathParameters['token']!,
+          reservationId: s.extra as String?,
+        ),
       ),
       GoRoute(
         path: '/qr/:token',

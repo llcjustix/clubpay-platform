@@ -36,6 +36,12 @@ func (s *Server) handleMobileReservations(w http.ResponseWriter, r *http.Request
 	_, _ = s.db.Exec(r.Context(), `UPDATE mobile_reservations
 SET status='expired',updated_at=now()
 WHERE status IN ('confirmed','checked_in') AND starts_at + interval '15 minutes' < now()`)
+	_, _ = s.db.Exec(r.Context(), `UPDATE mobile_reservations r
+SET status='started',updated_at=now()
+WHERE r.status='checked_in' AND EXISTS (
+  SELECT 1 FROM game_access_grants g
+  WHERE g.pc_ref_id=r.pc_ref_id AND g.player_id=r.player_id AND g.status='accepted'
+)`)
 	rows, err := s.queryMaps(r.Context(), `SELECT r.id::text,r.pc_ref_id::text,r.status,r.starts_at,
  r.starts_at + make_interval(mins => r.duration_minutes) AS ends_at,
  r.starts_at - interval '15 minutes' AS held_from,
@@ -43,7 +49,7 @@ WHERE status IN ('confirmed','checked_in') AND starts_at + interval '15 minutes'
  r.duration_minutes/60 AS duration_hours,c.name AS club_name,z.name AS zone_name,p.label AS pc_label
 FROM mobile_reservations r
 JOIN clubs c ON c.id=r.club_id JOIN pc_refs p ON p.id=r.pc_ref_id JOIN zones z ON z.id=p.zone_id
-WHERE r.player_id=$1 AND r.starts_at > now()-interval '24 hours'
+WHERE r.player_id=$1 AND r.status IN ('confirmed','checked_in') AND r.starts_at > now()-interval '24 hours'
 ORDER BY r.starts_at ASC`, p.ID)
 	if err != nil {
 		mobileInternal(w)

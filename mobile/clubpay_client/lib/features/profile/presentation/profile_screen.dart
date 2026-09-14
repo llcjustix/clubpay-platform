@@ -7,7 +7,6 @@ import '../../../core/club_navigation.dart';
 import '../../../core/club_theme.dart';
 import '../../../core/providers.dart';
 import '../../../core/ui.dart';
-import '../../catalog/data/club_catalog_repository.dart';
 import '../domain/club_balance.dart';
 
 class BalanceList extends StatelessWidget {
@@ -86,27 +85,11 @@ class ProfileScreen extends ConsumerStatefulWidget {
 class _ProfileScreenState extends ConsumerState<ProfileScreen>
     with WidgetsBindingObserver {
   Timer? _balanceTimer;
-  bool _hasFavorites = false;
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
     _watchBalances();
-    _loadFavorites();
-    ref.listenManual(catalogRevisionProvider, (previous, next) => _loadFavorites());
-  }
-
-  Future<void> _loadFavorites() async {
-    try {
-      final favorites = await ClubCatalogRepository(
-        ref.read(apiProvider),
-      ).favorites();
-      if (mounted && _hasFavorites != favorites.isNotEmpty) {
-        setState(() => _hasFavorites = favorites.isNotEmpty);
-      }
-    } catch (_) {
-      // A temporary catalog failure must not hide an already-visible tab.
-    }
   }
 
   void _watchBalances() {
@@ -144,11 +127,15 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen>
       return const Scaffold(body: SafeArea(child: PageSkeleton(rows: 3)));
     }
     final balances = ref.watch(balancesProvider);
+    final hasFavorites = ref.watch(favoriteTabProvider);
     final name = player.firstName.isEmpty ? l.yourAccount : player.firstName;
     return AppPage(
       title: widget.profile ? l.profile : l.appName,
       largeTitle: !widget.profile,
-      bottom: ClubNavigation(profile: widget.profile, showFavorites: _hasFavorites),
+      bottom: ClubNavigation(
+        profile: widget.profile,
+        showFavorites: hasFavorites,
+      ),
       children: [
         if (widget.profile) ...[
           const SizedBox(height: 12),

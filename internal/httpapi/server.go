@@ -3281,6 +3281,12 @@ FROM mobile_reservations
 WHERE pc_ref_id=$1::uuid AND status IN ('confirmed','checked_in')
   AND starts_at - interval '15 minutes' <= now()
   AND starts_at + interval '15 minutes' >= now()
+  AND NOT EXISTS (
+    SELECT 1 FROM game_access_grants g
+    WHERE g.pc_ref_id=mobile_reservations.pc_ref_id
+      AND g.player_id=mobile_reservations.player_id
+      AND g.status='accepted'
+  )
 ORDER BY starts_at ASC LIMIT 1`, row.PCID).Scan(&reservation.StartsAt, &reservation.CheckinDeadline)
 	reservationActive := err == nil
 	if err != nil && !errors.Is(err, pgx.ErrNoRows) {

@@ -9,8 +9,9 @@ import '../../../core/ui.dart';
 import '../domain/qr_models.dart';
 
 class ComputerScreen extends ConsumerStatefulWidget {
-  const ComputerScreen({super.key, required this.token});
+  const ComputerScreen({super.key, required this.token, this.reservationId});
   final String token;
+  final String? reservationId;
   @override
   ConsumerState<ComputerScreen> createState() => _ComputerScreenState();
 }
@@ -123,12 +124,14 @@ class _ComputerScreenState extends ConsumerState<ComputerScreen> {
           'payme' => l.payme,
           _ => l.mock,
         };
-        final status = switch (pc.status) {
-          'available' => l.available,
-          'sleeping' => l.sleeping,
-          'occupied' || 'frozen' => l.occupied,
-          _ => l.maintenance,
-        };
+        final status = widget.reservationId != null
+            ? 'Ваша бронь'
+            : switch (pc.status) {
+                'available' => l.available,
+                'sleeping' => l.sleeping,
+                'occupied' || 'frozen' => l.occupied,
+                _ => l.maintenance,
+              };
         return AppPage(
           title: pc.clubName,
           leading: Padding(
@@ -166,7 +169,9 @@ class _ComputerScreenState extends ConsumerState<ComputerScreen> {
               children: [
                 SettingsRow(
                   icon: CupertinoIcons.desktopcomputer,
-                  color: pc.status == 'available'
+                  color: widget.reservationId != null
+                      ? ClubColors.orange
+                      : pc.status == 'available'
                       ? ClubColors.green
                       : ClubColors.orange,
                   title: status,
@@ -194,21 +199,22 @@ class _ComputerScreenState extends ConsumerState<ComputerScreen> {
             ),
             if (!pc.previewOnly) ...[
               const SizedBox(height: 20),
-              ActionButton(
-                label: 'Забронировать ПК',
-                icon: CupertinoIcons.calendar_badge_plus,
-                onPressed: _busy || pc.pcId.isEmpty
-                    ? null
-                    : () {
-                        ref.read(analyticsProvider).track(
-                          'reservation_opened',
-                          screen: 'computer',
-                        );
-                        context.push(
-                          '/reservation/${pc.pcId}?club=${Uri.encodeComponent(pc.clubName)}&zone=${Uri.encodeComponent(pc.zone)}&pc=${Uri.encodeComponent(pc.label)}',
-                        );
-                      },
-              ),
+              if (widget.reservationId == null)
+                ActionButton(
+                  label: 'Забронировать ПК',
+                  icon: CupertinoIcons.calendar_badge_plus,
+                  onPressed: _busy || pc.pcId.isEmpty
+                      ? null
+                      : () {
+                          ref
+                              .read(analyticsProvider)
+                              .track('reservation_opened', screen: 'computer');
+                          context.push(
+                            '/reservation/${pc.pcId}?club=${Uri.encodeComponent(pc.clubName)}&zone=${Uri.encodeComponent(pc.zone)}&pc=${Uri.encodeComponent(pc.label)}',
+                          );
+                        },
+                ),
+              if (widget.reservationId == null) const SizedBox(height: 8),
               const SizedBox(height: 28),
               InfoCard(
                 accent: true,

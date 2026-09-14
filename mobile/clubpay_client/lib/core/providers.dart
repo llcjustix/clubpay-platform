@@ -77,6 +77,16 @@ class CatalogRevisionController extends Notifier<int> {
   void bump() => state++;
 }
 
+final favoriteTabProvider = NotifierProvider<FavoriteTabController, bool>(
+  FavoriteTabController.new,
+);
+
+class FavoriteTabController extends Notifier<bool> {
+  @override
+  bool build() => false;
+  void set(bool value) => state = value;
+}
+
 final localeProvider = NotifierProvider<LocaleController, Locale>(
   LocaleController.new,
 );
