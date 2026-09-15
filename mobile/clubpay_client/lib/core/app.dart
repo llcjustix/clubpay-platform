@@ -1,3 +1,4 @@
+import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
@@ -61,10 +62,19 @@ final routerProvider = Provider<GoRouter>((ref) {
       GoRoute(path: '/splash', builder: (_, _) => const SplashScreen()),
       GoRoute(path: '/auth', builder: (_, _) => const AuthScreen()),
 
-      GoRoute(path: '/offer', builder: (_, _) => const PublicOfferScreen()),
-      GoRoute(path: '/support', builder: (_, _) => const SupportScreen()),
+      GoRoute(
+        path: '/offer',
+        pageBuilder: (_, state) => _iosPage(state, const PublicOfferScreen()),
+      ),
+      GoRoute(
+        path: '/support',
+        pageBuilder: (_, state) => _iosPage(state, const SupportScreen()),
+      ),
       GoRoute(path: '/home', builder: (_, _) => const ClubBrowserScreen()),
-      GoRoute(path: '/clubs-map', builder: (_, _) => const ClubMapScreen()),
+      GoRoute(
+        path: '/clubs-map',
+        pageBuilder: (_, state) => _iosPage(state, const ClubMapScreen()),
+      ),
       GoRoute(path: '/favorites', builder: (_, _) => const FavoritesScreen()),
       GoRoute(
         path: '/profile',
@@ -73,54 +83,68 @@ final routerProvider = Provider<GoRouter>((ref) {
       GoRoute(path: '/scan', redirect: (_, _) => '/home'),
       GoRoute(
         path: '/clubs/:clubId',
-        builder: (_, s) =>
-            ClubDetailScreen(clubId: s.pathParameters['clubId']!),
+        pageBuilder: (_, s) =>
+            _iosPage(s, ClubDetailScreen(clubId: s.pathParameters['clubId']!)),
       ),
       GoRoute(
         path: '/reservation/:pcId',
-        builder: (_, s) => ReservationScreen(
-          pcID: s.pathParameters['pcId']!,
-          clubName:
-              s.uri.queryParameters['club'] ??
-              (s.extra is MobileReservation
-                  ? (s.extra as MobileReservation).clubName
-                  : ''),
-          zoneName:
-              s.uri.queryParameters['zone'] ??
-              (s.extra is MobileReservation
-                  ? (s.extra as MobileReservation).zoneName
-                  : ''),
-          pcLabel:
-              s.uri.queryParameters['pc'] ??
-              (s.extra is MobileReservation
-                  ? (s.extra as MobileReservation).pcLabel
-                  : ''),
-          reservation: s.extra is MobileReservation
-              ? s.extra as MobileReservation
-              : null,
+        pageBuilder: (_, s) => _iosPage(
+          s,
+          ReservationScreen(
+            pcID: s.pathParameters['pcId']!,
+            clubName:
+                s.uri.queryParameters['club'] ??
+                (s.extra is MobileReservation
+                    ? (s.extra as MobileReservation).clubName
+                    : ''),
+            zoneName:
+                s.uri.queryParameters['zone'] ??
+                (s.extra is MobileReservation
+                    ? (s.extra as MobileReservation).zoneName
+                    : ''),
+            pcLabel:
+                s.uri.queryParameters['pc'] ??
+                (s.extra is MobileReservation
+                    ? (s.extra as MobileReservation).pcLabel
+                    : ''),
+            reservation: s.extra is MobileReservation
+                ? s.extra as MobileReservation
+                : null,
+          ),
         ),
       ),
       GoRoute(
         path: '/computer/:token',
-        builder: (_, s) => ComputerScreen(
-          token: s.pathParameters['token']!,
-          reservationId: s.extra as String?,
+        pageBuilder: (_, s) => _iosPage(
+          s,
+          ComputerScreen(
+            token: s.pathParameters['token']!,
+            reservationId: s.extra as String?,
+          ),
         ),
       ),
       GoRoute(
         path: '/qr/:token',
-        builder: (_, s) => ComputerScreen(token: s.pathParameters['token']!),
+        pageBuilder: (_, s) =>
+            _iosPage(s, ComputerScreen(token: s.pathParameters['token']!)),
       ),
-      GoRoute(path: '/session', builder: (_, _) => const SessionScreen()),
+      GoRoute(
+        path: '/session',
+        pageBuilder: (_, state) => _iosPage(state, const SessionScreen()),
+      ),
       GoRoute(
         path: '/active-session',
-        builder: (_, s) =>
-            ActiveSessionScreen(session: s.extra! as MobileActiveSession),
+        pageBuilder: (_, s) => _iosPage(
+          s,
+          ActiveSessionScreen(session: s.extra! as MobileActiveSession),
+        ),
       ),
       GoRoute(
         path: '/payment/return',
-        builder: (_, s) =>
-            SessionScreen(invoice: s.uri.queryParameters['invoice_id']),
+        pageBuilder: (_, s) => _iosPage(
+          s,
+          SessionScreen(invoice: s.uri.queryParameters['invoice_id']),
+        ),
       ),
     ],
     errorBuilder: (context, state) => AppPage(
@@ -140,6 +164,11 @@ final routerProvider = Provider<GoRouter>((ref) {
   });
   return router;
 });
+
+/// CupertinoPageRoute provides the native left-edge swipe gesture on iPhone.
+/// It is used for every pushed screen that exposes a back button.
+Page<void> _iosPage(GoRouterState state, Widget child) =>
+    CupertinoPage<void>(key: state.pageKey, child: child);
 
 class ClubPayApp extends ConsumerWidget {
   const ClubPayApp({super.key});

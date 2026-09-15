@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -20,6 +22,50 @@ class ActiveSessionScreen extends ConsumerStatefulWidget {
 
 class _ActiveSessionScreenState extends ConsumerState<ActiveSessionScreen> {
   bool _ending = false;
+  bool _refreshing = false;
+  late MobileActiveSession _session;
+  Timer? _clock;
+  Timer? _serverRefresh;
+
+  @override
+  void initState() {
+    super.initState();
+    _session = widget.session;
+    _clock = Timer.periodic(const Duration(seconds: 1), (_) {
+      if (mounted) setState(() {});
+    });
+    _serverRefresh = Timer.periodic(
+      const Duration(seconds: 3),
+      (_) => unawaited(_refreshSession()),
+    );
+  }
+
+  @override
+  void dispose() {
+    _clock?.cancel();
+    _serverRefresh?.cancel();
+    super.dispose();
+  }
+
+  Future<void> _refreshSession() async {
+    if (_refreshing) return;
+    _refreshing = true;
+    try {
+      final session = await ClubCatalogRepository(
+        ref.read(apiProvider),
+      ).activeSession();
+      if (!mounted) return;
+      if (session == null) {
+        context.go('/home');
+        return;
+      }
+      setState(() => _session = session);
+    } catch (_) {
+      // The on-screen countdown remains useful while a periodic sync retries.
+    } finally {
+      _refreshing = false;
+    }
+  }
 
   Future<void> _endSession() async {
     final approved = await showCupertinoDialog<bool>(
@@ -61,7 +107,7 @@ class _ActiveSessionScreenState extends ConsumerState<ActiveSessionScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final session = widget.session;
+    final session = _session;
     return AppPage(
       title: 'Активная сессия',
       children: [
@@ -87,7 +133,7 @@ class _ActiveSessionScreenState extends ConsumerState<ActiveSessionScreen> {
             ),
             const SizedBox(height: 20),
             Text(
-              timeLabel(context, session.remainingSeconds),
+              timeLabel(context, session.currentRemainingSeconds),
               style: Theme.of(context).textTheme.headlineMedium,
             ),
             const SizedBox(height: 4),

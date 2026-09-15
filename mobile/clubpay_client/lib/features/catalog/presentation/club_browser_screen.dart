@@ -27,6 +27,7 @@ class _ClubBrowserScreenState extends ConsumerState<ClubBrowserScreen> {
   final _search = TextEditingController();
   Timer? _debounce;
   Timer? _refreshTimer;
+  Timer? _activeSessionRefreshTimer;
   List<ClubSearchResult>? _clubs;
   List<MobileReservation> _reservations = const [];
   MobileActiveSession? _activeSession;
@@ -34,6 +35,7 @@ class _ClubBrowserScreenState extends ConsumerState<ClubBrowserScreen> {
   bool _loadingInitialCatalog = true;
   bool _refreshingCatalog = false;
   bool _refreshQueued = false;
+  bool _refreshingActiveSession = false;
   bool _searchOpen = false;
   bool _hasFavorites = false;
   int _catalogRevision = -1;
@@ -43,12 +45,18 @@ class _ClubBrowserScreenState extends ConsumerState<ClubBrowserScreen> {
     super.initState();
     _load();
     _refreshTimer = Timer.periodic(const Duration(seconds: 15), (_) => _load());
+    _activeSessionRefreshTimer = Timer.periodic(const Duration(seconds: 3), (
+      _,
+    ) {
+      if (_activeSession != null) unawaited(_refreshActiveSession());
+    });
   }
 
   @override
   void dispose() {
     _debounce?.cancel();
     _refreshTimer?.cancel();
+    _activeSessionRefreshTimer?.cancel();
     _search.dispose();
     super.dispose();
   }
@@ -134,6 +142,23 @@ class _ClubBrowserScreenState extends ConsumerState<ClubBrowserScreen> {
       return await ref.read(clubCatalogRepositoryProvider).activeSession();
     } catch (_) {
       return _activeSession;
+    }
+  }
+
+  Future<void> _refreshActiveSession() async {
+    if (_refreshingActiveSession) return;
+    _refreshingActiveSession = true;
+    try {
+      final session = await ref
+          .read(clubCatalogRepositoryProvider)
+          .activeSession();
+      if (mounted && !_sameActiveSession(_activeSession, session)) {
+        setState(() => _activeSession = session);
+      }
+    } catch (_) {
+      // Keep the current countdown visible during a short network interruption.
+    } finally {
+      _refreshingActiveSession = false;
     }
   }
 
@@ -406,10 +431,31 @@ class _ClubBrowserScreenState extends ConsumerState<ClubBrowserScreen> {
   }
 }
 
-class _ActiveSessionCard extends StatelessWidget {
+class _ActiveSessionCard extends StatefulWidget {
   const _ActiveSessionCard({required this.session, required this.onTap});
   final MobileActiveSession session;
   final VoidCallback onTap;
+
+  @override
+  State<_ActiveSessionCard> createState() => _ActiveSessionCardState();
+}
+
+class _ActiveSessionCardState extends State<_ActiveSessionCard> {
+  Timer? _clock;
+
+  @override
+  void initState() {
+    super.initState();
+    _clock = Timer.periodic(const Duration(seconds: 1), (_) {
+      if (mounted) setState(() {});
+    });
+  }
+
+  @override
+  void dispose() {
+    _clock?.cancel();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) => Padding(
@@ -418,17 +464,17 @@ class _ActiveSessionCard extends StatelessWidget {
       color: Colors.transparent,
       child: InkWell(
         borderRadius: BorderRadius.circular(24),
-        onTap: onTap,
+        onTap: widget.onTap,
         child: InfoCard(
           accent: true,
           children: [
             Text(
-              'Активная сессия · ${session.clubName}',
+              'Активная сессия · ${widget.session.clubName}',
               style: Theme.of(context).textTheme.titleMedium,
             ),
             const SizedBox(height: 6),
             Text(
-              '${session.pcLabel} · ${timeLabel(context, session.remainingSeconds)}',
+              '${widget.session.pcLabel} · ${timeLabel(context, widget.session.currentRemainingSeconds)}',
               style: const TextStyle(color: ClubColors.muted),
             ),
             const SizedBox(height: 8),

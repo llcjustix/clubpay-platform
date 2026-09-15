@@ -169,6 +169,11 @@ class MobileActiveSession {
   final DateTime endsAt;
   final int remainingSeconds;
 
+  /// Server time is reconciled every few seconds, while the UI can continue a
+  /// precise countdown between responses without looking frozen.
+  int get currentRemainingSeconds =>
+      endsAt.difference(DateTime.now()).inSeconds.clamp(0, 1 << 31).toInt();
+
   factory MobileActiveSession.fromJson(Map<String, dynamic> json) =>
       MobileActiveSession(
         grantID: json['grant_id'] as String,
