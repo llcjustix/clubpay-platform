@@ -161,6 +161,35 @@ func TestWSControllerReportsAgentOfflineOnDisconnect(t *testing.T) {
 	}
 }
 
+func TestWSControllerReportsAgentOfflineAfterMissedHeartbeat(t *testing.T) {
+	controller := NewWSController("secret", time.Second)
+	controller.heartbeatTimeout = 50 * time.Millisecond
+	events := make(chan EventMessage, 1)
+	controller.SetEventHandler(func(ctx context.Context, event EventMessage) error {
+		if event.Name == "agent_offline" {
+			events <- event
+		}
+		return nil
+	})
+	server := httptest.NewServer(http.HandlerFunc(controller.ServeHTTP))
+	defer server.Close()
+
+	conn, _, err := websocket.DefaultDialer.Dial(wsURL(server.URL)+"?external_pc_id=pc-001&agent_token=secret", nil)
+	if err != nil {
+		t.Fatalf("dial websocket: %v", err)
+	}
+	defer conn.Close()
+
+	select {
+	case event := <-events:
+		if event.ExternalPCID != "pc-001" {
+			t.Fatalf("offline event PC = %q", event.ExternalPCID)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("missed heartbeat did not emit agent_offline")
+	}
+}
+
 func TestWSControllerForwardsEvents(t *testing.T) {
 	controller := NewWSController("secret", time.Second)
 	events := make(chan EventMessage, 1)

@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/gorilla/websocket"
@@ -30,6 +31,11 @@ type WakeHandler func(context.Context, string) error
 type WSController struct {
 	token   string
 	timeout time.Duration
+
+	// Agents publish an application heartbeat every 30 seconds.  A TCP
+	// connection can remain open when a VM is paused or a machine loses power,
+	// so connection-close alone is not sufficient presence information.
+	heartbeatTimeout time.Duration
 
 	upgrader websocket.Upgrader
 
@@ -59,6 +65,7 @@ type wsClient struct {
 	externalPCID string
 	send         chan any
 	done         chan struct{}
+	lastSeenUnix atomic.Int64
 }
 
 type commandMessage struct {
@@ -95,8 +102,9 @@ func NewWSController(token string, timeout time.Duration) *WSController {
 		timeout = 10 * time.Second
 	}
 	return &WSController{
-		token:   strings.TrimSpace(token),
-		timeout: timeout,
+		token:            strings.TrimSpace(token),
+		timeout:          timeout,
+		heartbeatTimeout: 75 * time.Second,
 		upgrader: websocket.Upgrader{
 			CheckOrigin: func(r *http.Request) bool { return true },
 		},
@@ -128,11 +136,13 @@ func (c *WSController) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		send:         make(chan any, 16),
 		done:         make(chan struct{}),
 	}
+	client.markSeen()
 	if client.externalPCID != "" {
 		c.registerClient(client.externalPCID, client)
 	}
 
 	go client.writeLoop()
+	go client.watchdog()
 	client.readLoop()
 }
 
@@ -501,6 +511,7 @@ func (client *wsClient) readLoop() {
 		if err := client.conn.ReadJSON(&msg); err != nil {
 			return
 		}
+		client.markSeen()
 		if msg.Payload == nil {
 			msg.Payload = map[string]any{}
 		}
@@ -530,6 +541,42 @@ func (client *wsClient) readLoop() {
 				ClubID:        stringValue(msg.Payload, "club_id"),
 				Payload:       msg.Payload,
 			})
+		}
+	}
+}
+
+func (client *wsClient) markSeen() {
+	client.lastSeenUnix.Store(time.Now().UnixNano())
+}
+
+func (client *wsClient) watchdog() {
+	timeout := client.controller.heartbeatTimeout
+	if timeout <= 0 {
+		return
+	}
+	interval := timeout / 3
+	if interval > 5*time.Second {
+		interval = 5 * time.Second
+	}
+	if interval <= 0 {
+		interval = time.Second
+	}
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-client.done:
+			return
+		case <-ticker.C:
+			lastSeen := time.Unix(0, client.lastSeenUnix.Load())
+			if time.Since(lastSeen) <= timeout {
+				continue
+			}
+			// Closing the socket unblocks ReadJSON, which in turn unregisters the
+			// Agent and emits agent_offline to the platform.
+			client.close()
+			_ = client.conn.Close()
+			return
 		}
 	}
 }
