@@ -5286,12 +5286,20 @@ func (s *Server) handleAdminPCStatus(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	// The Manager is intentionally a read-only cache: an Agent connects to the
-	// primary Controller, not to the Manager.  Updating this local cache before
-	// a command reached the Agent made the UI briefly claim "sleeping", then
-	// flip back on its next Cloud pull. Queue the request instead; the primary
-	// Controller applies it and publishes the actual Agent state.
-	if s.managerNodeMode() {
+	// Cloud does not hold the Agent's LAN WebSocket when a primary Manager or
+	// edge Controller is enrolled for this club. Queue the request there, just
+	// as the Manager UI does. Without this branch the cloud dashboard attempted
+	// to command its empty WebSocket map and reported an opaque internal error.
+	primaryOwnsAgent, primaryLookupErr := s.primaryControllerOwnsAgent(r.Context(), clubID)
+	if primaryLookupErr != nil {
+		writeError(w, http.StatusInternalServerError, primaryLookupErr.Error())
+		return
+	}
+	// Updating a local cache before a command reached the Agent made the UI
+	// briefly claim "sleeping", then flip back on its next Cloud pull. Queue
+	// the request instead; the primary Controller applies it and publishes the
+	// actual Agent state.
+	if s.managerNodeMode() || (s.cloudNodeMode() && primaryOwnsAgent) {
 		commandID, err := s.enqueuePrimaryPCCommand(r.Context(), edgePCCommand{
 			ClubID:        clubID,
 			PCID:          pcID,
@@ -5331,6 +5339,24 @@ func (s *Server) handleAdminPCStatus(w http.ResponseWriter, r *http.Request) {
 		VALUES ($1, 'admin_pc_status', 'pc_ref', $2, $3)
 	`, clubID, pcID, metadata)
 	writeJSON(w, http.StatusOK, map[string]any{"success": true, "pc_id": pcID, "status": req.Status})
+}
+
+// primaryControllerOwnsAgent reports whether an enrolled Manager or edge
+// Controller is responsible for this club's local Agent connections. Cloud
+// must queue commands in that topology instead of addressing an Agent socket
+// that only exists inside the club LAN.
+func (s *Server) primaryControllerOwnsAgent(ctx context.Context, clubID string) (bool, error) {
+	if !s.cloudNodeMode() {
+		return false, nil
+	}
+	var exists bool
+	err := s.db.QueryRow(ctx, `
+		SELECT EXISTS (
+			SELECT 1 FROM controller_nodes
+			WHERE club_id = $1 AND status = 'active' AND node_mode IN ('edge', 'manager')
+		)
+	`, clubID).Scan(&exists)
+	return exists, err
 }
 
 // handleAdminPCWake uses the same server-owned, authenticated LAN relay as a

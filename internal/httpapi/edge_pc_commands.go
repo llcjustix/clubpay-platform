@@ -213,7 +213,11 @@ func (s *Server) handleEdgePCCommandComplete(w http.ResponseWriter, r *http.Requ
 }
 
 func (s *Server) processPendingEdgePCCommands(ctx context.Context, clubID string) bool {
-	if !s.edgeNodeMode() || strings.TrimSpace(clubID) == "" || strings.TrimSpace(s.cfg.CloudBaseURL) == "" {
+	// An enrolled Manager is also a primary local Controller: it owns the
+	// Agent's LAN WebSocket and therefore must consume Cloud-queued commands.
+	// Restricting this loop to edge nodes left Manager deployments able to queue
+	// a sleep command forever, without ever delivering it to the PC.
+	if (!s.edgeNodeMode() && !s.managerNodeMode()) || strings.TrimSpace(clubID) == "" || strings.TrimSpace(s.cfg.CloudBaseURL) == "" {
 		return false
 	}
 	var response struct {
