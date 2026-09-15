@@ -3471,6 +3471,12 @@ func (s *Server) syncEdgeOnce(ctx context.Context) error {
 			return err
 		}
 		s.finishEdgeSyncRun(ctx, pullID, "success", "", nil)
+		// A Manager keeps its catalogue and booking data as a Cloud-owned cache,
+		// but it is still the local Controller which owns the Agent WebSocket.
+		// Pull first so the local mapping is current, then consume Cloud commands
+		// on the LAN. Previously this early return stranded every queued command.
+		s.processPendingEdgePCCommands(ctx, clubID)
+		s.scheduleOneAvailableAgentUpdate(ctx, clubID)
 		return nil
 	}
 	if !localClubExists {
@@ -3550,7 +3556,7 @@ func (s *Server) syncEdgeOnce(ctx context.Context) error {
 // never asked to update; an idle Agent schedules its own restart after ACKing
 // this command, so there is no chance of dropping an active player session.
 func (s *Server) scheduleOneAvailableAgentUpdate(ctx context.Context, clubID string) {
-	if (!s.edgeNodeMode() && !s.cloudNodeMode()) || strings.TrimSpace(clubID) == "" {
+	if (!s.edgeNodeMode() && !s.cloudNodeMode() && !s.managerNodeMode()) || strings.TrimSpace(clubID) == "" {
 		return
 	}
 	dispatcher, ok := s.core.(core.AgentUpdateDispatcher)
