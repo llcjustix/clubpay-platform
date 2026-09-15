@@ -463,11 +463,31 @@ func (c *WSController) registerClient(externalPCID string, client *wsClient) {
 }
 
 func (c *WSController) unregisterClient(client *wsClient) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	if client.externalPCID != "" && c.clients[client.externalPCID] == client {
-		delete(c.clients, client.externalPCID)
+	externalPCID := client.externalPCID
+	if externalPCID == "" {
+		return
 	}
+
+	c.mu.Lock()
+	wasCurrentClient := c.clients[externalPCID] == client
+	if wasCurrentClient {
+		delete(c.clients, externalPCID)
+	}
+	c.mu.Unlock()
+	if !wasCurrentClient {
+		return
+	}
+
+	// A WebSocket close is authoritative presence information. Without this
+	// event, a saved VM or powered-off PC stayed marked as available until some
+	// unrelated state update reached the Controller.
+	go c.handleEvent(EventMessage{
+		Name:         "agent_offline",
+		EventID:      "agent_offline_" + safeCommandID(externalPCID) + "_" + unixMillis(),
+		TS:           time.Now().UTC().Format(time.RFC3339),
+		ExternalPCID: externalPCID,
+		Payload:      map[string]any{"external_pc_id": externalPCID},
+	})
 }
 
 func (client *wsClient) readLoop() {
