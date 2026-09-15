@@ -22,7 +22,6 @@ type mobileDirectStartKey struct{}
 func (s *Server) mobileRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/mobile/auth/challenge", s.handleMobileChallenge)
 	mux.HandleFunc("POST /api/mobile/auth/verify", s.handleMobileVerify)
-	mux.HandleFunc("POST /api/mobile/auth/test-login", s.handleMobileTestLogin)
 	mux.HandleFunc("POST /api/mobile/auth/refresh", s.handleMobileRefresh)
 	mux.HandleFunc("POST /api/mobile/auth/logout", s.handleMobileLogout)
 	mux.HandleFunc("GET /api/mobile/me", s.handleMobileMe)

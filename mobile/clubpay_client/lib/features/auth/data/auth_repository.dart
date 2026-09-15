@@ -37,28 +37,6 @@ class AuthRepository {
     return Player.fromJson(await api.get('/api/mobile/me'));
   }
 
-  Future<Player> testLogin() async {
-    const phone = '+998908062614';
-    final pair = TokenPair.fromJson(
-      await api.post('/api/mobile/auth/test-login', {
-        'phone': phone,
-        'device_id': await api.vault.device(),
-      }, auth: false),
-    );
-    try {
-      await api.vault.save(pair);
-    } catch (_) {
-      try {
-        await api.post('/api/mobile/auth/logout', {
-          'refresh_token': pair.refresh,
-          'device_id': await api.vault.device(),
-        }, auth: false);
-      } catch (_) {}
-      rethrow;
-    }
-    return Player.fromJson(await api.get('/api/mobile/me'));
-  }
-
   Future<void> logout() async {
     final pair = await api.vault.tokens();
     if (pair != null) {

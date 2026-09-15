@@ -514,11 +514,4 @@ class AppLocalizationsUz extends AppLocalizations {
   @override
   String get reservationUnavailable =>
       'Bron qilish hozir vaqtincha ishlamayapti. Keyinroq urinib ko‘ring.';
-
-  @override
-  String get testLogin => 'Sinov profili bilan kirish';
-
-  @override
-  String get testLoginHelp =>
-      'Faqat ruxsat berilgan sinov raqami uchun mavjud.';
 }

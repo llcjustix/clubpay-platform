@@ -75,33 +75,6 @@ void main() {
       expect((await vault.tokens())!.refresh, 'mob_r_1');
     },
   );
-  test('Test login persists the approved test profile session', () async {
-    final vault = SessionVault(MemoryStore());
-    final api = ApiClient(
-      vault,
-      dio: stubDio((request) async {
-        if (request.path.endsWith('/test-login')) {
-          expect(request.data['phone'], '+998908062614');
-          return (
-            200,
-            {'access_token': 'mob_a_test', 'refresh_token': 'mob_r_test'},
-          );
-        }
-        return (
-          200,
-          {
-            'id': 'test-player',
-            'phone': '+998908062614',
-            'first_name': 'Aleksey',
-          },
-        );
-      }),
-    );
-    final player = await AuthRepository(api).testLogin();
-    expect(player.phone, '+998908062614');
-    expect((await vault.tokens())!.access, 'mob_a_test');
-  });
-
   test('Concurrent 401 responses rotate refresh exactly once', () async {
     final vault = SessionVault(MemoryStore());
     await vault.save(const TokenPair('old', 'refresh'));

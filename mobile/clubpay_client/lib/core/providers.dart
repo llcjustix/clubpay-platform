@@ -48,12 +48,6 @@ class AuthController extends AsyncNotifier<Player?> {
     state = AsyncData(player);
   }
 
-  Future<void> testLogin() async {
-    final player = await ref.read(authRepositoryProvider).testLogin();
-    ref.invalidate(balancesProvider);
-    state = AsyncData(player);
-  }
-
   Future<void> logout() async {
     await ref.read(authRepositoryProvider).logout();
     ref.invalidate(balancesProvider);

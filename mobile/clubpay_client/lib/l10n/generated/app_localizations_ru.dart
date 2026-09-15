@@ -514,11 +514,4 @@ class AppLocalizationsRu extends AppLocalizations {
   @override
   String get reservationUnavailable =>
       'Бронирование сейчас временно недоступно. Попробуйте позже.';
-
-  @override
-  String get testLogin => 'Войти тестовым профилем';
-
-  @override
-  String get testLoginHelp =>
-      'Доступно только для разрешённого тестового номера.';
 }
