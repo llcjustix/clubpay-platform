@@ -39,7 +39,7 @@ class ClubNavigation extends StatelessWidget {
                       child: _Tab(
                         icon: CupertinoIcons.house,
                         label: context.l.home,
-                        selected: !profile,
+                        selected: !profile && !favorites,
                         onTap: () => context.go('/home'),
                       ),
                     ),
