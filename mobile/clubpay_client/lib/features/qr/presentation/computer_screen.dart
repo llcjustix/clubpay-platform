@@ -219,54 +219,59 @@ class _ComputerScreenState extends ConsumerState<ComputerScreen> {
                 ),
               if (widget.reservationId == null && !extension)
                 const SizedBox(height: 8),
-              const SizedBox(height: 28),
-              InfoCard(
-                accent: true,
-                children: [
-                  Text(
-                    l.balanceInZone(pc.zone),
-                    style: Theme.of(context).textTheme.titleMedium,
-                  ),
-                  gap,
-                  balances.when(
-                    data: (_) => Text(
-                      seconds <= 0
-                          ? l.zeroMinutes
-                          : timeLabel(context, seconds),
-                      style: Theme.of(context).textTheme.headlineSmall,
+              // A running session can only be extended by a new payment.
+              // Do not offer balance redemption here: it is a start-session
+              // action and would be misleading after the PC is already live.
+              if (!extension) ...[
+                const SizedBox(height: 28),
+                InfoCard(
+                  accent: true,
+                  children: [
+                    Text(
+                      l.balanceInZone(pc.zone),
+                      style: Theme.of(context).textTheme.titleMedium,
                     ),
-                    loading: () => Text(l.balancePending),
-                    error: (e, _) => Text(errorLabel(context, e)),
-                  ),
-                  if (club?.stale == true || club?.online == false) ...[
+                    gap,
+                    balances.when(
+                      data: (_) => Text(
+                        seconds <= 0
+                            ? l.zeroMinutes
+                            : timeLabel(context, seconds),
+                        style: Theme.of(context).textTheme.headlineSmall,
+                      ),
+                      loading: () => Text(l.balancePending),
+                      error: (e, _) => Text(errorLabel(context, e)),
+                    ),
+                    if (club?.stale == true || club?.online == false) ...[
+                      const SizedBox(height: 8),
+                      Text(
+                        club?.stale == true ? l.balanceStale : l.clubOffline,
+                        style: const TextStyle(
+                          color: ClubColors.muted,
+                          fontSize: 13,
+                        ),
+                      ),
+                    ],
                     const SizedBox(height: 8),
                     Text(
-                      club?.stale == true ? l.balanceStale : l.clubOffline,
+                      l.zoneConversionHelp,
                       style: const TextStyle(
                         color: ClubColors.muted,
                         fontSize: 13,
                       ),
                     ),
+                    if (seconds > 0)
+                      ActionButton(
+                        label: l.useBalance,
+                        icon: Icons.play_arrow,
+                        busy: _busy,
+                        onPressed: pc.canStart && balanceUsable && !_busy
+                            ? () => _submit(pc, true)
+                            : null,
+                      ),
                   ],
-                  const SizedBox(height: 8),
-                  Text(
-                    l.zoneConversionHelp,
-                    style: const TextStyle(
-                      color: ClubColors.muted,
-                      fontSize: 13,
-                    ),
-                  ),
-                  if (seconds > 0)
-                    ActionButton(
-                      label: l.useBalance,
-                      icon: Icons.play_arrow,
-                      busy: _busy,
-                      onPressed: pc.canStart && balanceUsable && !_busy
-                          ? () => _submit(pc, true)
-                          : null,
-                    ),
-                ],
-              ),
+                ),
+              ],
             ],
             const SizedBox(height: 8),
             SectionCaption(
