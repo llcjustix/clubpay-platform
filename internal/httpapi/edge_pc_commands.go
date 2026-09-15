@@ -41,6 +41,27 @@ func isRemotePCStatus(status string) bool {
 // enqueuePrimaryPCCommand sends a Manager action to Cloud. The Manager has an
 // authenticated local user session, but it never owns Agent connections.
 func (s *Server) enqueuePrimaryPCCommand(ctx context.Context, command edgePCCommand) (string, error) {
+	if s.cloudNodeMode() {
+		// Cloud is the command queue's database owner. Sending this request back
+		// through postCloudJSON made the dashboard attempt a fictitious local
+		// Manager connection and reject every command before it was queued.
+		err := s.db.QueryRow(ctx, `
+			SELECT id::text FROM edge_pc_commands
+			WHERE club_id = $1 AND pc_ref_id = $2 AND desired_status = $3 AND status = 'pending'
+			ORDER BY created_at DESC LIMIT 1
+		`, command.ClubID, command.PCID, command.DesiredStatus).Scan(&command.ID)
+		if errors.Is(err, pgx.ErrNoRows) {
+			err = s.db.QueryRow(ctx, `
+				INSERT INTO edge_pc_commands (club_id, pc_ref_id, external_pc_id, desired_status, reason, requested_by_node)
+				VALUES ($1, $2, $3, $4, NULLIF($5, ''), NULLIF($6, ''))
+				RETURNING id::text
+			`, command.ClubID, command.PCID, command.ExternalPCID, command.DesiredStatus, command.Reason, "cloud").Scan(&command.ID)
+		}
+		if err != nil {
+			return "", err
+		}
+		return command.ID, nil
+	}
 	if !s.managerNodeMode() || strings.TrimSpace(s.cfg.CloudBaseURL) == "" {
 		return "", errors.New("primary Controller connection is unavailable")
 	}
