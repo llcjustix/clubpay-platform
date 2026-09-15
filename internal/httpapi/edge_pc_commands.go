@@ -228,9 +228,11 @@ func (s *Server) processPendingEdgePCCommands(ctx context.Context, clubID string
 			continue
 		}
 		err := s.applyPCStatusCommand(ctx, command.ExternalPCID, command.DesiredStatus, command.Reason)
-		if err == nil {
-			_, err = s.db.Exec(ctx, `UPDATE pc_refs SET status_cache = $1 WHERE id = $2 AND club_id = $3`, command.DesiredStatus, command.PCID, clubID)
-		}
+		// A command ACK only proves that Agent Core received the request. Its
+		// pc_status_changed/heartbeat event is authoritative: Windows may refuse
+		// sleep (especially in a VM), or wake immediately after accepting it.
+		// Updating the cache here made the Manager briefly show "sleeping", then
+		// revert to "available" despite the PC never having slept.
 		complete := edgePCCommandCompleteRequest{ClubID: clubID, Success: err == nil}
 		if err != nil {
 			complete.Error = err.Error()

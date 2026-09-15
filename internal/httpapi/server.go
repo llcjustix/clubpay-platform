@@ -5316,9 +5316,14 @@ func (s *Server) handleAdminPCStatus(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusConflict, "PC command failed: "+err.Error())
 		return
 	}
-	if _, err := s.db.Exec(r.Context(), `UPDATE pc_refs SET status_cache = $1 WHERE id = $2 AND club_id = $3`, req.Status, pcID, clubID); err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
-		return
+	// For sleep, wait for Agent Core's state event instead of treating the command
+	// acknowledgement as a completed power-state transition. Other manager states
+	// are synchronous Agent operations and keep the existing immediate cache update.
+	if req.Status != "sleeping" {
+		if _, err := s.db.Exec(r.Context(), `UPDATE pc_refs SET status_cache = $1 WHERE id = $2 AND club_id = $3`, req.Status, pcID, clubID); err != nil {
+			writeError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
 	}
 	metadata, _ := json.Marshal(map[string]any{"status": req.Status, "reason": req.Reason})
 	_, _ = s.db.Exec(r.Context(), `
