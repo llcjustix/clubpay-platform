@@ -153,3 +153,30 @@ class MobileReservation {
         durationHours: (json['duration_hours'] as num).toInt(),
       );
 }
+
+class MobileActiveSession {
+  const MobileActiveSession({
+    required this.grantID,
+    required this.clubName,
+    required this.zoneName,
+    required this.pcLabel,
+    required this.endsAt,
+    required this.remainingSeconds,
+    required this.extendToken,
+  });
+
+  final String grantID, clubName, zoneName, pcLabel, extendToken;
+  final DateTime endsAt;
+  final int remainingSeconds;
+
+  factory MobileActiveSession.fromJson(Map<String, dynamic> json) =>
+      MobileActiveSession(
+        grantID: json['grant_id'] as String,
+        clubName: json['club_name'] as String? ?? '',
+        zoneName: json['zone_name'] as String? ?? '',
+        pcLabel: json['pc_label'] as String? ?? '',
+        endsAt: DateTime.parse(json['ends_at'] as String).toLocal(),
+        remainingSeconds: (json['remaining_seconds'] as num? ?? 0).toInt(),
+        extendToken: json['extend_token'] as String? ?? '',
+      );
+}

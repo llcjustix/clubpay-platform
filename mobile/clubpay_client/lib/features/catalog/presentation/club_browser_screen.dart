@@ -29,6 +29,7 @@ class _ClubBrowserScreenState extends ConsumerState<ClubBrowserScreen> {
   Timer? _refreshTimer;
   List<ClubSearchResult>? _clubs;
   List<MobileReservation> _reservations = const [];
+  MobileActiveSession? _activeSession;
   Object? _catalogError;
   bool _loadingInitialCatalog = true;
   bool _refreshingCatalog = false;
@@ -64,6 +65,7 @@ class _ClubBrowserScreenState extends ConsumerState<ClubBrowserScreen> {
       final result = await Future.wait([
         repository.search(query),
         _loadReservations(),
+        _loadActiveSession(),
       ]);
       if (!mounted) return;
       // A user can change the query while an earlier request is in flight.
@@ -74,6 +76,11 @@ class _ClubBrowserScreenState extends ConsumerState<ClubBrowserScreen> {
       }
       final clubs = result[0] as List<ClubSearchResult>;
       final reservations = result[1] as List<MobileReservation>;
+      final activeSession = result[2] as MobileActiveSession?;
+      final activeSessionChanged = !_sameActiveSession(
+        _activeSession,
+        activeSession,
+      );
       final clubsChanged = !_sameClubResults(_clubs, clubs);
       final reservationsChanged = !_sameReservations(
         _reservations,
@@ -84,12 +91,14 @@ class _ClubBrowserScreenState extends ConsumerState<ClubBrowserScreen> {
           _hasFavorites != clubs.any((club) => club.favorite);
       if (clubsChanged ||
           reservationsChanged ||
+          activeSessionChanged ||
           favoriteStateChanged ||
           _loadingInitialCatalog ||
           _catalogError != null) {
         setState(() {
           if (clubsChanged || _clubs == null) _clubs = clubs;
           if (reservationsChanged) _reservations = reservations;
+          if (activeSessionChanged) _activeSession = activeSession;
           if (query.trim().isEmpty) {
             _hasFavorites = clubs.any((club) => club.favorite);
             ref.read(favoriteTabProvider.notifier).set(_hasFavorites);
@@ -120,6 +129,14 @@ class _ClubBrowserScreenState extends ConsumerState<ClubBrowserScreen> {
 
   // The catalog remains usable when the optional reservation endpoint is
   // temporarily unavailable; the next revision/poll retries it automatically.
+  Future<MobileActiveSession?> _loadActiveSession() async {
+    try {
+      return await ref.read(clubCatalogRepositoryProvider).activeSession();
+    } catch (_) {
+      return _activeSession;
+    }
+  }
+
   Future<List<MobileReservation>> _loadReservations() async {
     try {
       return await ref.read(clubCatalogRepositoryProvider).reservations();
@@ -318,6 +335,11 @@ class _ClubBrowserScreenState extends ConsumerState<ClubBrowserScreen> {
             label: const Text('Открыть карту клубов'),
           ),
         ),
+        if (_activeSession != null)
+          _ActiveSessionCard(
+            session: _activeSession!,
+            onTap: () => context.push('/active-session', extra: _activeSession),
+          ),
         _ReservationCard(reservations: _reservations, onTap: _openReservation),
         if (_searchOpen) ...[
           TextField(
@@ -384,6 +406,43 @@ class _ClubBrowserScreenState extends ConsumerState<ClubBrowserScreen> {
   }
 }
 
+class _ActiveSessionCard extends StatelessWidget {
+  const _ActiveSessionCard({required this.session, required this.onTap});
+  final MobileActiveSession session;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) => Padding(
+    padding: const EdgeInsets.only(bottom: 16),
+    child: Material(
+      color: Colors.transparent,
+      child: InkWell(
+        borderRadius: BorderRadius.circular(24),
+        onTap: onTap,
+        child: InfoCard(
+          accent: true,
+          children: [
+            Text(
+              'Активная сессия · ${session.clubName}',
+              style: Theme.of(context).textTheme.titleMedium,
+            ),
+            const SizedBox(height: 6),
+            Text(
+              '${session.pcLabel} · ${timeLabel(context, session.remainingSeconds)}',
+              style: const TextStyle(color: ClubColors.muted),
+            ),
+            const SizedBox(height: 8),
+            const Text(
+              'Нажмите, чтобы продлить или завершить сеанс.',
+              style: TextStyle(color: ClubColors.muted),
+            ),
+          ],
+        ),
+      ),
+    ),
+  );
+}
+
 class _ReservationCard extends StatelessWidget {
   const _ReservationCard({required this.reservations, required this.onTap});
 
@@ -435,6 +494,17 @@ class _ReservationCard extends StatelessWidget {
       ),
     );
   }
+}
+
+bool _sameActiveSession(
+  MobileActiveSession? before,
+  MobileActiveSession? after,
+) {
+  if (before == null || after == null) return before == after;
+  return before.grantID == after.grantID &&
+      before.remainingSeconds == after.remainingSeconds &&
+      before.extendToken == after.extendToken &&
+      before.endsAt == after.endsAt;
 }
 
 bool _sameClubResults(

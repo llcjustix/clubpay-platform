@@ -49,6 +49,19 @@ class ClubCatalogRepository {
     await api.post('/api/mobile/pcs/${Uri.encodeComponent(pcID)}/wake', {});
   }
 
+  Future<MobileActiveSession?> activeSession() async {
+    final data = await api.get('/api/mobile/active-session');
+    final session = data['session'];
+    if (session is! Map) return null;
+    return MobileActiveSession.fromJson(Map<String, dynamic>.from(session));
+  }
+
+  Future<void> endActiveSession() => api.post(
+    '/api/mobile/active-session/end',
+    const {},
+    key: const Uuid().v4().replaceAll('-', ''),
+  );
+
   Future<List<MobileReservation>> reservations() async {
     final data = await api.get('/api/mobile/reservations');
     return ((data['reservations'] as List?) ?? [])

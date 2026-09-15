@@ -11,6 +11,7 @@ import '../features/legal/presentation/public_offer_screen.dart';
 import '../features/support/presentation/support_screen.dart';
 import '../features/qr/presentation/computer_screen.dart';
 import '../features/payment/presentation/session_screen.dart';
+import '../features/payment/presentation/active_session_screen.dart';
 import '../l10n/generated/app_localizations.dart';
 import 'providers.dart';
 import 'club_theme.dart';
@@ -111,6 +112,11 @@ final routerProvider = Provider<GoRouter>((ref) {
         builder: (_, s) => ComputerScreen(token: s.pathParameters['token']!),
       ),
       GoRoute(path: '/session', builder: (_, _) => const SessionScreen()),
+      GoRoute(
+        path: '/active-session',
+        builder: (_, s) =>
+            ActiveSessionScreen(session: s.extra! as MobileActiveSession),
+      ),
       GoRoute(
         path: '/payment/return',
         builder: (_, s) =>

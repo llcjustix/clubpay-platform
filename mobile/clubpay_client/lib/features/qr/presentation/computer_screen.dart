@@ -124,8 +124,11 @@ class _ComputerScreenState extends ConsumerState<ComputerScreen> {
           'payme' => l.payme,
           _ => l.mock,
         };
+        final extension = pc.type == 'session_extend';
         final status = widget.reservationId != null
             ? 'Ваша бронь'
+            : extension
+            ? 'Ваша активная сессия'
             : switch (pc.status) {
                 'available' => l.available,
                 'sleeping' => l.sleeping,
@@ -199,7 +202,7 @@ class _ComputerScreenState extends ConsumerState<ComputerScreen> {
             ),
             if (!pc.previewOnly) ...[
               const SizedBox(height: 20),
-              if (widget.reservationId == null)
+              if (widget.reservationId == null && !extension)
                 ActionButton(
                   label: 'Забронировать ПК',
                   icon: CupertinoIcons.calendar_badge_plus,
@@ -214,7 +217,8 @@ class _ComputerScreenState extends ConsumerState<ComputerScreen> {
                           );
                         },
                 ),
-              if (widget.reservationId == null) const SizedBox(height: 8),
+              if (widget.reservationId == null && !extension)
+                const SizedBox(height: 8),
               const SizedBox(height: 28),
               InfoCard(
                 accent: true,
@@ -265,7 +269,13 @@ class _ComputerScreenState extends ConsumerState<ComputerScreen> {
               ),
             ],
             const SizedBox(height: 8),
-            SectionCaption(pc.previewOnly ? l.gameTime : l.packages),
+            SectionCaption(
+              pc.previewOnly
+                  ? l.gameTime
+                  : extension
+                  ? 'Продлить на'
+                  : l.packages,
+            ),
             SettingsGroup(
               inset: 16,
               children: [

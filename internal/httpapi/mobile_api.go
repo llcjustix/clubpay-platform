@@ -30,6 +30,8 @@ func (s *Server) mobileRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/mobile/clubs/{club_id}", s.handleMobileClub)
 	mux.HandleFunc("POST /api/mobile/pcs/{pc_id}/wake", s.handleMobilePCWake)
 	mux.HandleFunc("GET /api/mobile/reservations", s.handleMobileReservations)
+	mux.HandleFunc("GET /api/mobile/active-session", s.handleMobileActiveSession)
+	mux.HandleFunc("POST /api/mobile/active-session/end", s.mobileMutation(s.handleMobileActiveSessionEnd))
 	mux.HandleFunc("GET /api/mobile/favorites", s.handleMobileFavorites)
 	mux.HandleFunc("POST /api/mobile/favorites/{club_id}", s.mobileMutation(s.handleMobileFavoriteAdd))
 	mux.HandleFunc("POST /api/mobile/favorites/{club_id}/remove", s.mobileMutation(s.handleMobileFavoriteRemove))
