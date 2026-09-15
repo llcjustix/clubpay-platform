@@ -652,7 +652,10 @@ func (s *Server) handleControllerActivation(w http.ResponseWriter, r *http.Reque
 		writeError(w, http.StatusBadRequest, "invalid json")
 		return
 	}
-	code := strings.TrimSpace(req.Code)
+	// Activation codes are shown in uppercase, but accepting their case
+	// independently prevents a keyboard layout or Caps Lock state from making
+	// a one-time enrollment impossible.
+	code := strings.ToUpper(strings.TrimSpace(req.Code))
 	nodeID := sanitizeNodeID(req.NodeID)
 	if code == "" || nodeID == "" {
 		writeError(w, http.StatusBadRequest, "code and node_id are required")
@@ -2988,7 +2991,7 @@ func (s *Server) handleCoreEvent(w http.ResponseWriter, r *http.Request) {
 		writeError(w, status, err.Error())
 		return
 	}
-	s.syncAfterCoreEvent(req.EventType)
+	s.syncAfterCoreEvent(req)
 	writeJSON(w, http.StatusOK, result)
 }
 
@@ -3004,7 +3007,16 @@ func (s *Server) handleCoreWSEvent(ctx context.Context, event core.EventMessage)
 		Payload:       event.Payload,
 	})
 	if err == nil {
-		s.syncAfterCoreEvent(event.Name)
+		s.syncAfterCoreEvent(coreEventRequest{
+			EventID:       event.EventID,
+			EventType:     event.Name,
+			ClubID:        event.ClubID,
+			ExternalPCID:  event.ExternalPCID,
+			CoreSessionID: event.CoreSessionID,
+			GrantID:       event.GrantID,
+			OccurredAt:    event.TS,
+			Payload:       event.Payload,
+		})
 	}
 	return err
 }
@@ -3013,17 +3025,22 @@ func (s *Server) handleCoreWSEvent(ctx context.Context, event core.EventMessage)
 // the background edge interval leaves the public QR briefly reporting a false
 // "offline" state. Push presence-changing events as soon as they are accepted.
 // The mutex in syncEdgeOnce keeps this from racing the regular edge loop.
-func (s *Server) syncAfterCoreEvent(eventType string) {
+func (s *Server) syncAfterCoreEvent(event coreEventRequest) {
+	event.EventType = normalizeCoreEventType(event.EventType)
+	switch event.EventType {
+	case "agent_online", "agent_offline", "pc_status_changed", "heartbeat", "session_started", "session_extended", "session_ended":
+	default:
+		return
+	}
 	// The primary Controller is the only node that publishes a snapshot. The
 	// Manager intentionally consumes that snapshot read-only: otherwise its
 	// cached "offline" value can race a live Agent and overwrite the Cloud
 	// status back to offline.
-	if !s.edgeNodeMode() {
+	if s.managerNodeMode() {
+		go s.forwardManagerCoreEvent(event)
 		return
 	}
-	switch normalizeCoreEventType(eventType) {
-	case "agent_online", "agent_offline", "pc_status_changed", "session_started", "session_ended":
-	default:
+	if !s.edgeNodeMode() {
 		return
 	}
 	go func() {
@@ -3031,6 +3048,47 @@ func (s *Server) syncAfterCoreEvent(eventType string) {
 		defer cancel()
 		_ = s.syncEdgeOnce(ctx)
 	}()
+}
+
+// forwardManagerCoreEvent sends only state changes made by the LAN Agent. A
+// Manager never publishes its full cached snapshot, because that cache can be
+// stale; event forwarding lets Cloud reflect the actual command outcome.
+func (s *Server) forwardManagerCoreEvent(event coreEventRequest) {
+	if !s.managerNodeMode() || strings.TrimSpace(s.cfg.CloudBaseURL) == "" || strings.TrimSpace(s.cfg.EdgeClubID) == "" {
+		return
+	}
+	payload := make(map[string]any, len(event.Payload)+1)
+	for key, value := range event.Payload {
+		payload[key] = value
+	}
+	eventType := event.EventType
+	if eventType == "agent_online" || eventType == "agent_offline" || eventType == "heartbeat" {
+		eventType = "pc_status_changed"
+		status := normalizeCoreStatus(defaultString(stringFromPayload(payload, "status"), stringFromPayload(payload, "pc_state")))
+		if !isKnownPCStatus(status) && event.ExternalPCID != "" {
+			_ = s.db.QueryRow(context.Background(), `SELECT status_cache FROM pc_refs WHERE external_pc_id = $1`, event.ExternalPCID).Scan(&status)
+		}
+		if isKnownPCStatus(status) {
+			payload["status"] = status
+		}
+	}
+	if event.EventID == "" {
+		event.EventID = "manager_" + randomHex(12)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	_ = s.postCloudJSON(ctx, "/api/edge/events", edgeEventBatch{
+		ClubID: strings.TrimSpace(s.cfg.EdgeClubID),
+		Events: []edgeEvent{{
+			EventID:       "manager_" + event.EventID,
+			Type:          eventType,
+			ExternalPCID:  event.ExternalPCID,
+			CoreSessionID: event.CoreSessionID,
+			GrantID:       event.GrantID,
+			OccurredAt:    defaultString(event.OccurredAt, time.Now().UTC().Format(time.RFC3339)),
+			Payload:       payload,
+		}},
+	}, nil)
 }
 
 func (s *Server) processCoreEvent(ctx context.Context, req coreEventRequest) (map[string]any, int, error) {
@@ -3406,6 +3464,23 @@ func (s *Server) handleEdgeEvents(w http.ResponseWriter, r *http.Request) {
 			status := stringFromPayload(event.Payload, "status")
 			if event.ExternalPCID != "" && isKnownPCStatus(status) {
 				_, _ = s.db.Exec(r.Context(), `UPDATE pc_refs SET status_cache = $1 WHERE club_id = $2 AND external_pc_id = $3`, status, req.ClubID, event.ExternalPCID)
+			}
+		case "session_started", "session_extended", "session_ended":
+			// A Manager owns the LAN Agent connection but intentionally does not
+			// publish snapshots. Relay session events so Cloud remains the source
+			// of truth for mobile and web session state.
+			if _, _, err := s.processCoreEvent(r.Context(), coreEventRequest{
+				EventID:       "edge_relay_" + event.EventID,
+				EventType:     event.Type,
+				ClubID:        req.ClubID,
+				ExternalPCID:  event.ExternalPCID,
+				CoreSessionID: event.CoreSessionID,
+				GrantID:       event.GrantID,
+				OccurredAt:    event.OccurredAt,
+				Payload:       event.Payload,
+			}); err != nil {
+				writeError(w, http.StatusBadRequest, err.Error())
+				return
 			}
 		}
 		processed++
@@ -8870,7 +8945,13 @@ func (s *Server) refreshConnectedPCStatus(externalPCID string) {
 	}
 	result, err := s.db.Exec(ctx, `UPDATE pc_refs SET status_cache = $1 WHERE external_pc_id = $2`, status.Status, externalPCID)
 	if err == nil && result.RowsAffected() > 0 {
-		s.syncAfterCoreEvent("pc_status_changed")
+		s.syncAfterCoreEvent(coreEventRequest{
+			EventID:      "status_refresh_" + randomHex(12),
+			EventType:    "pc_status_changed",
+			ExternalPCID: externalPCID,
+			OccurredAt:   time.Now().UTC().Format(time.RFC3339),
+			Payload:      map[string]any{"status": status.Status},
+		})
 	}
 }
 

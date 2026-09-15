@@ -48,9 +48,12 @@ const NAVIGATION_EVENT = 'clubpay:navigate';
 // These one-file downloads are only the one-time bridge for installations
 // created before automatic updates existed. Every subsequent release is
 // discovered and verified by the installed Controller/Manager/Agent itself.
-const CONTROLLER_RELEASE_URL = 'https://github.com/llcjustix/clubpay-platform/releases/download/controller-v0.2.26/ClubPay-Controller-win-x64.zip';
-const MANAGER_RELEASE_URL = 'https://github.com/llcjustix/clubpay-core-agent/releases/download/v0.4.26/ClubPay-Manager-Desktop-win-x64.zip';
-const AGENT_RELEASE_URL = 'https://github.com/llcjustix/clubpay-core-agent/releases/download/v0.4.26/ClubPay-Agent-win-x64.zip';
+// GitHub resolves these asset URLs to the newest published stable release.
+// The installer is therefore not tied to a source-code version and keeps
+// working after a release without anyone editing the web application.
+const CONTROLLER_RELEASE_URL = 'https://github.com/llcjustix/clubpay-platform/releases/latest/download/ClubPay-Controller-win-x64.zip';
+const MANAGER_RELEASE_URL = 'https://github.com/llcjustix/clubpay-core-agent/releases/latest/download/ClubPay-Manager-Desktop-win-x64.zip';
+const AGENT_RELEASE_URL = 'https://github.com/llcjustix/clubpay-core-agent/releases/latest/download/ClubPay-Agent-win-x64.zip';
 
 type ControllerActivation = {
   activation_code: string;
