@@ -670,7 +670,7 @@ func (s *Server) handleControllerActivation(w http.ResponseWriter, r *http.Reque
 	var clubID, nodeMode string
 	err = tx.QueryRow(r.Context(), `
 		SELECT club_id::text, node_mode
-		FROM controller_activation_codes
+		FROM controller_activation_codes g
 		WHERE code_hash = $1 AND consumed_at IS NULL AND expires_at > now()
 		FOR UPDATE OF g
 	`, hashToken(code)).Scan(&clubID, &nodeMode)
