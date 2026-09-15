@@ -1736,7 +1736,6 @@ function AdminPage({ auth, selectedClubID, currentPath, onClubChange, onLogout }
     <main className="shell workspace-shell">
       <WorkspaceHeader auth={auth} selectedClubID={selectedClubID} currentPath={currentPath} onClubChange={onClubChange} onLogout={onLogout} eyebrow="Операции клуба" title={pageTitle} />
 
-      <div className="button-row"><LinkButton href="/admin/games" variant="secondary" icon={<Gamepad2 size={16} />}>Каталог игр</LinkButton></div>
       {message && <Notice tone="success">{message}</Notice>}
       {telegramPrompt && <TelegramVoucherModal prompt={telegramPrompt} onClose={() => setTelegramPrompt(null)} onCopied={() => setMessage('Ссылка Telegram скопирована')} />}
       {endSessionDraft && (
@@ -1957,7 +1956,7 @@ function LauncherCatalogPage({ auth, selectedClubID, currentPath, onClubChange, 
       <SectionTitle icon={<Gamepad2 size={18} />} title="Игры и приложения" caption="Agent Core сам добавляет приложения с каждого ПК. Неизвестные игры, браузеры и Discord попадают в «Другое»; менеджер может изменить категорию." />
       <div className="button-row"><LinkButton href="/admin" variant="ghost" icon={<Activity size={16} />}>Зал</LinkButton><Button size="sm" variant="secondary" icon={<RefreshCw size={15} />} onClick={load}>Обновить</Button></div>
       <label className="form-block">Компьютер<select value={pcFilter} onChange={(event) => setPcFilter(event.target.value)}><option value="">Все компьютеры</option>{pcs.map(([id, label]) => <option key={id} value={id}>{label}</option>)}</select></label>
-      {loading ? <EmptyState text="Загружаем каталог" /> : visible.length === 0 ? <EmptyState text="Агент пока не прислал приложения. Откройте лаунчер на нужном ПК или дождитесь ближайшей синхронизации." /> : <div className="table-wrap"><table><thead><tr><th>Приложение</th><th>Компьютер</th><th>Категория</th><th>Последняя синхронизация</th></tr></thead><tbody>{visible.map((app) => <tr key={app.id}><td><strong>{app.name}</strong><small>{app.args || app.exe_path}</small></td><td>{app.pc_label}</td><td><select value={app.category} onChange={(event) => setCategory(app, event.target.value as LauncherCatalogApp['category'])}><option value="shooter">Шутеры</option><option value="strategy">Стратегии</option><option value="other">Другое</option></select></td><td>{formatDateTime(app.last_seen_at)}</td></tr>)}</tbody></table></div>}
+      {loading ? <EmptyState text="Загружаем каталог" /> : visible.length === 0 ? <EmptyState text="Агент пока не прислал приложения. Откройте лаунчер на нужном ПК или дождитесь ближайшей синхронизации." /> : <div className="table-wrap"><table><thead><tr><th>Приложение</th><th>Компьютер</th><th>Категория</th><th>Последняя синхронизация</th></tr></thead><tbody>{visible.map((app) => <tr key={app.id}><td><strong>{app.name}</strong></td><td>{app.pc_label}</td><td><select value={app.category} onChange={(event) => setCategory(app, event.target.value as LauncherCatalogApp['category'])}><option value="shooter">Шутеры</option><option value="strategy">Стратегии</option><option value="other">Другое</option></select></td><td>{formatDateTime(app.last_seen_at)}</td></tr>)}</tbody></table></div>}
     </Panel>
   </main>;
 }
