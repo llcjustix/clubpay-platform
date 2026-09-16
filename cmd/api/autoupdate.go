@@ -232,8 +232,14 @@ func scheduleLocalUpdate(artifact release.Artifact, updaterName string) error {
 	// Run through its own scheduled task, not as a child of this Controller.
 	// update-windows.ps1 intentionally ends the Controller task, and Task
 	// Scheduler could otherwise terminate the helper with the process tree.
+	//
+	// Task Scheduler refuses an ONCE task whose start time has already elapsed.
+	// The former fixed midnight value therefore made every daytime update fail
+	// before /Run could start it.  Give the task a valid near-future schedule;
+	// /Run still starts the helper immediately after creation.
+	startTime := time.Now().Add(2 * time.Minute).Format("15:04")
 	command := fmt.Sprintf(`powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%s"`, scriptPath)
-	result, err := exec.Command("schtasks.exe", "/Create", "/TN", "ClubPay Automatic Update", "/SC", "ONCE", "/ST", "00:00", "/RU", "SYSTEM", "/RL", "HIGHEST", "/TR", command, "/F").CombinedOutput()
+	result, err := exec.Command("schtasks.exe", "/Create", "/TN", "ClubPay Automatic Update", "/SC", "ONCE", "/ST", startTime, "/RU", "SYSTEM", "/RL", "HIGHEST", "/TR", command, "/F").CombinedOutput()
 	if err != nil {
 		_ = os.Remove(marker)
 		return fmt.Errorf("create automatic update task: %w: %s", err, strings.TrimSpace(string(result)))
