@@ -3814,11 +3814,18 @@ func containsUpdateID(values []string, value string) bool {
 	return false
 }
 
-// ScheduleAvailableAgentUpdates rolls direct-cloud clubs forward after Cloud
-// discovers a new Agent release. A club receives at most one update command
+// ScheduleAvailableAgentUpdates rolls a direct-cloud club or the active Manager
+// forward after a release discovery. A club receives at most one update command
 // per check; busy Agents reject the command and are retried on the next check.
 // Local edge nodes keep calling scheduleOneAvailableAgentUpdate after sync.
 func (s *Server) ScheduleAvailableAgentUpdates(ctx context.Context) {
+	if s.managerNodeMode() {
+		// During primary outage the Manager owns the live Agent socket. Its
+		// database is limited to this enrolled club, so keep the same one-PC
+		// canary rule locally instead of trying to enumerate Cloud clubs.
+		s.scheduleOneAvailableAgentUpdate(ctx, s.cfg.EdgeClubID)
+		return
+	}
 	if !s.cloudNodeMode() {
 		return
 	}

@@ -64,7 +64,7 @@ func runAutomaticUpdateLoop(ctx context.Context, cfg config.Config, server *http
 
 func checkAutomaticUpdates(ctx context.Context, cfg config.Config, server *httpapi.Server, currentVersion string) {
 	mode := strings.ToLower(strings.TrimSpace(cfg.NodeMode))
-	if mode == "edge" || mode == "cloud" {
+	if mode == "edge" || mode == "cloud" || mode == "manager" {
 		agentArtifact, err := release.Latest(ctx, releaseHTTPClient, agentReleasesAPI, "v", "ClubPay-Agent-win-x64.zip")
 		if err != nil {
 			log.Printf("automatic Agent update lookup: %v", err)
@@ -72,10 +72,11 @@ func checkAutomaticUpdates(ctx context.Context, cfg config.Config, server *httpa
 			server.SetAgentUpdateRelease(core.AgentUpdateCommand{
 				Version: agentArtifact.Version, DownloadURL: agentArtifact.DownloadURL, ChecksumURL: agentArtifact.ChecksumURL,
 			})
-			if mode == "cloud" {
-				// Direct-cloud Agents are not part of an edge synchronization loop, so
-				// schedule their safe, one-at-a-time roll-out immediately after a
-				// release check.
+			if mode == "cloud" || mode == "manager" {
+				// A Manager can temporarily own the only live Agent socket during
+				// Controller failover. It must therefore deliver the same one-at-a-time
+				// update as Cloud; otherwise a recovered primary can never receive a
+				// failover-capable Agent from an older Manager.
 				server.ScheduleAvailableAgentUpdates(ctx)
 			}
 		}
