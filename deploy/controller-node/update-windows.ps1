@@ -29,6 +29,24 @@ if ($null -eq $candidate) {
 $target = $candidate.Root
 Write-Host "Updating active Controller: $target" -ForegroundColor Cyan
 
+function Start-ControllerNode {
+    $taskName = 'ClubPay Controller Node'
+    schtasks.exe /Query /TN $taskName 2>$null | Out-Null
+    if ($LASTEXITCODE -ne 0) {
+        # Older pilot installations could be started manually before their
+        # startup task was registered.  An update must repair that state
+        # instead of rolling back and leaving the Controller stopped.
+        & (Join-Path $target 'ClubPay.Controller.exe') --install --config (Join-Path $target 'controller.env')
+        if ($LASTEXITCODE -ne 0) {
+            throw 'Could not repair the ClubPay Controller startup task.'
+        }
+    }
+    schtasks.exe /Run /TN $taskName | Out-Null
+    if ($LASTEXITCODE -ne 0) {
+        throw 'Could not start the ClubPay Controller startup task.'
+    }
+}
+
 # Keep the currently working program files until the replacement has passed
 # its local health check. Config, PostgreSQL data and runtime stay in place and
 # are never part of either the update or this rollback copy.
@@ -63,7 +81,7 @@ try {
     }
 
     # controller.env, data and runtime are deliberately never copied or deleted.
-    schtasks.exe /Run /TN 'ClubPay Controller Node' | Out-Null
+    Start-ControllerNode
 
 # The embedded PostgreSQL instance can take longer than a few seconds to open
 # its existing data directory after a Windows reboot or an upgrade. Poll the
@@ -100,7 +118,7 @@ catch {
             Copy-Item -Path $source -Destination $target -Recurse -Force
         }
     }
-    schtasks.exe /Run /TN 'ClubPay Controller Node' | Out-Null
+    Start-ControllerNode
     throw $updateError
 }
 Write-Host ''
