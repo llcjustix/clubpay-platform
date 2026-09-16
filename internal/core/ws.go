@@ -462,6 +462,19 @@ func (c *WSController) clientForPC(externalPCID string) *wsClient {
 	return c.clients[externalPCID]
 }
 
+func (c *WSController) HasConnectedAgent(externalPCID string) bool {
+	client := c.clientForPC(externalPCID)
+	if client == nil {
+		return false
+	}
+	select {
+	case <-client.done:
+		return false
+	default:
+		return true
+	}
+}
+
 func (c *WSController) registerClient(externalPCID string, client *wsClient) {
 	c.mu.Lock()
 	defer c.mu.Unlock()

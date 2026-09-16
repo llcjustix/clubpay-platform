@@ -21,6 +21,7 @@ type edgePCCommand struct {
 	ExternalPCID  string `json:"external_pc_id"`
 	DesiredStatus string `json:"desired_status"`
 	Reason        string `json:"reason,omitempty"`
+	TargetNodeID  string `json:"target_node_id,omitempty"`
 }
 
 type edgePCCommandCompleteRequest struct {
@@ -42,20 +43,28 @@ func isRemotePCStatus(status string) bool {
 // authenticated local user session, but it never owns Agent connections.
 func (s *Server) enqueuePrimaryPCCommand(ctx context.Context, command edgePCCommand) (string, error) {
 	if s.cloudNodeMode() {
+		var err error
+		command.TargetNodeID, err = s.activeControllerNodeForPC(ctx, command.ClubID, command.ExternalPCID)
+		if err != nil {
+			return "", err
+		}
+		if command.TargetNodeID == "" {
+			return "", errors.New("no healthy Controller is available for this PC")
+		}
 		// Cloud is the command queue's database owner. Sending this request back
 		// through postCloudJSON made the dashboard attempt a fictitious local
 		// Manager connection and reject every command before it was queued.
-		err := s.db.QueryRow(ctx, `
+		err = s.db.QueryRow(ctx, `
 			SELECT id::text FROM edge_pc_commands
 			WHERE club_id = $1 AND pc_ref_id = $2 AND desired_status = $3 AND status = 'pending'
 			ORDER BY created_at DESC LIMIT 1
 		`, command.ClubID, command.PCID, command.DesiredStatus).Scan(&command.ID)
 		if errors.Is(err, pgx.ErrNoRows) {
 			err = s.db.QueryRow(ctx, `
-				INSERT INTO edge_pc_commands (club_id, pc_ref_id, external_pc_id, desired_status, reason, requested_by_node)
-				VALUES ($1, $2, $3, $4, NULLIF($5, ''), NULLIF($6, ''))
+				INSERT INTO edge_pc_commands (club_id, pc_ref_id, external_pc_id, desired_status, reason, requested_by_node, target_node_id)
+				VALUES ($1, $2, $3, $4, NULLIF($5, ''), NULLIF($6, ''), $7)
 				RETURNING id::text
-			`, command.ClubID, command.PCID, command.ExternalPCID, command.DesiredStatus, command.Reason, "cloud").Scan(&command.ID)
+			`, command.ClubID, command.PCID, command.ExternalPCID, command.DesiredStatus, command.Reason, "cloud", command.TargetNodeID).Scan(&command.ID)
 		}
 		if err != nil {
 			return "", err
@@ -103,6 +112,7 @@ func (s *Server) handleEdgePCCommandEnqueue(w http.ResponseWriter, r *http.Reque
 		writeError(w, http.StatusForbidden, "controller is not authorized for this club")
 		return
 	}
+	_ = s.controllerNodeForEdgeRequest(r.Context(), r, command.ClubID)
 	var externalPCID string
 	err := s.db.QueryRow(r.Context(), `
 		SELECT external_pc_id FROM pc_refs
@@ -122,6 +132,15 @@ func (s *Server) handleEdgePCCommandEnqueue(w http.ResponseWriter, r *http.Reque
 	}
 	command.ExternalPCID = externalPCID
 	command.Reason = strings.TrimSpace(command.Reason)
+	command.TargetNodeID, err = s.activeControllerNodeForPC(r.Context(), command.ClubID, command.ExternalPCID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if command.TargetNodeID == "" {
+		writeError(w, http.StatusConflict, "no healthy Controller is available for this PC")
+		return
+	}
 
 	// Return the existing pending command for a double-click rather than sending
 	// two suspend commands to the same PC.
@@ -132,10 +151,10 @@ func (s *Server) handleEdgePCCommandEnqueue(w http.ResponseWriter, r *http.Reque
 	`, command.ClubID, command.PCID, command.DesiredStatus).Scan(&command.ID)
 	if errors.Is(err, pgx.ErrNoRows) {
 		err = s.db.QueryRow(r.Context(), `
-			INSERT INTO edge_pc_commands (club_id, pc_ref_id, external_pc_id, desired_status, reason, requested_by_node)
-			VALUES ($1, $2, $3, $4, NULLIF($5, ''), NULLIF($6, ''))
+			INSERT INTO edge_pc_commands (club_id, pc_ref_id, external_pc_id, desired_status, reason, requested_by_node, target_node_id)
+			VALUES ($1, $2, $3, $4, NULLIF($5, ''), NULLIF($6, ''), $7)
 			RETURNING id::text
-		`, command.ClubID, command.PCID, command.ExternalPCID, command.DesiredStatus, command.Reason, r.Header.Get("X-Edge-Node-ID")).Scan(&command.ID)
+		`, command.ClubID, command.PCID, command.ExternalPCID, command.DesiredStatus, command.Reason, r.Header.Get("X-Edge-Node-ID"), command.TargetNodeID).Scan(&command.ID)
 	}
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
@@ -162,13 +181,18 @@ func (s *Server) handleEdgePCCommandList(w http.ResponseWriter, r *http.Request)
 		writeError(w, http.StatusForbidden, "controller is not authorized for this club")
 		return
 	}
+	nodeID := s.controllerNodeForEdgeRequest(r.Context(), r, clubID)
+	if nodeID == "" {
+		writeError(w, http.StatusForbidden, "enrolled Controller node id is required")
+		return
+	}
 	rows, err := s.db.Query(r.Context(), `
-		SELECT id::text, club_id::text, pc_ref_id::text, external_pc_id, desired_status, COALESCE(reason, '')
+		SELECT id::text, club_id::text, pc_ref_id::text, external_pc_id, desired_status, COALESCE(reason, ''), COALESCE(target_node_id, '')
 		FROM edge_pc_commands
-		WHERE club_id = $1 AND status = 'pending'
+		WHERE club_id = $1 AND status = 'pending' AND target_node_id = $2
 		ORDER BY created_at
 		LIMIT 50
-	`, clubID)
+	`, clubID, nodeID)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -177,7 +201,7 @@ func (s *Server) handleEdgePCCommandList(w http.ResponseWriter, r *http.Request)
 	commands := make([]edgePCCommand, 0)
 	for rows.Next() {
 		var command edgePCCommand
-		if err := rows.Scan(&command.ID, &command.ClubID, &command.PCID, &command.ExternalPCID, &command.DesiredStatus, &command.Reason); err != nil {
+		if err := rows.Scan(&command.ID, &command.ClubID, &command.PCID, &command.ExternalPCID, &command.DesiredStatus, &command.Reason, &command.TargetNodeID); err != nil {
 			writeError(w, http.StatusInternalServerError, err.Error())
 			return
 		}
@@ -213,6 +237,11 @@ func (s *Server) handleEdgePCCommandComplete(w http.ResponseWriter, r *http.Requ
 		writeError(w, http.StatusForbidden, "controller is not authorized for this club")
 		return
 	}
+	nodeID := s.controllerNodeForEdgeRequest(r.Context(), r, req.ClubID)
+	if nodeID == "" {
+		writeError(w, http.StatusForbidden, "enrolled Controller node id is required")
+		return
+	}
 	status := "failed"
 	if req.Success {
 		status = "succeeded"
@@ -220,8 +249,8 @@ func (s *Server) handleEdgePCCommandComplete(w http.ResponseWriter, r *http.Requ
 	result, err := s.db.Exec(r.Context(), `
 		UPDATE edge_pc_commands
 		SET status = $1, error = NULLIF($2, ''), completed_at = now()
-		WHERE id = $3 AND club_id = $4 AND status = 'pending'
-	`, status, strings.TrimSpace(req.Error), commandID, req.ClubID)
+		WHERE id = $3 AND club_id = $4 AND status = 'pending' AND target_node_id = $5
+	`, status, strings.TrimSpace(req.Error), commandID, req.ClubID, nodeID)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return

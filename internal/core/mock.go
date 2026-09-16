@@ -109,6 +109,13 @@ type AgentUpdateDispatcher interface {
 	UpdateAgent(ctx context.Context, externalPCID string, cmd AgentUpdateCommand) error
 }
 
+// AgentConnectionInspector is intentionally narrower than Adapter. It lets a
+// standby Manager decide whether it can safely deliver an already-paid grant
+// after Agent failover without probing or changing session state.
+type AgentConnectionInspector interface {
+	HasConnectedAgent(externalPCID string) bool
+}
+
 type Adapter interface {
 	GetPCStatus(ctx context.Context, externalPCID string) (PCStatus, error)
 	StartSession(ctx context.Context, cmd StartSessionCommand) (StartSessionResult, error)

@@ -1313,6 +1313,17 @@ func (s *Server) handleBackofficeAgentEnrollment(w http.ResponseWriter, r *http.
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
+	fallbackControllerURL := ""
+	if strings.TrimSpace(req.FallbackControllerURL) != "" {
+		fallbackControllerURL, err = normalizeAgentControllerURL(req.FallbackControllerURL)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "fallback_controller_url: "+err.Error())
+			return
+		}
+		if fallbackControllerURL == controllerURL {
+			fallbackControllerURL = ""
+		}
+	}
 
 	var externalPCID string
 	err = s.db.QueryRow(r.Context(), `
@@ -1332,9 +1343,10 @@ func (s *Server) handleBackofficeAgentEnrollment(w http.ResponseWriter, r *http.
 	writeJSON(w, http.StatusOK, map[string]any{
 		"filename": "clubpay-agent-enrollment.json",
 		"enrollment": map[string]any{
-			"external_pc_id": externalPCID,
-			"controller_url": controllerURL,
-			"core_token":     s.cfg.CoreToken,
+			"external_pc_id":          externalPCID,
+			"controller_url":          controllerURL,
+			"fallback_controller_url": fallbackControllerURL,
+			"core_token":              s.cfg.CoreToken,
 		},
 	})
 }
@@ -3038,16 +3050,50 @@ func (s *Server) syncAfterCoreEvent(event coreEventRequest) {
 	// status back to offline.
 	if s.managerNodeMode() {
 		go s.forwardManagerCoreEvent(event)
+		if event.EventType == "agent_online" || event.EventType == "heartbeat" {
+			go func() {
+				ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+				defer cancel()
+				_ = s.syncEdgeOnce(ctx)
+			}()
+		}
 		return
 	}
 	if !s.edgeNodeMode() {
 		return
 	}
+	go s.forwardEdgeCoreEvent(event)
 	go func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
 		_ = s.syncEdgeOnce(ctx)
 	}()
+}
+
+// forwardEdgeCoreEvent carries the Agent connection identity to Cloud. The
+// regular edge snapshot remains useful for configuration reconciliation, but
+// cannot prove which Controller currently owns a particular WebSocket.
+func (s *Server) forwardEdgeCoreEvent(event coreEventRequest) {
+	if !s.edgeNodeMode() || strings.TrimSpace(s.cfg.CloudBaseURL) == "" || strings.TrimSpace(s.cfg.EdgeClubID) == "" {
+		return
+	}
+	if event.EventID == "" {
+		event.EventID = "edge_" + randomHex(12)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	_ = s.postCloudJSON(ctx, "/api/edge/events", edgeEventBatch{
+		ClubID: strings.TrimSpace(s.cfg.EdgeClubID),
+		Events: []edgeEvent{{
+			EventID:       "edge_" + event.EventID,
+			Type:          event.EventType,
+			ExternalPCID:  event.ExternalPCID,
+			CoreSessionID: event.CoreSessionID,
+			GrantID:       event.GrantID,
+			OccurredAt:    defaultString(event.OccurredAt, time.Now().UTC().Format(time.RFC3339)),
+			Payload:       event.Payload,
+		}},
+	}, nil)
 }
 
 // forwardManagerCoreEvent sends only state changes made by the LAN Agent. A
@@ -3062,7 +3108,7 @@ func (s *Server) forwardManagerCoreEvent(event coreEventRequest) {
 		payload[key] = value
 	}
 	eventType := event.EventType
-	if eventType == "agent_online" || eventType == "agent_offline" || eventType == "heartbeat" {
+	if eventType == "agent_offline" {
 		eventType = "pc_status_changed"
 		status := normalizeCoreStatus(defaultString(stringFromPayload(payload, "status"), stringFromPayload(payload, "pc_state")))
 		if !isKnownPCStatus(status) && event.ExternalPCID != "" {
@@ -3399,6 +3445,7 @@ func (s *Server) handleEdgeSnapshot(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusForbidden, "controller is not authorized for this club")
 		return
 	}
+	_ = s.controllerNodeForEdgeRequest(r.Context(), r, clubID)
 	if err := s.expireElapsedGrants(r.Context()); err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -3429,9 +3476,22 @@ func (s *Server) handleEdgeEvents(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusForbidden, "controller is not authorized for this club")
 		return
 	}
+	nodeID := s.controllerNodeForEdgeRequest(r.Context(), r, req.ClubID)
 	processed := 0
 	for _, event := range req.Events {
 		if event.EventID == "" || event.Type == "" {
+			continue
+		}
+		// A new agent_online from an enrolled node is the fencing point for
+		// Controller failover. Once it changes the lease, late heartbeats and
+		// session events from the former node are ignored instead of resurrecting
+		// a stale status or finishing the wrong session.
+		accepted, leaseErr := s.acceptControllerAgentEvent(r.Context(), req.ClubID, nodeID, event)
+		if leaseErr != nil {
+			writeError(w, http.StatusInternalServerError, leaseErr.Error())
+			return
+		}
+		if !accepted {
 			continue
 		}
 		payload, _ := json.Marshal(event.Payload)
@@ -3447,6 +3507,21 @@ func (s *Server) handleEdgeEvents(w http.ResponseWriter, r *http.Request) {
 		}
 		switch event.Type {
 		case "edge_snapshot":
+			// A returned primary can still hold an old database snapshot. Do not
+			// let it overwrite the live state while an Agent lease belongs to a
+			// Manager; configuration remains Cloud-owned and will reconcile when
+			// the primary regains the Agent connection.
+			if nodeID != "" {
+				owned, _ := s.controllerOwnsActiveLease(r.Context(), req.ClubID, nodeID)
+				if !owned {
+					var anotherOwner bool
+					_ = s.db.QueryRow(r.Context(), `SELECT EXISTS(SELECT 1 FROM controller_agent_leases WHERE club_id=$1 AND node_id<>$2 AND lease_expires_at>now())`, req.ClubID, nodeID).Scan(&anotherOwner)
+					if anotherOwner {
+						processed++
+						continue
+					}
+				}
+			}
 			if err := s.applyEdgeSnapshotData(r.Context(), req.ClubID, event.Payload); err != nil {
 				writeError(w, http.StatusBadRequest, err.Error())
 				return
@@ -3464,6 +3539,13 @@ func (s *Server) handleEdgeEvents(w http.ResponseWriter, r *http.Request) {
 			status := stringFromPayload(event.Payload, "status")
 			if event.ExternalPCID != "" && isKnownPCStatus(status) {
 				_, _ = s.db.Exec(r.Context(), `UPDATE pc_refs SET status_cache = $1 WHERE club_id = $2 AND external_pc_id = $3`, status, req.ClubID, event.ExternalPCID)
+			}
+		case "agent_online", "heartbeat":
+			status := normalizeCoreStatus(defaultString(stringFromPayload(event.Payload, "status"), stringFromPayload(event.Payload, "pc_state")))
+			if event.ExternalPCID != "" && isKnownPCStatus(status) {
+				_, _ = s.db.Exec(r.Context(), `UPDATE pc_refs SET status_cache = $1 WHERE club_id = $2 AND external_pc_id = $3`, status, req.ClubID, event.ExternalPCID)
+			} else if event.Type == "agent_online" && event.ExternalPCID != "" {
+				_, _ = s.db.Exec(r.Context(), `UPDATE pc_refs SET status_cache = CASE WHEN status_cache IN ('offline','unknown') THEN 'available' ELSE status_cache END WHERE club_id=$1 AND external_pc_id=$2`, req.ClubID, event.ExternalPCID)
 			}
 		case "session_started", "session_extended", "session_ended":
 			// A Manager owns the LAN Agent connection but intentionally does not
@@ -3532,7 +3614,7 @@ func (s *Server) syncEdgeOnce(ctx context.Context) error {
 	}
 	// A Manager is a read-only local cache for the club configuration. It must
 	// pull from Cloud but never post its own full snapshot: PC presence belongs
-	// to the primary Controller, and a stale Manager snapshot must not win a
+	// to the current Agent owner, and a stale Manager snapshot must not win a
 	// last-write-wins race against a live Agent.
 	if s.managerNodeMode() {
 		pullID, _ := s.startEdgeSyncRun(ctx, nodeID, clubID, "pull")
@@ -3546,11 +3628,11 @@ func (s *Server) syncEdgeOnce(ctx context.Context) error {
 			return err
 		}
 		s.finishEdgeSyncRun(ctx, pullID, "success", "", nil)
-		// A Manager keeps its catalogue and booking data as a Cloud-owned cache,
-		// but it is still the local Controller which owns the Agent WebSocket.
-		// Pull first so the local mapping is current, then consume Cloud commands
-		// on the LAN. Previously this early return stranded every queued command.
+		// Pull first so the local mapping is current, then consume only commands
+		// targeted to this node. Once an Agent failed over here, the Manager can
+		// also deliver an already-paid pending grant with Agent-side idempotency.
 		s.processPendingEdgePCCommands(ctx, clubID)
+		s.startPendingManagerEdgeGrants(ctx, clubID)
 		s.scheduleOneAvailableAgentUpdate(ctx, clubID)
 		return nil
 	}
@@ -3749,7 +3831,7 @@ func (s *Server) ScheduleAvailableAgentUpdates(ctx context.Context) {
 // Cloud intentionally leaves these grants pending, then the normal pull/push
 // reconciliation makes command delivery durable across temporary outages.
 func (s *Server) startPendingEdgeGrants(ctx context.Context, clubID string) bool {
-	if !s.edgeNodeMode() || strings.TrimSpace(clubID) == "" {
+	if (!s.edgeNodeMode() && !s.managerNodeMode()) || strings.TrimSpace(clubID) == "" {
 		return false
 	}
 	rows, err := s.db.Query(ctx, `
@@ -3870,6 +3952,31 @@ func (s *Server) startPendingEdgeGrants(ctx context.Context, clubID string) bool
 		started = true
 	}
 	return started
+}
+
+// A standby Manager must never write start_failed for every pending purchase
+// while it has no Agent socket. It only enters the normal idempotent grant
+// delivery path after the Agent has actually reconnected to it.
+func (s *Server) startPendingManagerEdgeGrants(ctx context.Context, clubID string) bool {
+	if !s.managerNodeMode() {
+		return false
+	}
+	inspector, ok := s.core.(core.AgentConnectionInspector)
+	if !ok {
+		return false
+	}
+	rows, err := s.db.Query(ctx, `SELECT external_pc_id FROM pc_refs WHERE club_id = $1`, clubID)
+	if err != nil {
+		return false
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var externalPCID string
+		if rows.Scan(&externalPCID) == nil && inspector.HasConnectedAgent(externalPCID) {
+			return s.startPendingEdgeGrants(ctx, clubID)
+		}
+	}
+	return false
 }
 
 // handoffPlayerSession closes every other active root session for a player in
@@ -4098,6 +4205,9 @@ func (s *Server) getCloudJSON(ctx context.Context, path string, result any) erro
 	if s.cfg.EdgeSyncToken != "" {
 		req.Header.Set("Authorization", "Bearer "+s.cfg.EdgeSyncToken)
 		req.Header.Set("X-Edge-Token", s.cfg.EdgeSyncToken)
+	}
+	if nodeID := s.edgeNodeID(); nodeID != "" {
+		req.Header.Set("X-Edge-Node-ID", nodeID)
 	}
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
@@ -7489,7 +7599,8 @@ type pcRequest struct {
 }
 
 type agentEnrollmentRequest struct {
-	ControllerURL string `json:"controller_url"`
+	ControllerURL         string `json:"controller_url"`
+	FallbackControllerURL string `json:"fallback_controller_url"`
 }
 
 func normalizeMACAddress(value string) (string, error) {
