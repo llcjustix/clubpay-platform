@@ -1327,10 +1327,12 @@ func (s *Server) handleBackofficeAgentEnrollment(w http.ResponseWriter, r *http.
 
 	var externalPCID string
 	err = s.db.QueryRow(r.Context(), `
-		SELECT external_pc_id
-		FROM pc_refs
+		UPDATE pc_refs
+		SET agent_primary_controller_url = $3,
+		    agent_fallback_controller_url = NULLIF($4, '')
 		WHERE id = $1 AND club_id = $2 AND status_cache <> 'deleted'
-	`, pcID, clubID).Scan(&externalPCID)
+		RETURNING external_pc_id
+	`, pcID, clubID, controllerURL, fallbackControllerURL).Scan(&externalPCID)
 	if errors.Is(err, pgx.ErrNoRows) {
 		writeError(w, http.StatusNotFound, "pc not found")
 		return
@@ -3311,24 +3313,27 @@ WHERE status IN ('confirmed','checked_in','started') AND starts_at + interval '1
 	}
 
 	var row struct {
-		ClubID           string
-		ClubName         string
-		ClubSlug         *string
-		ClubTimezone     string
-		PCID             string
-		ExternalPCID     string
-		Number           int
-		Label            string
-		Status           string
-		ZoneID           string
-		ZoneName         string
-		HourlyPriceTiyin int64
-		ZoneStatus       string
-		QRToken          string
+		ClubID                string
+		ClubName              string
+		ClubSlug              *string
+		ClubTimezone          string
+		PCID                  string
+		ExternalPCID          string
+		Number                int
+		Label                 string
+		Status                string
+		ZoneID                string
+		ZoneName              string
+		HourlyPriceTiyin      int64
+		ZoneStatus            string
+		QRToken               string
+		PrimaryControllerURL  string
+		FallbackControllerURL string
 	}
 	err := s.db.QueryRow(r.Context(), `
 		SELECT c.id, c.name, c.slug, c.timezone, p.id, p.external_pc_id, p.number, p.label, p.status_cache,
-		       z.id, z.name, z.hourly_price_tiyin, z.status, COALESCE(q.public_token, '')
+		       z.id, z.name, z.hourly_price_tiyin, z.status, COALESCE(q.public_token, ''),
+		       COALESCE(p.agent_primary_controller_url, ''), COALESCE(p.agent_fallback_controller_url, '')
 		FROM pc_refs p
 		JOIN clubs c ON c.id = p.club_id
 		JOIN zones z ON z.id = p.zone_id
@@ -3343,6 +3348,7 @@ WHERE status IN ('confirmed','checked_in','started') AND starts_at + interval '1
 	`, externalPCID, clubIDFilter).Scan(
 		&row.ClubID, &row.ClubName, &row.ClubSlug, &row.ClubTimezone, &row.PCID, &row.ExternalPCID, &row.Number, &row.Label, &row.Status,
 		&row.ZoneID, &row.ZoneName, &row.HourlyPriceTiyin, &row.ZoneStatus, &row.QRToken,
+		&row.PrimaryControllerURL, &row.FallbackControllerURL,
 	)
 	if errors.Is(err, pgx.ErrNoRows) {
 		writeError(w, http.StatusNotFound, "pc not found")
@@ -3419,6 +3425,13 @@ ORDER BY starts_at ASC LIMIT 1`, row.PCID).Scan(&reservation.StartsAt, &reservat
 		},
 		"packages": packages,
 		"qr_url":   qrURL,
+		// Route information is never public: this endpoint requires the Agent token
+		// and returns the pair only for the authenticated PC. It lets a safe Agent
+		// update adopt the primary/Manager pair without a manual reinstallation.
+		"controller_routes": map[string]any{
+			"primary_controller_url":  row.PrimaryControllerURL,
+			"fallback_controller_url": row.FallbackControllerURL,
+		},
 		"reservation": func() any {
 			if !reservationActive {
 				return nil
