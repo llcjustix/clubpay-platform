@@ -326,6 +326,12 @@ func setupControllerNode(configPath, activationCode, activationURL, nodeName str
 	existing["EDGE_NODE_ID"] = enrollment.NodeID
 	existing["EDGE_CLUB_ID"] = enrollment.ClubID
 	existing["CORE_TOKEN"] = enrollment.CoreToken
+	// A freshly enrolled node is the explicit first member of its own canary
+	// ring. Leaving this list empty made a healthy new Manager permanently
+	// refuse its automatic updates until someone edited controller.env by hand.
+	if strings.TrimSpace(existing["AUTO_UPDATE_CANARY_NODE_IDS"]) == "" {
+		existing["AUTO_UPDATE_CANARY_NODE_IDS"] = enrollment.NodeID
+	}
 	keys := make([]string, 0, len(existing))
 	for key := range existing {
 		keys = append(keys, key)
