@@ -85,6 +85,11 @@ type AgentEnrollment = {
   };
 };
 
+type ControllerFailoverStatus = {
+  nodes: Array<{ node_id: string; name: string; mode: 'edge' | 'manager'; status: string; healthy: boolean; last_seen_at?: string }>;
+  agent_leases: Array<{ external_pc_id: string; node_id: string; renewed_at: string; expires_at: string }>;
+};
+
 type QRPaymentProvider = {
   provider: PaymentProvider;
   label: string;
@@ -2028,6 +2033,7 @@ function SettingsPage({ auth, selectedClubID, currentPath, onClubChange, onLogou
   const [pcZoneFilter, setPCZoneFilter] = useState('');
   const [agentControllerURL, setAgentControllerURL] = useState('');
   const [agentFallbackControllerURL, setAgentFallbackControllerURL] = useState('');
+  const [failoverStatus, setFailoverStatus] = useState<ControllerFailoverStatus | null>(null);
 
   const agentControllerURLStorageKey = selectedClubID
     ? `${AGENT_CONTROLLER_URL_KEY}:${selectedClubID}`
@@ -2067,6 +2073,17 @@ function SettingsPage({ auth, selectedClubID, currentPath, onClubChange, onLogou
     }
   }
 
+  async function loadFailoverStatus() {
+    try {
+      const payload = await api<ControllerFailoverStatus>('/api/admin/failover-status');
+      setFailoverStatus(payload);
+    } catch {
+      // The panel can be opened while an older Cloud rollout is still active.
+      // Keep device setup usable and retry on the next settings refresh.
+      setFailoverStatus(null);
+    }
+  }
+
   async function loadNetworks() {
     if (!canManageNetwork) return [];
     try {
@@ -2084,6 +2101,7 @@ function SettingsPage({ auth, selectedClubID, currentPath, onClubChange, onLogou
   useEffect(() => {
     setSettings(null);
     loadSettings();
+    loadFailoverStatus();
   }, [selectedClubID]);
 
   useEffect(() => {
@@ -2712,6 +2730,17 @@ function SettingsPage({ auth, selectedClubID, currentPath, onClubChange, onLogou
           {!creatingClub && settingsSection === 'pcs' && (
           <Panel className="stack settings-wide">
             <SectionTitle icon={<Monitor size={18} />} title="Компьютеры" caption="Для каждого ПК QR создаётся автоматически. Распечатайте его и разместите у компьютера; системный ID в QR не раскрывается." />
+            <div className="inline-editor">
+              <div className="form-mode">
+                <strong>Переключение Controller</strong>
+                <span>{failoverStatus
+                  ? `${failoverStatus.agent_leases.length ? `Agent подключён к ${failoverStatus.agent_leases[0].node_id}` : 'Agent пока не выдал активную аренду'} · ${failoverStatus.nodes.filter((node) => node.healthy).length} из ${failoverStatus.nodes.length} узлов на связи`
+                  : 'Статус обновится после подключения Controller к Cloud.'}</span>
+              </div>
+              <div className="button-row">
+                <Button size="sm" variant="secondary" icon={<RefreshCw size={14} />} onClick={loadFailoverStatus}>Обновить статус</Button>
+              </div>
+            </div>
             <div className="inline-editor">
               <div className="form-mode">
                 <strong>Подготовка Agent без команд</strong>
