@@ -48,7 +48,16 @@ exit /b 1
 if exist "controller.env" (
   schtasks.exe /Query /TN "ClubPay Controller Node" >nul 2>&1
   if not errorlevel 1 (
-    echo This Controller is already configured.
+    rem A configured task may be stopped after an interrupted update or a
+    rem manual diagnostic run.  The one-click installer is also the repair
+    rem entrypoint, so always ensure its Controller process is running.
+    schtasks.exe /Run /TN "ClubPay Controller Node" >nul 2>&1
+    if errorlevel 1 (
+      echo The Controller startup task exists but could not be started.
+      pause
+      exit /b 1
+    )
+    echo This Controller is already configured and started.
     echo Open http://localhost:8080/api/node/status to check it.
     pause
     exit /b 0
