@@ -219,6 +219,7 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("GET /api/admin/pcs", s.handleAdminPCs)
 	mux.HandleFunc("POST /api/admin/pcs/{pc_id}/wake", s.handleAdminPCWake)
 	mux.HandleFunc("POST /api/admin/pcs/{pc_id}/status", s.handleAdminPCStatus)
+	mux.HandleFunc("GET /api/admin/failover-status", s.handleAdminFailoverStatus)
 	mux.HandleFunc("GET /api/admin/orders", s.handleAdminOrders)
 	mux.HandleFunc("GET /api/admin/grants", s.handleAdminGrants)
 	mux.HandleFunc("POST /api/admin/grants/{grant_id}/end", s.handleAdminEndGrant)
@@ -5616,6 +5617,79 @@ func (s *Server) handleAdminPCWake(w http.ResponseWriter, r *http.Request) {
 		VALUES ($1, 'admin_pc_wake', 'pc_ref', $2, $3)
 	`, clubID, pcID, metadata)
 	writeJSON(w, http.StatusOK, map[string]any{"success": true, "pc_id": pcID, "status": "wake_requested"})
+}
+
+// handleAdminFailoverStatus provides the owner with an auditable view of the
+// current Controller role. It exposes no tokens or LAN routes; the lease owner
+// is the sole source of truth for which node may deliver Agent commands.
+func (s *Server) handleAdminFailoverStatus(w http.ResponseWriter, r *http.Request) {
+	auth, ok := s.requireAuth(w, r)
+	if !ok {
+		return
+	}
+	clubID, ok := s.resolveRequestClub(w, r, auth, "owner", "manager", "admin")
+	if !ok {
+		return
+	}
+	nodes, err := s.db.Query(r.Context(), `
+        SELECT node_id, node_name, node_mode, last_seen_at, status
+        FROM controller_nodes
+        WHERE club_id = $1
+        ORDER BY CASE node_mode WHEN 'edge' THEN 0 ELSE 1 END, node_name, node_id
+    `, clubID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	defer nodes.Close()
+	nodePayload := make([]map[string]any, 0)
+	now := time.Now().UTC()
+	for nodes.Next() {
+		var nodeID, nodeName, nodeMode, status string
+		var lastSeen *time.Time
+		if err := nodes.Scan(&nodeID, &nodeName, &nodeMode, &lastSeen, &status); err != nil {
+			writeError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		healthy := lastSeen != nil && lastSeen.After(now.Add(-controllerNodeHealthTTL)) && status == "active"
+		nodePayload = append(nodePayload, map[string]any{
+			"node_id": nodeID, "name": nodeName, "mode": nodeMode, "status": status,
+			"last_seen_at": lastSeen, "healthy": healthy,
+		})
+	}
+	if err := nodes.Err(); err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	leases, err := s.db.Query(r.Context(), `
+        SELECT external_pc_id, node_id, agent_connection_id, acquired_at, renewed_at, lease_expires_at
+        FROM controller_agent_leases
+        WHERE club_id = $1 AND lease_expires_at > now()
+        ORDER BY external_pc_id
+    `, clubID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	defer leases.Close()
+	leasePayload := make([]map[string]any, 0)
+	for leases.Next() {
+		var pcID, nodeID, connectionID string
+		var acquiredAt, renewedAt, expiresAt time.Time
+		if err := leases.Scan(&pcID, &nodeID, &connectionID, &acquiredAt, &renewedAt, &expiresAt); err != nil {
+			writeError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		leasePayload = append(leasePayload, map[string]any{
+			"external_pc_id": pcID, "node_id": nodeID, "agent_connection_id": connectionID,
+			"acquired_at": acquiredAt, "renewed_at": renewedAt, "expires_at": expiresAt,
+		})
+	}
+	if err := leases.Err(); err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"club_id": clubID, "nodes": nodePayload, "agent_leases": leasePayload})
 }
 
 func (s *Server) handleAdminOrders(w http.ResponseWriter, r *http.Request) {
