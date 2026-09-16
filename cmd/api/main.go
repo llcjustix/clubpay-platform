@@ -602,6 +602,16 @@ func installWindowsControllerTask(configPath string) error {
 	if err != nil {
 		return fmt.Errorf("create Windows startup task: %w: %s", err, strings.TrimSpace(string(result)))
 	}
+	// ONSTART covers reboot, but a process can also die while Windows stays up
+	// (for example during a failed in-place update). Re-running an already
+	// running scheduled task is harmless; when it is stopped, this brings the
+	// node back within one minute without requiring somebody to open an RDP
+	// session. The Controller itself keeps command delivery idempotent.
+	watchdogCommand := `cmd.exe /c schtasks.exe /Run /TN "ClubPay Controller Node" >nul 2>&1`
+	result, err = exec.Command("schtasks.exe", "/Create", "/TN", "ClubPay Controller Watchdog", "/SC", "MINUTE", "/MO", "1", "/RU", "SYSTEM", "/RL", "HIGHEST", "/TR", watchdogCommand, "/F").CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("create Windows Controller watchdog: %w: %s", err, strings.TrimSpace(string(result)))
+	}
 	return nil
 }
 
@@ -612,6 +622,10 @@ func uninstallWindowsControllerTask() error {
 	result, err := exec.Command("schtasks.exe", "/Delete", "/TN", "ClubPay Controller Node", "/F").CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("remove Windows startup task: %w: %s", err, strings.TrimSpace(string(result)))
+	}
+	result, err = exec.Command("schtasks.exe", "/Delete", "/TN", "ClubPay Controller Watchdog", "/F").CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("remove Windows Controller watchdog: %w: %s", err, strings.TrimSpace(string(result)))
 	}
 	return nil
 }
