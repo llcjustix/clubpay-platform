@@ -3799,7 +3799,12 @@ func (s *Server) autoUpdateAllowsAgent(clubID, externalPCID string) bool {
 	case "pilot":
 		return containsUpdateID(s.cfg.AutoUpdatePilotClubIDs, clubID)
 	case "canary":
-		return containsUpdateID(s.cfg.AutoUpdateCanaryPCIDs, externalPCID)
+		// A Controller enrolled into the canary ring is itself an explicit
+		// rollout target.  Its idle Agents must follow the same ring; otherwise
+		// fresh Controller installs update successfully but can never deliver
+		// the first Agent release until somebody adds every PC ID by hand.
+		return containsUpdateID(s.cfg.AutoUpdateCanaryPCIDs, externalPCID) ||
+			containsUpdateID(s.cfg.AutoUpdateCanaryNodeIDs, s.cfg.EdgeNodeID)
 	default:
 		return false
 	}
