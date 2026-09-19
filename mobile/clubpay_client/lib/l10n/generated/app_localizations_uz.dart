@@ -202,6 +202,16 @@ class AppLocalizationsUz extends AppLocalizations {
   }
 
   @override
+  String tariffMinutes(int minutes) {
+    return '$minutes daqiqa';
+  }
+
+  @override
+  String tariffHours(int hours) {
+    return '$hours soat';
+  }
+
+  @override
   String price(int amount) {
     return '$amount so‘m';
   }
@@ -496,6 +506,11 @@ class AppLocalizationsUz extends AppLocalizations {
   @override
   String freePcs(int count) {
     return '$count ta bo‘sh';
+  }
+
+  @override
+  String availablePcsCount(int available, int total) {
+    return '$total tadan $available ta bo‘sh kompyuter';
   }
 
   @override

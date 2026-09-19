@@ -3,6 +3,9 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:clubpay_client/core/app.dart';
 import 'package:clubpay_client/core/providers.dart';
+import 'package:clubpay_client/core/ui.dart';
+import 'package:clubpay_client/features/catalog/domain/club_catalog.dart';
+import 'package:clubpay_client/features/catalog/presentation/club_browser_screen.dart';
 import 'package:clubpay_client/features/profile/domain/club_balance.dart';
 import 'package:clubpay_client/features/profile/presentation/profile_screen.dart';
 import 'package:clubpay_client/l10n/generated/app_localizations.dart';
@@ -15,6 +18,40 @@ Widget localized(Widget child, String locale) => MaterialApp(
   home: Scaffold(body: SingleChildScrollView(child: child)),
 );
 void main() {
+  testWidgets('Uzbek catalog counts and tariff durations are localized', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      localized(
+        Column(
+          children: [
+            ClubCatalogRow(
+              club: const ClubSearchResult(
+                id: 'pilot',
+                name: 'Pilot',
+                address: '',
+                online: true,
+                availablePCs: 5,
+                totalPCs: 10,
+              ),
+              onTap: () {},
+            ),
+            Builder(
+              builder: (context) => Text(
+                '${tariffLabel(context, 30 * 60)} / '
+                '${tariffLabel(context, 2 * 60 * 60)}',
+              ),
+            ),
+          ],
+        ),
+        'uz',
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(find.text('10 tadan 5 ta bo‘sh kompyuter'), findsOneWidget);
+    expect(find.text('30 daqiqa / 2 soat'), findsOneWidget);
+  });
+
   testWidgets('Unauthenticated startup renders login, not fake profile', (
     tester,
   ) async {
@@ -27,7 +64,10 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('Твоё время.\nТвоя игра.'), findsOneWidget);
     expect(find.text('Игровое время'), findsNothing);
-    expect(find.text('Вводя номер, вы соглашаетесь с публичной офертой'), findsOneWidget);
+    expect(
+      find.text('Вводя номер, вы соглашаетесь с публичной офертой'),
+      findsOneWidget,
+    );
   });
   for (final locale in ['ru', 'uz']) {
     testWidgets('$locale shows club game balance in sums', (tester) async {

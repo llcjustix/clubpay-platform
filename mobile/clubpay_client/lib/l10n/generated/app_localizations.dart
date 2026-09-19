@@ -452,6 +452,18 @@ abstract class AppLocalizations {
   /// **'{hours} ч {minutes} мин {seconds} с'**
   String duration(int hours, int minutes, int seconds);
 
+  /// No description provided for @tariffMinutes.
+  ///
+  /// In ru, this message translates to:
+  /// **'{minutes, plural, =1{1 минута} few{{minutes} минуты} many{{minutes} минут} other{{minutes} минуты}}'**
+  String tariffMinutes(int minutes);
+
+  /// No description provided for @tariffHours.
+  ///
+  /// In ru, this message translates to:
+  /// **'{hours, plural, =1{1 час} few{{hours} часа} many{{hours} часов} other{{hours} часа}}'**
+  String tariffHours(int hours);
+
   /// No description provided for @price.
   ///
   /// In ru, this message translates to:
@@ -979,6 +991,12 @@ abstract class AppLocalizations {
   /// In ru, this message translates to:
   /// **'{count} свободных'**
   String freePcs(int count);
+
+  /// No description provided for @availablePcsCount.
+  ///
+  /// In ru, this message translates to:
+  /// **'{available} из {total} свободных ПК'**
+  String availablePcsCount(int available, int total);
 
   /// No description provided for @noConnection.
   ///

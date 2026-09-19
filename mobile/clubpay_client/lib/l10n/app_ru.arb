@@ -79,6 +79,22 @@
       }
     }
   },
+  "tariffMinutes": "{minutes, plural, =1{1 минута} few{{minutes} минуты} many{{minutes} минут} other{{minutes} минуты}}",
+  "@tariffMinutes": {
+    "placeholders": {
+      "minutes": {
+        "type": "int"
+      }
+    }
+  },
+  "tariffHours": "{hours, plural, =1{1 час} few{{hours} часа} many{{hours} часов} other{{hours} часа}}",
+  "@tariffHours": {
+    "placeholders": {
+      "hours": {
+        "type": "int"
+      }
+    }
+  },
   "price": "{amount} сум",
   "@price": {
     "placeholders": {
@@ -205,6 +221,17 @@
   "@freePcs": {
     "placeholders": {
       "count": {
+        "type": "int"
+      }
+    }
+  },
+  "availablePcsCount": "{available} из {total} свободных ПК",
+  "@availablePcsCount": {
+    "placeholders": {
+      "available": {
+        "type": "int"
+      },
+      "total": {
         "type": "int"
       }
     }

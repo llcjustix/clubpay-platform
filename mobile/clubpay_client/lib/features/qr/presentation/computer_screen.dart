@@ -286,7 +286,7 @@ class _ComputerScreenState extends ConsumerState<ComputerScreen> {
               children: [
                 for (final t in pc.tariffs)
                   SettingsRow(
-                    title: t.name,
+                    title: tariffLabel(context, t.seconds),
                     trailing: Text(l.price(t.price)),
                     selected:
                         !pc.previewOnly &&

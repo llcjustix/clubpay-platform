@@ -818,7 +818,10 @@ class ClubCatalogRow extends StatelessWidget {
                   const SizedBox(height: 4),
                   Text(
                     club.online
-                        ? '${club.availablePCs} из ${club.totalPCs} свободных ПК'
+                        ? context.l.availablePcsCount(
+                            club.availablePCs,
+                            club.totalPCs,
+                          )
                         : context.l.noConnection,
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,

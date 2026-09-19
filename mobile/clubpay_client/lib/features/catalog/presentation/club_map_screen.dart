@@ -205,7 +205,7 @@ class _ClubMapCard extends StatelessWidget {
           const SizedBox(height: 8),
           Text(
             club.online
-                ? '${club.availablePCs} из ${club.totalPCs} свободных ПК'
+                ? context.l.availablePcsCount(club.availablePCs, club.totalPCs)
                 : context.l.clubOffline,
             style: TextStyle(
               color: club.online && club.availablePCs > 0

@@ -201,6 +201,32 @@ class AppLocalizationsRu extends AppLocalizations {
   }
 
   @override
+  String tariffMinutes(int minutes) {
+    String _temp0 = intl.Intl.pluralLogic(
+      minutes,
+      locale: localeName,
+      other: '$minutes минуты',
+      many: '$minutes минут',
+      few: '$minutes минуты',
+      one: '1 минута',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String tariffHours(int hours) {
+    String _temp0 = intl.Intl.pluralLogic(
+      hours,
+      locale: localeName,
+      other: '$hours часа',
+      many: '$hours часов',
+      few: '$hours часа',
+      one: '1 час',
+    );
+    return '$_temp0';
+  }
+
+  @override
   String price(int amount) {
     return '$amount сум';
   }
@@ -496,6 +522,11 @@ class AppLocalizationsRu extends AppLocalizations {
   @override
   String freePcs(int count) {
     return '$count свободных';
+  }
+
+  @override
+  String availablePcsCount(int available, int total) {
+    return '$available из $total свободных ПК';
   }
 
   @override

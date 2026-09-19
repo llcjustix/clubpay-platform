@@ -59,6 +59,8 @@
   "clubBalance": "Bu klubdagi vaqtingiz",
   "startTime": "{time} vaqtga boshlash",
   "duration": "{hours} soat {minutes} daq {seconds} son",
+  "tariffMinutes": "{minutes} daqiqa",
+  "tariffHours": "{hours} soat",
   "price": "{amount} so‘m",
   "zoneHourlyPrice": "{amount} so‘m/soat",
   "payment": "To‘lov va sessiya",
@@ -202,6 +204,7 @@
       }
     }
   },
+  "availablePcsCount": "{total} tadan {available} ta bo‘sh kompyuter",
   "noConnection": "Aloqa yo‘q",
   "selectThisPc": "Bo‘sh — shu kompyuterni tanlash",
   "clubNoZones": "Bu klubda hozircha mavjud zonalar yo‘q.",

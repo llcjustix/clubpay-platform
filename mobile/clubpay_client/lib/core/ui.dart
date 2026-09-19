@@ -16,6 +16,17 @@ extension LocalizedContext on BuildContext {
 String timeLabel(BuildContext context, int seconds) =>
     context.l.duration(seconds ~/ 3600, (seconds % 3600) ~/ 60, seconds % 60);
 
+/// Tariff names are supplied by the club Controller and historically were
+/// Russian-only. A tariff is defined by its duration, so render that duration
+/// locally and keep the payment screen consistent with the selected language.
+String tariffLabel(BuildContext context, int seconds) {
+  final minutes = seconds ~/ 60;
+  if (minutes > 0 && minutes % 60 == 0) {
+    return context.l.tariffHours(minutes ~/ 60);
+  }
+  return context.l.tariffMinutes(minutes);
+}
+
 String moneyLabel(BuildContext context, int amount) {
   final locale = Localizations.localeOf(context).toLanguageTag();
   return '${NumberFormat.decimalPattern(locale).format(amount)} ${context.l.currencySuffix}';
