@@ -72,6 +72,7 @@ flutter:
   generate: true
   assets:
     - assets/legal/public_offer_ru.md
+    - assets/legal/public_offer_uz.md
 
   # To add assets to your application, add an assets section, like this:
   # assets:

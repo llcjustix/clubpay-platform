@@ -132,9 +132,7 @@ class _AuthScreenState extends ConsumerState<AuthScreen> {
             alignment: Alignment.centerLeft,
             child: TextButton(
               onPressed: () => context.push('/offer'),
-              child: const Text(
-                'Вводя номер, вы соглашаетесь с публичной офертой',
-              ),
+              child: Text(l.legalConsent),
             ),
           ),
           ActionButton(label: l.continueLabel, onPressed: _start, busy: _busy),
@@ -148,10 +146,7 @@ class _AuthScreenState extends ConsumerState<AuthScreen> {
                 style: Theme.of(context).textTheme.titleLarge,
               ),
               const SizedBox(height: 8),
-              const Text(
-                'Код отправлен в SMS. Не сообщайте его другим людям.',
-                style: TextStyle(color: ClubColors.muted),
-              ),
+              Text(l.otpSafety, style: TextStyle(color: ClubColors.muted)),
             ],
           ),
           TextField(

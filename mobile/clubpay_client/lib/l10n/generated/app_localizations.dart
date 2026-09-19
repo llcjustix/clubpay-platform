@@ -1009,6 +1009,396 @@ abstract class AppLocalizations {
   /// In ru, this message translates to:
   /// **'Бронирование сейчас временно недоступно. Попробуйте позже.'**
   String get reservationUnavailable;
+
+  /// No description provided for @publicOffer.
+  ///
+  /// In ru, this message translates to:
+  /// **'Публичная оферта'**
+  String get publicOffer;
+
+  /// No description provided for @publicOfferTitle.
+  ///
+  /// In ru, this message translates to:
+  /// **'Публичная оферта ClubPay'**
+  String get publicOfferTitle;
+
+  /// No description provided for @publicOfferDescription.
+  ///
+  /// In ru, this message translates to:
+  /// **'Условия использования сервиса и игрового времени.'**
+  String get publicOfferDescription;
+
+  /// No description provided for @support.
+  ///
+  /// In ru, this message translates to:
+  /// **'Поддержка'**
+  String get support;
+
+  /// No description provided for @supportMessageSent.
+  ///
+  /// In ru, this message translates to:
+  /// **'Сообщение отправлено в поддержку.'**
+  String get supportMessageSent;
+
+  /// No description provided for @supportHelp.
+  ///
+  /// In ru, this message translates to:
+  /// **'Опишите проблему: клуб, компьютер и что произошло. Сообщение сразу попадёт в поддержку. Мы ответим по указанному в обращении способу связи.'**
+  String get supportHelp;
+
+  /// No description provided for @supportMessageHint.
+  ///
+  /// In ru, this message translates to:
+  /// **'Напишите сообщение'**
+  String get supportMessageHint;
+
+  /// No description provided for @send.
+  ///
+  /// In ru, this message translates to:
+  /// **'Отправить'**
+  String get send;
+
+  /// No description provided for @endSessionConfirmTitle.
+  ///
+  /// In ru, this message translates to:
+  /// **'Завершить сеанс?'**
+  String get endSessionConfirmTitle;
+
+  /// No description provided for @endSessionConfirmBody.
+  ///
+  /// In ru, this message translates to:
+  /// **'Игра на этом ПК будет закрыта. Неиспользованное время сохранится в балансе клуба.'**
+  String get endSessionConfirmBody;
+
+  /// No description provided for @cancel.
+  ///
+  /// In ru, this message translates to:
+  /// **'Отмена'**
+  String get cancel;
+
+  /// No description provided for @end.
+  ///
+  /// In ru, this message translates to:
+  /// **'Завершить'**
+  String get end;
+
+  /// No description provided for @activeSession.
+  ///
+  /// In ru, this message translates to:
+  /// **'Активная сессия'**
+  String get activeSession;
+
+  /// No description provided for @remaining.
+  ///
+  /// In ru, this message translates to:
+  /// **'осталось'**
+  String get remaining;
+
+  /// No description provided for @extendSession.
+  ///
+  /// In ru, this message translates to:
+  /// **'Продлить сеанс'**
+  String get extendSession;
+
+  /// No description provided for @endSession.
+  ///
+  /// In ru, this message translates to:
+  /// **'Завершить сеанс'**
+  String get endSession;
+
+  /// No description provided for @ownReservation.
+  ///
+  /// In ru, this message translates to:
+  /// **'Ваша бронь'**
+  String get ownReservation;
+
+  /// No description provided for @ownActiveSession.
+  ///
+  /// In ru, this message translates to:
+  /// **'Ваша активная сессия'**
+  String get ownActiveSession;
+
+  /// No description provided for @reservePc.
+  ///
+  /// In ru, this message translates to:
+  /// **'Забронировать ПК'**
+  String get reservePc;
+
+  /// No description provided for @extendFor.
+  ///
+  /// In ru, this message translates to:
+  /// **'Продлить на'**
+  String get extendFor;
+
+  /// No description provided for @startGame.
+  ///
+  /// In ru, this message translates to:
+  /// **'Начать игру'**
+  String get startGame;
+
+  /// No description provided for @reservationStartHelp.
+  ///
+  /// In ru, this message translates to:
+  /// **'Вы на месте? Начните игру в ClubPay — затем выберите оплату или используйте уже оплаченное время.'**
+  String get reservationStartHelp;
+
+  /// No description provided for @reservationStartAvailableAt.
+  ///
+  /// In ru, this message translates to:
+  /// **'Кнопка «Начать игру» станет доступна в {time} — за 15 минут до начала брони.'**
+  String reservationStartAvailableAt(String time);
+
+  /// No description provided for @reservationNoLongerAvailable.
+  ///
+  /// In ru, this message translates to:
+  /// **'Время для начала игры закончилось. Бронь больше недоступна.'**
+  String get reservationNoLongerAvailable;
+
+  /// No description provided for @changeReservation.
+  ///
+  /// In ru, this message translates to:
+  /// **'Изменить бронь'**
+  String get changeReservation;
+
+  /// No description provided for @reservationCancelled.
+  ///
+  /// In ru, this message translates to:
+  /// **'Бронь отменена.'**
+  String get reservationCancelled;
+
+  /// No description provided for @cancelReservation.
+  ///
+  /// In ru, this message translates to:
+  /// **'Отменить бронь'**
+  String get cancelReservation;
+
+  /// No description provided for @supportTooltip.
+  ///
+  /// In ru, this message translates to:
+  /// **'Поддержка'**
+  String get supportTooltip;
+
+  /// No description provided for @searchClubsTooltip.
+  ///
+  /// In ru, this message translates to:
+  /// **'Поиск клубов'**
+  String get searchClubsTooltip;
+
+  /// No description provided for @openClubsMap.
+  ///
+  /// In ru, this message translates to:
+  /// **'Открыть карту клубов'**
+  String get openClubsMap;
+
+  /// No description provided for @activeSessionWithClub.
+  ///
+  /// In ru, this message translates to:
+  /// **'Активная сессия · {club}'**
+  String activeSessionWithClub(String club);
+
+  /// No description provided for @activeSessionHelp.
+  ///
+  /// In ru, this message translates to:
+  /// **'Нажмите, чтобы продлить или завершить сеанс.'**
+  String get activeSessionHelp;
+
+  /// No description provided for @reservationWithClub.
+  ///
+  /// In ru, this message translates to:
+  /// **'Ваша бронь · {club}'**
+  String reservationWithClub(String club);
+
+  /// No description provided for @reservationHeldHelp.
+  ///
+  /// In ru, this message translates to:
+  /// **'ПК зарезервирован для вас. Откройте бронь и нажмите «Начать игру», чтобы выбрать оплату или использовать уже оплаченное время.'**
+  String get reservationHeldHelp;
+
+  /// No description provided for @reservationUpcomingHelp.
+  ///
+  /// In ru, this message translates to:
+  /// **'ПК будет отмечен как забронированный за 15 минут до начала. В это время в ClubPay станет доступна кнопка «Начать игру».'**
+  String get reservationUpcomingHelp;
+
+  /// No description provided for @wakeSent.
+  ///
+  /// In ru, this message translates to:
+  /// **'Команда на включение отправлена. Обновим список, когда ПК появится в сети.'**
+  String get wakeSent;
+
+  /// No description provided for @removeFavorite.
+  ///
+  /// In ru, this message translates to:
+  /// **'Убрать из избранного'**
+  String get removeFavorite;
+
+  /// No description provided for @addFavorite.
+  ///
+  /// In ru, this message translates to:
+  /// **'Добавить в избранное'**
+  String get addFavorite;
+
+  /// No description provided for @wake.
+  ///
+  /// In ru, this message translates to:
+  /// **'Включить'**
+  String get wake;
+
+  /// No description provided for @favorites.
+  ///
+  /// In ru, this message translates to:
+  /// **'Избранное'**
+  String get favorites;
+
+  /// No description provided for @favoritesEmpty.
+  ///
+  /// In ru, this message translates to:
+  /// **'Добавьте клуб в избранное — он появится здесь.'**
+  String get favoritesEmpty;
+
+  /// No description provided for @reservedByMe.
+  ///
+  /// In ru, this message translates to:
+  /// **'Ваша бронь{when}'**
+  String reservedByMe(String when);
+
+  /// No description provided for @reserved.
+  ///
+  /// In ru, this message translates to:
+  /// **'Забронирован{when}'**
+  String reserved(String when);
+
+  /// No description provided for @reservationInvalidHours.
+  ///
+  /// In ru, this message translates to:
+  /// **'Введите целое число часов от 1 до 24.'**
+  String get reservationInvalidHours;
+
+  /// No description provided for @reservationMinimumLead.
+  ///
+  /// In ru, this message translates to:
+  /// **'Бронь можно оформить минимум за 15 минут.'**
+  String get reservationMinimumLead;
+
+  /// No description provided for @reservationRescheduled.
+  ///
+  /// In ru, this message translates to:
+  /// **'Бронь перенесена'**
+  String get reservationRescheduled;
+
+  /// No description provided for @reservationCreated.
+  ///
+  /// In ru, this message translates to:
+  /// **'Бронь оформлена'**
+  String get reservationCreated;
+
+  /// No description provided for @rescheduleReservation.
+  ///
+  /// In ru, this message translates to:
+  /// **'Перенести бронь'**
+  String get rescheduleReservation;
+
+  /// No description provided for @reserve.
+  ///
+  /// In ru, this message translates to:
+  /// **'Забронировать'**
+  String get reserve;
+
+  /// No description provided for @reservationChooseStart.
+  ///
+  /// In ru, this message translates to:
+  /// **'Когда хотите начать'**
+  String get reservationChooseStart;
+
+  /// No description provided for @reservationHeldIn.
+  ///
+  /// In ru, this message translates to:
+  /// **'ПК будет отмечен как забронированный за 15 минут'**
+  String get reservationHeldIn;
+
+  /// No description provided for @reservationChooseHours.
+  ///
+  /// In ru, this message translates to:
+  /// **'Сколько часов играть'**
+  String get reservationChooseHours;
+
+  /// No description provided for @hours.
+  ///
+  /// In ru, this message translates to:
+  /// **'часов'**
+  String get hours;
+
+  /// No description provided for @reservationHoursExample.
+  ///
+  /// In ru, this message translates to:
+  /// **'Например, 6'**
+  String get reservationHoursExample;
+
+  /// No description provided for @reservationPaymentInfo.
+  ///
+  /// In ru, this message translates to:
+  /// **'Деньги сейчас не списываем. Придите к выбранному времени и начните игру на этом ПК — оплатите клубу или используйте уже оплаченное время.'**
+  String get reservationPaymentInfo;
+
+  /// No description provided for @reservationStartInfo.
+  ///
+  /// In ru, this message translates to:
+  /// **'За 15 минут до начала ПК будет заблокирован для вашей брони. Откройте бронь в ClubPay и нажмите «Начать игру». Если не начать игру в течение 15 минут после начала, бронь отменится.'**
+  String get reservationStartInfo;
+
+  /// No description provided for @hoursOfPlay.
+  ///
+  /// In ru, this message translates to:
+  /// **'{hours} ч игры'**
+  String hoursOfPlay(int hours);
+
+  /// No description provided for @reservationConfirmationInfo.
+  ///
+  /// In ru, this message translates to:
+  /// **'ПК будет отмечен как занятый с {time}. В это время в ClubPay появится кнопка «Начать игру» — она откроет обычный выбор оплаты или запуск по уже оплаченному времени.'**
+  String reservationConfirmationInfo(String time);
+
+  /// No description provided for @toReservation.
+  ///
+  /// In ru, this message translates to:
+  /// **'К брони'**
+  String get toReservation;
+
+  /// No description provided for @locationUnavailable.
+  ///
+  /// In ru, this message translates to:
+  /// **'Не удалось определить геопозицию. Проверьте разрешение.'**
+  String get locationUnavailable;
+
+  /// No description provided for @clubsOnMap.
+  ///
+  /// In ru, this message translates to:
+  /// **'Клубы на карте'**
+  String get clubsOnMap;
+
+  /// No description provided for @yandexMapUnavailable.
+  ///
+  /// In ru, this message translates to:
+  /// **'Карта Яндекс временно не настроена.'**
+  String get yandexMapUnavailable;
+
+  /// No description provided for @openClub.
+  ///
+  /// In ru, this message translates to:
+  /// **'Открыть клуб'**
+  String get openClub;
+
+  /// No description provided for @legalConsent.
+  ///
+  /// In ru, this message translates to:
+  /// **'Вводя номер, вы соглашаетесь с публичной офертой'**
+  String get legalConsent;
+
+  /// No description provided for @otpSafety.
+  ///
+  /// In ru, this message translates to:
+  /// **'Код отправлен в SMS. Не сообщайте его другим людям.'**
+  String get otpSafety;
 }
 
 class _AppLocalizationsDelegate

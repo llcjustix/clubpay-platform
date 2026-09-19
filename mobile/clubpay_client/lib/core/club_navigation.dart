@@ -49,7 +49,7 @@ class ClubNavigation extends StatelessWidget {
                           icon: favorites
                               ? CupertinoIcons.heart_fill
                               : CupertinoIcons.heart,
-                          label: 'Избранное',
+                          label: context.l.favorites,
                           selected: favorites,
                           onTap: () => context.go('/favorites'),
                         ),

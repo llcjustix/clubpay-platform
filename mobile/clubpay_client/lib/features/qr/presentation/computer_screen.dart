@@ -126,9 +126,9 @@ class _ComputerScreenState extends ConsumerState<ComputerScreen> {
         };
         final extension = pc.type == 'session_extend';
         final status = widget.reservationId != null
-            ? 'Ваша бронь'
+            ? l.ownReservation
             : extension
-            ? 'Ваша активная сессия'
+            ? l.ownActiveSession
             : switch (pc.status) {
                 'available' => l.available,
                 'sleeping' => l.sleeping,
@@ -204,7 +204,7 @@ class _ComputerScreenState extends ConsumerState<ComputerScreen> {
               const SizedBox(height: 20),
               if (widget.reservationId == null && !extension)
                 ActionButton(
-                  label: 'Забронировать ПК',
+                  label: l.reservePc,
                   icon: CupertinoIcons.calendar_badge_plus,
                   onPressed: _busy || pc.pcId.isEmpty
                       ? null
@@ -278,7 +278,7 @@ class _ComputerScreenState extends ConsumerState<ComputerScreen> {
               pc.previewOnly
                   ? l.gameTime
                   : extension
-                  ? 'Продлить на'
+                  ? l.extendFor
                   : l.packages,
             ),
             SettingsGroup(

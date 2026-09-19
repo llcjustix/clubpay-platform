@@ -84,16 +84,14 @@ class _ReservationScreenState extends ConsumerState<ReservationScreen> {
     final hours = int.tryParse(_hours.text.trim());
     if (hours == null || hours < 1 || hours > 24) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Введите целое число часов от 1 до 24.')),
+        SnackBar(content: Text(context.l.reservationInvalidHours)),
       );
       return;
     }
     if (_startsAt.isBefore(DateTime.now().add(const Duration(minutes: 15)))) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Бронь можно оформить минимум за 15 минут.'),
-        ),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(context.l.reservationMinimumLead)));
       return;
     }
     setState(() => _saving = true);
@@ -128,8 +126,10 @@ class _ReservationScreenState extends ConsumerState<ReservationScreen> {
   @override
   Widget build(BuildContext context) => AppPage(
     title: _created != null
-        ? (_editing ? 'Бронь перенесена' : 'Бронь оформлена')
-        : (_editing ? 'Перенести бронь' : 'Забронировать ПК'),
+        ? (_editing
+              ? context.l.reservationRescheduled
+              : context.l.reservationCreated)
+        : (_editing ? context.l.rescheduleReservation : context.l.reservePc),
     children: [
       if (_created != null)
         _confirmation(_created!)
@@ -147,44 +147,42 @@ class _ReservationScreenState extends ConsumerState<ReservationScreen> {
             ),
           ],
         ),
-        SectionCaption('Когда хотите начать'),
+        SectionCaption(context.l.reservationChooseStart),
         SettingsGroup(
           children: [
             SettingsRow(
               icon: CupertinoIcons.calendar,
               color: ClubColors.blue,
               title: _dateTime(_startsAt),
-              subtitle: 'ПК будет отмечен как забронированный за 15 минут',
+              subtitle: context.l.reservationHeldIn,
               onTap: _chooseStart,
             ),
           ],
         ),
         const SizedBox(height: 20),
-        SectionCaption('Сколько часов играть'),
+        SectionCaption(context.l.reservationChooseHours),
         TextField(
           controller: _hours,
           keyboardType: TextInputType.number,
           inputFormatters: [FilteringTextInputFormatter.digitsOnly],
-          decoration: const InputDecoration(
-            suffixText: 'часов',
-            hintText: 'Например, 6',
+          decoration: InputDecoration(
+            suffixText: context.l.hours,
+            hintText: context.l.reservationHoursExample,
           ),
         ),
         const SizedBox(height: 18),
-        const InfoCard(
+        InfoCard(
           children: [
-            Text(
-              'Деньги сейчас не списываем. Придите к выбранному времени и начните игру на этом ПК — оплатите клубу или используйте уже оплаченное время.',
-            ),
+            Text(context.l.reservationPaymentInfo),
             SizedBox(height: 10),
             Text(
-              'За 15 минут до начала ПК будет заблокирован для вашей брони. Откройте бронь в ClubPay и нажмите «Начать игру». Если не начать игру в течение 15 минут после начала, бронь отменится.',
+              context.l.reservationStartInfo,
               style: TextStyle(color: ClubColors.muted),
             ),
           ],
         ),
         ActionButton(
-          label: _editing ? 'Перенести бронь' : 'Забронировать',
+          label: _editing ? context.l.rescheduleReservation : context.l.reserve,
           icon: CupertinoIcons.calendar_badge_plus,
           busy: _saving,
           onPressed: _save,
@@ -205,15 +203,20 @@ class _ReservationScreenState extends ConsumerState<ReservationScreen> {
         style: Theme.of(context).textTheme.headlineSmall,
       ),
       Text(
-        '${item.durationHours} ч игры',
+        context.l.hoursOfPlay(item.durationHours),
         style: const TextStyle(color: ClubColors.muted),
       ),
       const SizedBox(height: 18),
       Text(
-        'ПК будет отмечен как занятый с ${DateFormat('HH:mm').format(item.heldFrom)}. В это время в ClubPay появится кнопка «Начать игру» — она откроет обычный выбор оплаты или запуск по уже оплаченному времени.',
+        context.l.reservationConfirmationInfo(
+          DateFormat('HH:mm').format(item.heldFrom),
+        ),
       ),
       const SizedBox(height: 18),
-      ActionButton(label: 'К брони', onPressed: () => context.go('/home')),
+      ActionButton(
+        label: context.l.toReservation,
+        onPressed: () => context.go('/home'),
+      ),
     ],
   );
 }

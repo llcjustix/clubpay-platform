@@ -71,19 +71,17 @@ class _ActiveSessionScreenState extends ConsumerState<ActiveSessionScreen> {
     final approved = await showCupertinoDialog<bool>(
       context: context,
       builder: (dialog) => CupertinoAlertDialog(
-        title: const Text('Завершить сеанс?'),
-        content: const Text(
-          'Игра на этом ПК будет закрыта. Неиспользованное время сохранится в балансе клуба.',
-        ),
+        title: Text(context.l.endSessionConfirmTitle),
+        content: Text(context.l.endSessionConfirmBody),
         actions: [
           CupertinoDialogAction(
             onPressed: () => Navigator.pop(dialog, false),
-            child: const Text('Отмена'),
+            child: Text(context.l.cancel),
           ),
           CupertinoDialogAction(
             isDestructiveAction: true,
             onPressed: () => Navigator.pop(dialog, true),
-            child: const Text('Завершить'),
+            child: Text(context.l.end),
           ),
         ],
       ),
@@ -109,7 +107,7 @@ class _ActiveSessionScreenState extends ConsumerState<ActiveSessionScreen> {
   Widget build(BuildContext context) {
     final session = _session;
     return AppPage(
-      title: 'Активная сессия',
+      title: context.l.activeSession,
       children: [
         InfoCard(
           accent: true,
@@ -137,12 +135,15 @@ class _ActiveSessionScreenState extends ConsumerState<ActiveSessionScreen> {
               style: Theme.of(context).textTheme.headlineMedium,
             ),
             const SizedBox(height: 4),
-            const Text('осталось', style: TextStyle(color: ClubColors.muted)),
+            Text(
+              context.l.remaining,
+              style: const TextStyle(color: ClubColors.muted),
+            ),
           ],
         ),
         const SizedBox(height: 24),
         ActionButton(
-          label: 'Продлить сеанс',
+          label: context.l.extendSession,
           icon: CupertinoIcons.add_circled,
           onPressed: session.extendToken.isEmpty
               ? null
@@ -158,7 +159,7 @@ class _ActiveSessionScreenState extends ConsumerState<ActiveSessionScreen> {
         ),
         const SizedBox(height: 10),
         ActionButton(
-          label: 'Завершить сеанс',
+          label: context.l.endSession,
           icon: CupertinoIcons.stop_circle,
           secondary: true,
           busy: _ending,

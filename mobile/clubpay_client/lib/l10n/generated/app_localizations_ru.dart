@@ -514,4 +514,227 @@ class AppLocalizationsRu extends AppLocalizations {
   @override
   String get reservationUnavailable =>
       'Бронирование сейчас временно недоступно. Попробуйте позже.';
+
+  @override
+  String get publicOffer => 'Публичная оферта';
+
+  @override
+  String get publicOfferTitle => 'Публичная оферта ClubPay';
+
+  @override
+  String get publicOfferDescription =>
+      'Условия использования сервиса и игрового времени.';
+
+  @override
+  String get support => 'Поддержка';
+
+  @override
+  String get supportMessageSent => 'Сообщение отправлено в поддержку.';
+
+  @override
+  String get supportHelp =>
+      'Опишите проблему: клуб, компьютер и что произошло. Сообщение сразу попадёт в поддержку. Мы ответим по указанному в обращении способу связи.';
+
+  @override
+  String get supportMessageHint => 'Напишите сообщение';
+
+  @override
+  String get send => 'Отправить';
+
+  @override
+  String get endSessionConfirmTitle => 'Завершить сеанс?';
+
+  @override
+  String get endSessionConfirmBody =>
+      'Игра на этом ПК будет закрыта. Неиспользованное время сохранится в балансе клуба.';
+
+  @override
+  String get cancel => 'Отмена';
+
+  @override
+  String get end => 'Завершить';
+
+  @override
+  String get activeSession => 'Активная сессия';
+
+  @override
+  String get remaining => 'осталось';
+
+  @override
+  String get extendSession => 'Продлить сеанс';
+
+  @override
+  String get endSession => 'Завершить сеанс';
+
+  @override
+  String get ownReservation => 'Ваша бронь';
+
+  @override
+  String get ownActiveSession => 'Ваша активная сессия';
+
+  @override
+  String get reservePc => 'Забронировать ПК';
+
+  @override
+  String get extendFor => 'Продлить на';
+
+  @override
+  String get startGame => 'Начать игру';
+
+  @override
+  String get reservationStartHelp =>
+      'Вы на месте? Начните игру в ClubPay — затем выберите оплату или используйте уже оплаченное время.';
+
+  @override
+  String reservationStartAvailableAt(String time) {
+    return 'Кнопка «Начать игру» станет доступна в $time — за 15 минут до начала брони.';
+  }
+
+  @override
+  String get reservationNoLongerAvailable =>
+      'Время для начала игры закончилось. Бронь больше недоступна.';
+
+  @override
+  String get changeReservation => 'Изменить бронь';
+
+  @override
+  String get reservationCancelled => 'Бронь отменена.';
+
+  @override
+  String get cancelReservation => 'Отменить бронь';
+
+  @override
+  String get supportTooltip => 'Поддержка';
+
+  @override
+  String get searchClubsTooltip => 'Поиск клубов';
+
+  @override
+  String get openClubsMap => 'Открыть карту клубов';
+
+  @override
+  String activeSessionWithClub(String club) {
+    return 'Активная сессия · $club';
+  }
+
+  @override
+  String get activeSessionHelp =>
+      'Нажмите, чтобы продлить или завершить сеанс.';
+
+  @override
+  String reservationWithClub(String club) {
+    return 'Ваша бронь · $club';
+  }
+
+  @override
+  String get reservationHeldHelp =>
+      'ПК зарезервирован для вас. Откройте бронь и нажмите «Начать игру», чтобы выбрать оплату или использовать уже оплаченное время.';
+
+  @override
+  String get reservationUpcomingHelp =>
+      'ПК будет отмечен как забронированный за 15 минут до начала. В это время в ClubPay станет доступна кнопка «Начать игру».';
+
+  @override
+  String get wakeSent =>
+      'Команда на включение отправлена. Обновим список, когда ПК появится в сети.';
+
+  @override
+  String get removeFavorite => 'Убрать из избранного';
+
+  @override
+  String get addFavorite => 'Добавить в избранное';
+
+  @override
+  String get wake => 'Включить';
+
+  @override
+  String get favorites => 'Избранное';
+
+  @override
+  String get favoritesEmpty => 'Добавьте клуб в избранное — он появится здесь.';
+
+  @override
+  String reservedByMe(String when) {
+    return 'Ваша бронь$when';
+  }
+
+  @override
+  String reserved(String when) {
+    return 'Забронирован$when';
+  }
+
+  @override
+  String get reservationInvalidHours => 'Введите целое число часов от 1 до 24.';
+
+  @override
+  String get reservationMinimumLead =>
+      'Бронь можно оформить минимум за 15 минут.';
+
+  @override
+  String get reservationRescheduled => 'Бронь перенесена';
+
+  @override
+  String get reservationCreated => 'Бронь оформлена';
+
+  @override
+  String get rescheduleReservation => 'Перенести бронь';
+
+  @override
+  String get reserve => 'Забронировать';
+
+  @override
+  String get reservationChooseStart => 'Когда хотите начать';
+
+  @override
+  String get reservationHeldIn =>
+      'ПК будет отмечен как забронированный за 15 минут';
+
+  @override
+  String get reservationChooseHours => 'Сколько часов играть';
+
+  @override
+  String get hours => 'часов';
+
+  @override
+  String get reservationHoursExample => 'Например, 6';
+
+  @override
+  String get reservationPaymentInfo =>
+      'Деньги сейчас не списываем. Придите к выбранному времени и начните игру на этом ПК — оплатите клубу или используйте уже оплаченное время.';
+
+  @override
+  String get reservationStartInfo =>
+      'За 15 минут до начала ПК будет заблокирован для вашей брони. Откройте бронь в ClubPay и нажмите «Начать игру». Если не начать игру в течение 15 минут после начала, бронь отменится.';
+
+  @override
+  String hoursOfPlay(int hours) {
+    return '$hours ч игры';
+  }
+
+  @override
+  String reservationConfirmationInfo(String time) {
+    return 'ПК будет отмечен как занятый с $time. В это время в ClubPay появится кнопка «Начать игру» — она откроет обычный выбор оплаты или запуск по уже оплаченному времени.';
+  }
+
+  @override
+  String get toReservation => 'К брони';
+
+  @override
+  String get locationUnavailable =>
+      'Не удалось определить геопозицию. Проверьте разрешение.';
+
+  @override
+  String get clubsOnMap => 'Клубы на карте';
+
+  @override
+  String get yandexMapUnavailable => 'Карта Яндекс временно не настроена.';
+
+  @override
+  String get openClub => 'Открыть клуб';
+
+  @override
+  String get legalConsent => 'Вводя номер, вы соглашаетесь с публичной офертой';
+
+  @override
+  String get otpSafety => 'Код отправлен в SMS. Не сообщайте его другим людям.';
 }

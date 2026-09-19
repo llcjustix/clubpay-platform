@@ -206,5 +206,119 @@
   "selectThisPc": "Bo‘sh — shu kompyuterni tanlash",
   "clubNoZones": "Bu klubda hozircha mavjud zonalar yo‘q.",
   "supportUnavailable": "Qo‘llab-quvvatlash vaqtincha ishlamayapti. Keyinroq urinib ko‘ring.",
-  "reservationUnavailable": "Bron qilish hozir vaqtincha ishlamayapti. Keyinroq urinib ko‘ring."
+  "reservationUnavailable": "Bron qilish hozir vaqtincha ishlamayapti. Keyinroq urinib ko‘ring.",
+  "publicOffer": "Ommaviy oferta",
+  "publicOfferTitle": "ClubPay ommaviy ofertasi",
+  "publicOfferDescription": "Xizmat va o‘yin vaqtidan foydalanish shartlari.",
+  "support": "Yordam",
+  "supportMessageSent": "Xabaringiz yordam xizmatiga yuborildi.",
+  "supportHelp": "Muammoni yozing: klub, kompyuter va nima bo‘lganini ayting. Xabar darhol yordam xizmatiga yuboriladi. Murojaatda ko‘rsatilgan aloqa usuli orqali javob beramiz.",
+  "supportMessageHint": "Xabar yozing",
+  "send": "Yuborish",
+  "endSessionConfirmTitle": "Seansni yakunlaysizmi?",
+  "endSessionConfirmBody": "Ushbu kompyuterdagi o‘yin yopiladi. Ishlatilmagan vaqt klub balansida saqlanadi.",
+  "cancel": "Bekor qilish",
+  "end": "Yakunlash",
+  "activeSession": "Faol seans",
+  "remaining": "qoldi",
+  "extendSession": "Seansni uzaytirish",
+  "endSession": "Seansni yakunlash",
+  "ownReservation": "Sizning broningiz",
+  "ownActiveSession": "Sizning faol seansingiz",
+  "reservePc": "Kompyuterni bron qilish",
+  "extendFor": "Uzaytirish",
+  "startGame": "O‘yinni boshlash",
+  "reservationStartHelp": "Joyingizdami? ClubPay’da o‘yinni boshlang, so‘ng to‘lovni tanlang yoki avval to‘langan vaqtdan foydalaning.",
+  "reservationStartAvailableAt": "«O‘yinni boshlash» tugmasi bron boshlanishidan 15 daqiqa oldin, {time} da faol bo‘ladi.",
+  "@reservationStartAvailableAt": {
+    "placeholders": {
+      "time": {
+        "type": "String"
+      }
+    }
+  },
+  "reservationNoLongerAvailable": "O‘yinni boshlash vaqti tugadi. Bron endi mavjud emas.",
+  "changeReservation": "Bronni o‘zgartirish",
+  "reservationCancelled": "Bron bekor qilindi.",
+  "cancelReservation": "Bronni bekor qilish",
+  "supportTooltip": "Yordam",
+  "searchClubsTooltip": "Klublarni qidirish",
+  "openClubsMap": "Klublar xaritasini ochish",
+  "activeSessionWithClub": "Faol seans · {club}",
+  "@activeSessionWithClub": {
+    "placeholders": {
+      "club": {
+        "type": "String"
+      }
+    }
+  },
+  "activeSessionHelp": "Seansni uzaytirish yoki yakunlash uchun bosing.",
+  "reservationWithClub": "Sizning broningiz · {club}",
+  "@reservationWithClub": {
+    "placeholders": {
+      "club": {
+        "type": "String"
+      }
+    }
+  },
+  "reservationHeldHelp": "Kompyuter siz uchun band qilingan. Bronni ochib «O‘yinni boshlash» tugmasini bosing, so‘ng to‘lovni tanlang yoki avval to‘langan vaqtdan foydalaning.",
+  "reservationUpcomingHelp": "Kompyuter bron boshlanishidan 15 daqiqa oldin band qilinadi. Shu vaqtda ClubPay’da «O‘yinni boshlash» tugmasi paydo bo‘ladi.",
+  "wakeSent": "Yoqish buyrug‘i yuborildi. Kompyuter tarmoqqa chiqqanda ro‘yxat yangilanadi.",
+  "removeFavorite": "Sevimlilardan olib tashlash",
+  "addFavorite": "Sevimlilarga qo‘shish",
+  "wake": "Yoqish",
+  "favorites": "Sevimlilar",
+  "favoritesEmpty": "Klubni sevimlilarga qo‘shing — u shu yerda ko‘rinadi.",
+  "reservedByMe": "Sizning broningiz{when}",
+  "@reservedByMe": {
+    "placeholders": {
+      "when": {
+        "type": "String"
+      }
+    }
+  },
+  "reserved": "Band qilingan{when}",
+  "@reserved": {
+    "placeholders": {
+      "when": {
+        "type": "String"
+      }
+    }
+  },
+  "reservationInvalidHours": "1 dan 24 gacha bo‘lgan butun soat sonini kiriting.",
+  "reservationMinimumLead": "Bronni kamida 15 daqiqa oldin rasmiylashtirish mumkin.",
+  "reservationRescheduled": "Bron ko‘chirildi",
+  "reservationCreated": "Bron rasmiylashtirildi",
+  "rescheduleReservation": "Bronni ko‘chirish",
+  "reserve": "Bron qilish",
+  "reservationChooseStart": "Qachon boshlamoqchisiz",
+  "reservationHeldIn": "Kompyuter 15 daqiqa oldin bron qilingan deb belgilanadi",
+  "reservationChooseHours": "Necha soat o‘ynaysiz",
+  "hours": "soat",
+  "reservationHoursExample": "Masalan, 6",
+  "reservationPaymentInfo": "Hozir pul yechilmaydi. Tanlangan vaqtda keling va shu kompyuterda o‘yinni boshlang — klubga to‘lang yoki avval to‘langan vaqtdan foydalaning.",
+  "reservationStartInfo": "Boshlanishdan 15 daqiqa oldin kompyuter sizning broningiz uchun band qilinadi. ClubPay’da bronni ochib «O‘yinni boshlash» tugmasini bosing. Boshlangandan keyin 15 daqiqa ichida o‘yin boshlanmasa, bron bekor qilinadi.",
+  "hoursOfPlay": "{hours} soat o‘yin",
+  "@hoursOfPlay": {
+    "placeholders": {
+      "hours": {
+        "type": "int"
+      }
+    }
+  },
+  "reservationConfirmationInfo": "Kompyuter {time} dan band deb belgilanadi. Shu vaqtda ClubPay’da «O‘yinni boshlash» tugmasi paydo bo‘ladi — u odatiy to‘lov tanlovi yoki avval to‘langan vaqtdan foydalanishni ochadi.",
+  "@reservationConfirmationInfo": {
+    "placeholders": {
+      "time": {
+        "type": "String"
+      }
+    }
+  },
+  "toReservation": "Bronga o‘tish",
+  "locationUnavailable": "Joylashuvni aniqlab bo‘lmadi. Ruxsatni tekshiring.",
+  "clubsOnMap": "Xaritadagi klublar",
+  "yandexMapUnavailable": "Yandex xaritasi vaqtincha sozlanmagan.",
+  "openClub": "Klubni ochish",
+  "legalConsent": "Raqamni kiritib, ommaviy ofertaga rozilik bildirasiz",
+  "otpSafety": "Kod SMS orqali yuborildi. Uni boshqa odamlarga aytmang."
 }

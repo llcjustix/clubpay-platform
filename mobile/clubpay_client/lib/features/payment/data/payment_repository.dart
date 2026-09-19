@@ -27,7 +27,9 @@ class PaymentRepository {
   }) async {
     final old = await pending();
     if (old != null) {
-      if (testPayment && old.invoice != null) await _completeTestPayment(old.invoice!);
+      if (testPayment && old.invoice != null) {
+        await _completeTestPayment(old.invoice!);
+      }
       return old;
     }
     final operation = PendingOperation(
@@ -50,7 +52,10 @@ class PaymentRepository {
   }
 
   Future<void> _completeTestPayment(String invoice) async {
-    await api.post('/api/mobile/payments/test/success/${Uri.encodeComponent(invoice)}', {});
+    await api.post(
+      '/api/mobile/payments/test/success/${Uri.encodeComponent(invoice)}',
+      {},
+    );
   }
 
   Future<PendingOperation> _submit(PendingOperation operation) async {

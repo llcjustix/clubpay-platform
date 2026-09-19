@@ -56,13 +56,9 @@ class _ClubMapScreenState extends ConsumerState<ClubMapScreen> {
           .track('club_map_location_enabled', screen: 'club_map');
     } catch (_) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text(
-              'Не удалось определить геопозицию. Проверьте разрешение.',
-            ),
-          ),
-        );
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text(context.l.locationUnavailable)));
       }
     } finally {
       if (mounted) setState(() => _locating = false);
@@ -78,7 +74,7 @@ class _ClubMapScreenState extends ConsumerState<ClubMapScreen> {
           .toList();
       return Scaffold(
         appBar: AppBar(
-          title: const Text('Клубы на карте'),
+          title: Text(context.l.clubsOnMap),
           leading: IconButton(
             icon: const Icon(CupertinoIcons.chevron_back),
             onPressed: () => Navigator.maybePop(context),
@@ -89,11 +85,11 @@ class _ClubMapScreenState extends ConsumerState<ClubMapScreen> {
             : snapshot.hasError
             ? Center(child: Text(errorLabel(context, snapshot.error!)))
             : _yandexMapsKey.isEmpty
-            ? const Center(
+            ? Center(
                 child: Padding(
-                  padding: EdgeInsets.all(24),
+                  padding: const EdgeInsets.all(24),
                   child: Text(
-                    'Карта Яндекс временно не настроена.',
+                    context.l.yandexMapUnavailable,
                     textAlign: TextAlign.center,
                   ),
                 ),
@@ -196,7 +192,7 @@ class _ClubMapCard extends StatelessWidget {
                 ),
               ),
               IconButton(
-                tooltip: 'Закрыть',
+                tooltip: context.l.close,
                 onPressed: onClose,
                 icon: const Icon(CupertinoIcons.xmark_circle_fill),
               ),
@@ -210,7 +206,7 @@ class _ClubMapCard extends StatelessWidget {
           Text(
             club.online
                 ? '${club.availablePCs} из ${club.totalPCs} свободных ПК'
-                : 'Клуб сейчас не на связи',
+                : context.l.clubOffline,
             style: TextStyle(
               color: club.online && club.availablePCs > 0
                   ? ClubColors.green
@@ -222,7 +218,7 @@ class _ClubMapCard extends StatelessWidget {
           SizedBox(
             width: double.infinity,
             child: ActionButton(
-              label: 'Открыть клуб',
+              label: context.l.openClub,
               onPressed: onOpen,
               icon: CupertinoIcons.arrow_right,
             ),

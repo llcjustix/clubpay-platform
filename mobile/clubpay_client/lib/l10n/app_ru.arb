@@ -213,5 +213,119 @@
   "selectThisPc": "Свободен — выбрать этот ПК",
   "clubNoZones": "В этом клубе пока нет доступных зон.",
   "supportUnavailable": "Поддержка временно недоступна. Попробуйте позже.",
-  "reservationUnavailable": "Бронирование сейчас временно недоступно. Попробуйте позже."
+  "reservationUnavailable": "Бронирование сейчас временно недоступно. Попробуйте позже.",
+  "publicOffer": "Публичная оферта",
+  "publicOfferTitle": "Публичная оферта ClubPay",
+  "publicOfferDescription": "Условия использования сервиса и игрового времени.",
+  "support": "Поддержка",
+  "supportMessageSent": "Сообщение отправлено в поддержку.",
+  "supportHelp": "Опишите проблему: клуб, компьютер и что произошло. Сообщение сразу попадёт в поддержку. Мы ответим по указанному в обращении способу связи.",
+  "supportMessageHint": "Напишите сообщение",
+  "send": "Отправить",
+  "endSessionConfirmTitle": "Завершить сеанс?",
+  "endSessionConfirmBody": "Игра на этом ПК будет закрыта. Неиспользованное время сохранится в балансе клуба.",
+  "cancel": "Отмена",
+  "end": "Завершить",
+  "activeSession": "Активная сессия",
+  "remaining": "осталось",
+  "extendSession": "Продлить сеанс",
+  "endSession": "Завершить сеанс",
+  "ownReservation": "Ваша бронь",
+  "ownActiveSession": "Ваша активная сессия",
+  "reservePc": "Забронировать ПК",
+  "extendFor": "Продлить на",
+  "startGame": "Начать игру",
+  "reservationStartHelp": "Вы на месте? Начните игру в ClubPay — затем выберите оплату или используйте уже оплаченное время.",
+  "reservationStartAvailableAt": "Кнопка «Начать игру» станет доступна в {time} — за 15 минут до начала брони.",
+  "@reservationStartAvailableAt": {
+    "placeholders": {
+      "time": {
+        "type": "String"
+      }
+    }
+  },
+  "reservationNoLongerAvailable": "Время для начала игры закончилось. Бронь больше недоступна.",
+  "changeReservation": "Изменить бронь",
+  "reservationCancelled": "Бронь отменена.",
+  "cancelReservation": "Отменить бронь",
+  "supportTooltip": "Поддержка",
+  "searchClubsTooltip": "Поиск клубов",
+  "openClubsMap": "Открыть карту клубов",
+  "activeSessionWithClub": "Активная сессия · {club}",
+  "@activeSessionWithClub": {
+    "placeholders": {
+      "club": {
+        "type": "String"
+      }
+    }
+  },
+  "activeSessionHelp": "Нажмите, чтобы продлить или завершить сеанс.",
+  "reservationWithClub": "Ваша бронь · {club}",
+  "@reservationWithClub": {
+    "placeholders": {
+      "club": {
+        "type": "String"
+      }
+    }
+  },
+  "reservationHeldHelp": "ПК зарезервирован для вас. Откройте бронь и нажмите «Начать игру», чтобы выбрать оплату или использовать уже оплаченное время.",
+  "reservationUpcomingHelp": "ПК будет отмечен как забронированный за 15 минут до начала. В это время в ClubPay станет доступна кнопка «Начать игру».",
+  "wakeSent": "Команда на включение отправлена. Обновим список, когда ПК появится в сети.",
+  "removeFavorite": "Убрать из избранного",
+  "addFavorite": "Добавить в избранное",
+  "wake": "Включить",
+  "favorites": "Избранное",
+  "favoritesEmpty": "Добавьте клуб в избранное — он появится здесь.",
+  "reservedByMe": "Ваша бронь{when}",
+  "@reservedByMe": {
+    "placeholders": {
+      "when": {
+        "type": "String"
+      }
+    }
+  },
+  "reserved": "Забронирован{when}",
+  "@reserved": {
+    "placeholders": {
+      "when": {
+        "type": "String"
+      }
+    }
+  },
+  "reservationInvalidHours": "Введите целое число часов от 1 до 24.",
+  "reservationMinimumLead": "Бронь можно оформить минимум за 15 минут.",
+  "reservationRescheduled": "Бронь перенесена",
+  "reservationCreated": "Бронь оформлена",
+  "rescheduleReservation": "Перенести бронь",
+  "reserve": "Забронировать",
+  "reservationChooseStart": "Когда хотите начать",
+  "reservationHeldIn": "ПК будет отмечен как забронированный за 15 минут",
+  "reservationChooseHours": "Сколько часов играть",
+  "hours": "часов",
+  "reservationHoursExample": "Например, 6",
+  "reservationPaymentInfo": "Деньги сейчас не списываем. Придите к выбранному времени и начните игру на этом ПК — оплатите клубу или используйте уже оплаченное время.",
+  "reservationStartInfo": "За 15 минут до начала ПК будет заблокирован для вашей брони. Откройте бронь в ClubPay и нажмите «Начать игру». Если не начать игру в течение 15 минут после начала, бронь отменится.",
+  "hoursOfPlay": "{hours} ч игры",
+  "@hoursOfPlay": {
+    "placeholders": {
+      "hours": {
+        "type": "int"
+      }
+    }
+  },
+  "reservationConfirmationInfo": "ПК будет отмечен как занятый с {time}. В это время в ClubPay появится кнопка «Начать игру» — она откроет обычный выбор оплаты или запуск по уже оплаченному времени.",
+  "@reservationConfirmationInfo": {
+    "placeholders": {
+      "time": {
+        "type": "String"
+      }
+    }
+  },
+  "toReservation": "К брони",
+  "locationUnavailable": "Не удалось определить геопозицию. Проверьте разрешение.",
+  "clubsOnMap": "Клубы на карте",
+  "yandexMapUnavailable": "Карта Яндекс временно не настроена.",
+  "openClub": "Открыть клуб",
+  "legalConsent": "Вводя номер, вы соглашаетесь с публичной офертой",
+  "otpSafety": "Код отправлен в SMS. Не сообщайте его другим людям."
 }

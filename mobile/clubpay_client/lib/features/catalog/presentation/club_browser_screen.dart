@@ -171,6 +171,7 @@ class _ClubBrowserScreenState extends ConsumerState<ClubBrowserScreen> {
   }
 
   Future<void> _openReservation(MobileReservation reservation) async {
+    final l = context.l;
     var starting = false;
     await showModalBottomSheet<void>(
       context: context,
@@ -187,7 +188,7 @@ class _ClubBrowserScreenState extends ConsumerState<ClubBrowserScreen> {
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
                   Text(
-                    'Ваша бронь',
+                    l.ownReservation,
                     style: Theme.of(context).textTheme.titleLarge,
                   ),
                   const SizedBox(height: 8),
@@ -197,12 +198,10 @@ class _ClubBrowserScreenState extends ConsumerState<ClubBrowserScreen> {
                   ),
                   const SizedBox(height: 20),
                   if (canStart) ...[
-                    const Text(
-                      'Вы на месте? Начните игру в ClubPay — затем выберите оплату или используйте уже оплаченное время.',
-                    ),
+                    Text(l.reservationStartHelp),
                     const SizedBox(height: 14),
                     ActionButton(
-                      label: 'Начать игру',
+                      label: l.startGame,
                       icon: CupertinoIcons.play_fill,
                       busy: starting,
                       onPressed: starting
@@ -243,14 +242,16 @@ class _ClubBrowserScreenState extends ConsumerState<ClubBrowserScreen> {
                   ] else
                     Text(
                       DateTime.now().isBefore(reservation.heldFrom)
-                          ? 'Кнопка «Начать игру» станет доступна в ${_time(reservation.heldFrom)} — за 15 минут до начала брони.'
-                          : 'Время для начала игры закончилось. Бронь больше недоступна.',
+                          ? l.reservationStartAvailableAt(
+                              _time(reservation.heldFrom),
+                            )
+                          : l.reservationNoLongerAvailable,
                       style: const TextStyle(color: ClubColors.muted),
                     ),
                   const SizedBox(height: 14),
                   if (DateTime.now().isBefore(reservation.heldFrom)) ...[
                     ActionButton(
-                      label: 'Изменить бронь',
+                      label: l.changeReservation,
                       icon: CupertinoIcons.calendar,
                       secondary: true,
                       onPressed: () {
@@ -292,7 +293,7 @@ class _ClubBrowserScreenState extends ConsumerState<ClubBrowserScreen> {
                           if (mounted) {
                             setState(() => _reservations = const []);
                             ScaffoldMessenger.of(context).showSnackBar(
-                              const SnackBar(content: Text('Бронь отменена.')),
+                              SnackBar(content: Text(l.reservationCancelled)),
                             );
                           }
                         } catch (error) {
@@ -300,7 +301,7 @@ class _ClubBrowserScreenState extends ConsumerState<ClubBrowserScreen> {
                         }
                       },
                       icon: const Icon(CupertinoIcons.xmark_circle),
-                      label: const Text('Отменить бронь'),
+                      label: Text(l.cancelReservation),
                       style: OutlinedButton.styleFrom(
                         foregroundColor: ClubColors.red,
                         side: const BorderSide(color: ClubColors.red),
@@ -335,7 +336,7 @@ class _ClubBrowserScreenState extends ConsumerState<ClubBrowserScreen> {
       largeTitle: true,
       actions: [
         IconButton(
-          tooltip: 'Поддержка',
+          tooltip: context.l.supportTooltip,
           onPressed: () {
             _track('support_opened');
             context.push('/support');
@@ -343,7 +344,7 @@ class _ClubBrowserScreenState extends ConsumerState<ClubBrowserScreen> {
           icon: const Icon(CupertinoIcons.chat_bubble_text),
         ),
         IconButton(
-          tooltip: 'Поиск клубов',
+          tooltip: context.l.searchClubsTooltip,
           onPressed: () {
             _track('club_search_opened');
             setState(() => _searchOpen = !_searchOpen);
@@ -370,7 +371,7 @@ class _ClubBrowserScreenState extends ConsumerState<ClubBrowserScreen> {
               context.push('/clubs-map');
             },
             icon: const Icon(CupertinoIcons.map),
-            label: const Text('Открыть карту клубов'),
+            label: Text(context.l.openClubsMap),
           ),
         ),
         if (_activeSession != null)
@@ -482,7 +483,7 @@ class _ActiveSessionCardState extends State<_ActiveSessionCard> {
           accent: true,
           children: [
             Text(
-              'Активная сессия · ${widget.session.clubName}',
+              context.l.activeSessionWithClub(widget.session.clubName),
               style: Theme.of(context).textTheme.titleMedium,
             ),
             const SizedBox(height: 6),
@@ -491,8 +492,8 @@ class _ActiveSessionCardState extends State<_ActiveSessionCard> {
               style: const TextStyle(color: ClubColors.muted),
             ),
             const SizedBox(height: 8),
-            const Text(
-              'Нажмите, чтобы продлить или завершить сеанс.',
+            Text(
+              context.l.activeSessionHelp,
               style: TextStyle(color: ClubColors.muted),
             ),
           ],
@@ -532,7 +533,7 @@ class _ReservationCard extends StatelessWidget {
           child: InfoCard(
             children: [
               Text(
-                'Ваша бронь · ${booking.clubName}',
+                context.l.reservationWithClub(booking.clubName),
                 style: Theme.of(context).textTheme.titleMedium,
               ),
               const SizedBox(height: 6),
@@ -543,8 +544,8 @@ class _ReservationCard extends StatelessWidget {
               const SizedBox(height: 8),
               Text(
                 held
-                    ? 'ПК зарезервирован для вас. Откройте бронь и нажмите «Начать игру», чтобы выбрать оплату или использовать уже оплаченное время.'
-                    : 'ПК будет отмечен как забронированный за 15 минут до начала. В это время в ClubPay станет доступна кнопка «Начать игру».',
+                    ? context.l.reservationHeldHelp
+                    : context.l.reservationUpcomingHelp,
                 style: const TextStyle(color: ClubColors.muted),
               ),
             ],
@@ -658,13 +659,9 @@ class _ClubDetailScreenState extends ConsumerState<ClubDetailScreen> {
     try {
       await ref.read(clubCatalogRepositoryProvider).wake(pc.id);
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text(
-              'Команда на включение отправлена. Обновим список, когда ПК появится в сети.',
-            ),
-          ),
-        );
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text(context.l.wakeSent)));
       }
     } catch (error) {
       if (mounted) showFailure(context, error);
@@ -682,8 +679,8 @@ class _ClubDetailScreenState extends ConsumerState<ClubDetailScreen> {
           if (snapshot.data != null)
             IconButton(
               tooltip: snapshot.data!.favorite
-                  ? 'Убрать из избранного'
-                  : 'Добавить в избранное',
+                  ? context.l.removeFavorite
+                  : context.l.addFavorite,
               onPressed: () => _toggleFavorite(snapshot.data!),
               icon: Icon(
                 snapshot.data!.favorite
@@ -725,13 +722,7 @@ class _ClubDetailScreenState extends ConsumerState<ClubDetailScreen> {
                 ),
               ),
             if (!snapshot.data!.online)
-              const InfoCard(
-                children: [
-                  Text(
-                    'Клуб сейчас не на связи. Список ПК может быть неактуальным.',
-                  ),
-                ],
-              ),
+              InfoCard(children: [Text(context.l.clubOfflineDetail)]),
             if (!snapshot.data!.online) const SizedBox(height: 20),
             for (final zone in snapshot.data!.zones) ...[
               SectionCaption(
@@ -753,7 +744,7 @@ class _ClubDetailScreenState extends ConsumerState<ClubDetailScreen> {
                         pc.selectable
                             ? context.l.available
                             : pc.wakeable
-                            ? 'Включить'
+                            ? context.l.wake
                             : _statusLabel(context, pc.status),
                         style: TextStyle(
                           color: pc.selectable
@@ -774,9 +765,7 @@ class _ClubDetailScreenState extends ConsumerState<ClubDetailScreen> {
               const SizedBox(height: 20),
             ],
             if (snapshot.data!.zones.isEmpty)
-              const InfoCard(
-                children: [Text('В этом клубе пока нет доступных зон.')],
-              ),
+              InfoCard(children: [Text(context.l.clubNoZones)]),
           ],
         ],
       );
@@ -880,7 +869,9 @@ String _pcSubtitle(BuildContext context, ClubComputer pc) {
   final when = pc.reservationStartsAt == null
       ? ''
       : ' · ${_reservationDate(pc.reservationStartsAt!)}';
-  return pc.reservedByMe ? 'Ваша бронь$when' : 'Забронирован$when';
+  return pc.reservedByMe
+      ? context.l.reservedByMe(when)
+      : context.l.reserved(when);
 }
 
 class FavoritesScreen extends ConsumerStatefulWidget {
@@ -911,7 +902,7 @@ class _FavoritesScreenState extends ConsumerState<FavoritesScreen> {
       });
     }
     return AppPage(
-      title: 'Избранное',
+      title: context.l.favorites,
       actions: [
         IconButton(
           tooltip: context.l.refresh,
@@ -939,10 +930,10 @@ class _FavoritesScreenState extends ConsumerState<FavoritesScreen> {
             }
             final clubs = snapshot.data ?? const <ClubSearchResult>[];
             if (clubs.isEmpty) {
-              return const InfoCard(
+              return InfoCard(
                 children: [
                   Text(
-                    'Добавьте клуб в избранное — он появится здесь.',
+                    context.l.favoritesEmpty,
                     style: TextStyle(color: ClubColors.muted),
                   ),
                 ],

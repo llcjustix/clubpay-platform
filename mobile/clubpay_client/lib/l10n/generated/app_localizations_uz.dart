@@ -514,4 +514,231 @@ class AppLocalizationsUz extends AppLocalizations {
   @override
   String get reservationUnavailable =>
       'Bron qilish hozir vaqtincha ishlamayapti. Keyinroq urinib ko‘ring.';
+
+  @override
+  String get publicOffer => 'Ommaviy oferta';
+
+  @override
+  String get publicOfferTitle => 'ClubPay ommaviy ofertasi';
+
+  @override
+  String get publicOfferDescription =>
+      'Xizmat va o‘yin vaqtidan foydalanish shartlari.';
+
+  @override
+  String get support => 'Yordam';
+
+  @override
+  String get supportMessageSent => 'Xabaringiz yordam xizmatiga yuborildi.';
+
+  @override
+  String get supportHelp =>
+      'Muammoni yozing: klub, kompyuter va nima bo‘lganini ayting. Xabar darhol yordam xizmatiga yuboriladi. Murojaatda ko‘rsatilgan aloqa usuli orqali javob beramiz.';
+
+  @override
+  String get supportMessageHint => 'Xabar yozing';
+
+  @override
+  String get send => 'Yuborish';
+
+  @override
+  String get endSessionConfirmTitle => 'Seansni yakunlaysizmi?';
+
+  @override
+  String get endSessionConfirmBody =>
+      'Ushbu kompyuterdagi o‘yin yopiladi. Ishlatilmagan vaqt klub balansida saqlanadi.';
+
+  @override
+  String get cancel => 'Bekor qilish';
+
+  @override
+  String get end => 'Yakunlash';
+
+  @override
+  String get activeSession => 'Faol seans';
+
+  @override
+  String get remaining => 'qoldi';
+
+  @override
+  String get extendSession => 'Seansni uzaytirish';
+
+  @override
+  String get endSession => 'Seansni yakunlash';
+
+  @override
+  String get ownReservation => 'Sizning broningiz';
+
+  @override
+  String get ownActiveSession => 'Sizning faol seansingiz';
+
+  @override
+  String get reservePc => 'Kompyuterni bron qilish';
+
+  @override
+  String get extendFor => 'Uzaytirish';
+
+  @override
+  String get startGame => 'O‘yinni boshlash';
+
+  @override
+  String get reservationStartHelp =>
+      'Joyingizdami? ClubPay’da o‘yinni boshlang, so‘ng to‘lovni tanlang yoki avval to‘langan vaqtdan foydalaning.';
+
+  @override
+  String reservationStartAvailableAt(String time) {
+    return '«O‘yinni boshlash» tugmasi bron boshlanishidan 15 daqiqa oldin, $time da faol bo‘ladi.';
+  }
+
+  @override
+  String get reservationNoLongerAvailable =>
+      'O‘yinni boshlash vaqti tugadi. Bron endi mavjud emas.';
+
+  @override
+  String get changeReservation => 'Bronni o‘zgartirish';
+
+  @override
+  String get reservationCancelled => 'Bron bekor qilindi.';
+
+  @override
+  String get cancelReservation => 'Bronni bekor qilish';
+
+  @override
+  String get supportTooltip => 'Yordam';
+
+  @override
+  String get searchClubsTooltip => 'Klublarni qidirish';
+
+  @override
+  String get openClubsMap => 'Klublar xaritasini ochish';
+
+  @override
+  String activeSessionWithClub(String club) {
+    return 'Faol seans · $club';
+  }
+
+  @override
+  String get activeSessionHelp =>
+      'Seansni uzaytirish yoki yakunlash uchun bosing.';
+
+  @override
+  String reservationWithClub(String club) {
+    return 'Sizning broningiz · $club';
+  }
+
+  @override
+  String get reservationHeldHelp =>
+      'Kompyuter siz uchun band qilingan. Bronni ochib «O‘yinni boshlash» tugmasini bosing, so‘ng to‘lovni tanlang yoki avval to‘langan vaqtdan foydalaning.';
+
+  @override
+  String get reservationUpcomingHelp =>
+      'Kompyuter bron boshlanishidan 15 daqiqa oldin band qilinadi. Shu vaqtda ClubPay’da «O‘yinni boshlash» tugmasi paydo bo‘ladi.';
+
+  @override
+  String get wakeSent =>
+      'Yoqish buyrug‘i yuborildi. Kompyuter tarmoqqa chiqqanda ro‘yxat yangilanadi.';
+
+  @override
+  String get removeFavorite => 'Sevimlilardan olib tashlash';
+
+  @override
+  String get addFavorite => 'Sevimlilarga qo‘shish';
+
+  @override
+  String get wake => 'Yoqish';
+
+  @override
+  String get favorites => 'Sevimlilar';
+
+  @override
+  String get favoritesEmpty =>
+      'Klubni sevimlilarga qo‘shing — u shu yerda ko‘rinadi.';
+
+  @override
+  String reservedByMe(String when) {
+    return 'Sizning broningiz$when';
+  }
+
+  @override
+  String reserved(String when) {
+    return 'Band qilingan$when';
+  }
+
+  @override
+  String get reservationInvalidHours =>
+      '1 dan 24 gacha bo‘lgan butun soat sonini kiriting.';
+
+  @override
+  String get reservationMinimumLead =>
+      'Bronni kamida 15 daqiqa oldin rasmiylashtirish mumkin.';
+
+  @override
+  String get reservationRescheduled => 'Bron ko‘chirildi';
+
+  @override
+  String get reservationCreated => 'Bron rasmiylashtirildi';
+
+  @override
+  String get rescheduleReservation => 'Bronni ko‘chirish';
+
+  @override
+  String get reserve => 'Bron qilish';
+
+  @override
+  String get reservationChooseStart => 'Qachon boshlamoqchisiz';
+
+  @override
+  String get reservationHeldIn =>
+      'Kompyuter 15 daqiqa oldin bron qilingan deb belgilanadi';
+
+  @override
+  String get reservationChooseHours => 'Necha soat o‘ynaysiz';
+
+  @override
+  String get hours => 'soat';
+
+  @override
+  String get reservationHoursExample => 'Masalan, 6';
+
+  @override
+  String get reservationPaymentInfo =>
+      'Hozir pul yechilmaydi. Tanlangan vaqtda keling va shu kompyuterda o‘yinni boshlang — klubga to‘lang yoki avval to‘langan vaqtdan foydalaning.';
+
+  @override
+  String get reservationStartInfo =>
+      'Boshlanishdan 15 daqiqa oldin kompyuter sizning broningiz uchun band qilinadi. ClubPay’da bronni ochib «O‘yinni boshlash» tugmasini bosing. Boshlangandan keyin 15 daqiqa ichida o‘yin boshlanmasa, bron bekor qilinadi.';
+
+  @override
+  String hoursOfPlay(int hours) {
+    return '$hours soat o‘yin';
+  }
+
+  @override
+  String reservationConfirmationInfo(String time) {
+    return 'Kompyuter $time dan band deb belgilanadi. Shu vaqtda ClubPay’da «O‘yinni boshlash» tugmasi paydo bo‘ladi — u odatiy to‘lov tanlovi yoki avval to‘langan vaqtdan foydalanishni ochadi.';
+  }
+
+  @override
+  String get toReservation => 'Bronga o‘tish';
+
+  @override
+  String get locationUnavailable =>
+      'Joylashuvni aniqlab bo‘lmadi. Ruxsatni tekshiring.';
+
+  @override
+  String get clubsOnMap => 'Xaritadagi klublar';
+
+  @override
+  String get yandexMapUnavailable => 'Yandex xaritasi vaqtincha sozlanmagan.';
+
+  @override
+  String get openClub => 'Klubni ochish';
+
+  @override
+  String get legalConsent =>
+      'Raqamni kiritib, ommaviy ofertaga rozilik bildirasiz';
+
+  @override
+  String get otpSafety =>
+      'Kod SMS orqali yuborildi. Uni boshqa odamlarga aytmang.';
 }

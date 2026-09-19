@@ -21,32 +21,55 @@ class _SupportScreenState extends ConsumerState<SupportScreen> {
     _messages = _loadMessages();
     ref.read(analyticsProvider).track('support_opened', screen: 'support');
   }
+
   @override
-  void dispose() { _message.dispose(); super.dispose(); }
+  void dispose() {
+    _message.dispose();
+    super.dispose();
+  }
+
   Future<List<_SupportMessage>> _loadMessages() async {
-    final data = await ref.read(apiProvider).get('/api/mobile/support/messages');
+    final data = await ref
+        .read(apiProvider)
+        .get('/api/mobile/support/messages');
     return ((data['messages'] as List?) ?? [])
-        .map((item) => _SupportMessage.fromJson(Map<String, dynamic>.from(item as Map)))
+        .map(
+          (item) =>
+              _SupportMessage.fromJson(Map<String, dynamic>.from(item as Map)),
+        )
         .toList();
   }
+
   Future<void> _send() async {
     final body = _message.text.trim();
     if (body.isEmpty) return;
     setState(() => _sending = true);
     try {
-      await ref.read(apiProvider).post('/api/mobile/support/messages', {'body': body});
-      ref.read(analyticsProvider).track('support_message_sent', screen: 'support');
+      await ref.read(apiProvider).post('/api/mobile/support/messages', {
+        'body': body,
+      });
+      ref
+          .read(analyticsProvider)
+          .track('support_message_sent', screen: 'support');
       _message.clear();
       if (mounted) setState(() => _messages = _loadMessages());
-      if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Сообщение отправлено в поддержку.')));
-    } catch (error) { if (mounted) showFailure(context, error); }
-    finally { if (mounted) setState(() => _sending = false); }
+      if (mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text(context.l.supportMessageSent)));
+      }
+    } catch (error) {
+      if (mounted) showFailure(context, error);
+    } finally {
+      if (mounted) setState(() => _sending = false);
+    }
   }
+
   @override
   Widget build(BuildContext context) => AppPage(
-    title: 'Поддержка',
+    title: context.l.support,
     children: [
-      const InfoCard(children: [Text('Опишите проблему: клуб, компьютер и что произошло. Сообщение сразу попадёт в поддержку. Мы ответим по указанному в обращении способу связи.')]),
+      InfoCard(children: [Text(context.l.supportHelp)]),
       const SizedBox(height: 20),
       FutureBuilder<List<_SupportMessage>>(
         future: _messages,
@@ -57,12 +80,16 @@ class _SupportScreenState extends ConsumerState<SupportScreen> {
             children: [
               for (final message in messages)
                 Align(
-                  alignment: message.sender == 'player' ? Alignment.centerRight : Alignment.centerLeft,
+                  alignment: message.sender == 'player'
+                      ? Alignment.centerRight
+                      : Alignment.centerLeft,
                   child: Container(
                     margin: const EdgeInsets.only(bottom: 8),
                     padding: const EdgeInsets.all(12),
                     decoration: BoxDecoration(
-                      color: message.sender == 'player' ? Theme.of(context).colorScheme.primary : Colors.white12,
+                      color: message.sender == 'player'
+                          ? Theme.of(context).colorScheme.primary
+                          : Colors.white12,
                       borderRadius: BorderRadius.circular(14),
                     ),
                     child: Text(message.body),
@@ -73,8 +100,20 @@ class _SupportScreenState extends ConsumerState<SupportScreen> {
           );
         },
       ),
-      TextField(controller: _message, minLines: 4, maxLines: 7, maxLength: 2000, textInputAction: TextInputAction.newline, decoration: const InputDecoration(hintText: 'Напишите сообщение')),
-      ActionButton(label: 'Отправить', icon: CupertinoIcons.paperplane_fill, busy: _sending, onPressed: _send),
+      TextField(
+        controller: _message,
+        minLines: 4,
+        maxLines: 7,
+        maxLength: 2000,
+        textInputAction: TextInputAction.newline,
+        decoration: InputDecoration(hintText: context.l.supportMessageHint),
+      ),
+      ActionButton(
+        label: context.l.send,
+        icon: CupertinoIcons.paperplane_fill,
+        busy: _sending,
+        onPressed: _send,
+      ),
     ],
   );
 }
@@ -82,8 +121,9 @@ class _SupportScreenState extends ConsumerState<SupportScreen> {
 class _SupportMessage {
   const _SupportMessage({required this.sender, required this.body});
   final String sender, body;
-  factory _SupportMessage.fromJson(Map<String, dynamic> value) => _SupportMessage(
-    sender: value['sender'] as String? ?? 'support',
-    body: value['body'] as String? ?? '',
-  );
+  factory _SupportMessage.fromJson(Map<String, dynamic> value) =>
+      _SupportMessage(
+        sender: value['sender'] as String? ?? 'support',
+        body: value['body'] as String? ?? '',
+      );
 }
