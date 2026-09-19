@@ -68,6 +68,14 @@ func main() {
 	if err != nil {
 		log.Fatalf("load config: %v", err)
 	}
+	if migrated, err := migrateLegacyCanaryNodeEnrollment(*configPath, &cfg); err != nil {
+		// Do not widen a rollout when the persisted configuration cannot be
+		// repaired. The node remains safely held until its configuration is
+		// available again.
+		log.Printf("automatic update enrollment migration: %v", err)
+	} else if migrated {
+		log.Printf("update_event component=controller action=canary_enrolled node_id=%s club_id=%s", localUpdateNodeID(cfg), cfg.EdgeClubID)
+	}
 	if cfg.WebDir != "" {
 		cfg.WebDir = resolvePathFromConfig(cfg.WebDir, *configPath)
 	}
