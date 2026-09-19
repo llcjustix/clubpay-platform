@@ -254,11 +254,24 @@ class _ClubBrowserScreenState extends ConsumerState<ClubBrowserScreen> {
                       icon: CupertinoIcons.calendar,
                       secondary: true,
                       onPressed: () {
-                        Navigator.pop(sheet);
-                        context.push(
-                          '/reservation/${reservation.pcID}?club=${Uri.encodeComponent(reservation.clubName)}&zone=${Uri.encodeComponent(reservation.zoneName)}&pc=${Uri.encodeComponent(reservation.pcLabel)}',
-                          extra: reservation,
-                        );
+                        final location = Uri(
+                          path: '/reservation/${reservation.pcID}',
+                          queryParameters: {
+                            'club': reservation.clubName,
+                            'zone': reservation.zoneName,
+                            'pc': reservation.pcLabel,
+                          },
+                        ).toString();
+                        // Let the bottom sheet finish closing before pushing
+                        // its next page. Pushing while the sheet's route is
+                        // being removed occasionally left GoRouter on its
+                        // generic error page on iOS.
+                        Navigator.of(sheet).pop();
+                        WidgetsBinding.instance.addPostFrameCallback((_) {
+                          if (mounted) {
+                            context.push(location, extra: reservation);
+                          }
+                        });
                       },
                     ),
                     const SizedBox(height: 8),
