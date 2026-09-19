@@ -113,6 +113,30 @@ final routerProvider = Provider<GoRouter>((ref) {
           ),
         ),
       ),
+      // Editing never needs an URL token: all data comes from the player's
+      // reservation. Keeping this route separate from a scanner/PC route
+      // prevents a reservation edit from falling through to the generic QR
+      // error page when a PC identifier contains a URL-sensitive character.
+      GoRoute(
+        name: 'reservation-edit',
+        path: '/reservation-edit',
+        pageBuilder: (_, s) {
+          final reservation = s.extra as MobileReservation?;
+          if (reservation == null) {
+            return _iosPage(s, const ClubBrowserScreen());
+          }
+          return _iosPage(
+            s,
+            ReservationScreen(
+              pcID: reservation.pcID,
+              clubName: reservation.clubName,
+              zoneName: reservation.zoneName,
+              pcLabel: reservation.pcLabel,
+              reservation: reservation,
+            ),
+          );
+        },
+      ),
       GoRoute(
         path: '/computer/:token',
         pageBuilder: (_, s) => _iosPage(

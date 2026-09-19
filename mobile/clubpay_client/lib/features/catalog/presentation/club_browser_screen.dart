@@ -255,24 +255,13 @@ class _ClubBrowserScreenState extends ConsumerState<ClubBrowserScreen> {
                       icon: CupertinoIcons.calendar,
                       secondary: true,
                       onPressed: () {
-                        final location = Uri(
-                          path: '/reservation/${reservation.pcID}',
-                          queryParameters: {
-                            'club': reservation.clubName,
-                            'zone': reservation.zoneName,
-                            'pc': reservation.pcLabel,
-                          },
-                        ).toString();
-                        // Let the bottom sheet finish closing before pushing
-                        // its next page. Pushing while the sheet's route is
-                        // being removed occasionally left GoRouter on its
-                        // generic error page on iOS.
+                        // The edit screen uses the reservation itself, rather
+                        // than composing a URL from PC and club fields. This
+                        // removes the QR-route fallback entirely.
                         Navigator.of(sheet).pop();
-                        WidgetsBinding.instance.addPostFrameCallback((_) {
-                          if (mounted) {
-                            context.push(location, extra: reservation);
-                          }
-                        });
+                        GoRouter.of(
+                          context,
+                        ).goNamed('reservation-edit', extra: reservation);
                       },
                     ),
                     const SizedBox(height: 8),
