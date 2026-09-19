@@ -1,3 +1,4 @@
+import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -121,6 +122,11 @@ void main() {
       find.text('QR не распознан. Используйте QR ClubPay с экрана компьютера.'),
       findsNothing,
     );
+    expect(find.byIcon(CupertinoIcons.chevron_back), findsOneWidget);
+    await tester.tap(find.byIcon(CupertinoIcons.chevron_back));
+    await tester.pumpAndSettle();
+    expect(find.byType(ReservationScreen), findsNothing);
+    expect(find.text('Ваша бронь · Pilot'), findsOneWidget);
   });
 
   testWidgets('Home shows club search and has no QR scanner action', (

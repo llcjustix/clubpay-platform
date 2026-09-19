@@ -261,7 +261,7 @@ class _ClubBrowserScreenState extends ConsumerState<ClubBrowserScreen> {
                         Navigator.of(sheet).pop();
                         GoRouter.of(
                           context,
-                        ).goNamed('reservation-edit', extra: reservation);
+                        ).pushNamed('reservation-edit', extra: reservation);
                       },
                     ),
                     const SizedBox(height: 8),
