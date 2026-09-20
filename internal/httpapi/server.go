@@ -3751,7 +3751,7 @@ func (s *Server) scheduleOneAvailableAgentUpdate(ctx context.Context, clubID str
 		SELECT external_pc_id
 		FROM pc_refs
 		WHERE club_id = $1
-		  AND status_cache NOT IN ('occupied', 'frozen', 'deleted')
+		  AND COALESCE(status_cache, 'unknown') NOT IN ('occupied', 'frozen', 'deleted')
 		ORDER BY created_at
 	`, clubID)
 	if err != nil {
