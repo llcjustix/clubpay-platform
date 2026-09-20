@@ -3824,10 +3824,10 @@ func containsUpdateID(values []string, value string) bool {
 // per check; busy Agents reject the command and are retried on the next check.
 // Local edge nodes keep calling scheduleOneAvailableAgentUpdate after sync.
 func (s *Server) ScheduleAvailableAgentUpdates(ctx context.Context) {
-	if s.managerNodeMode() {
-		// During primary outage the Manager owns the live Agent socket. Its
-		// database is limited to this enrolled club, so keep the same one-PC
-		// canary rule locally instead of trying to enumerate Cloud clubs.
+	if s.managerNodeMode() || s.edgeNodeMode() {
+		// A local Controller knows its enrolled club and owns its LAN Agent
+		// socket. Schedule immediately after release discovery; Cloud sync is
+		// not a prerequisite for an already connected, idle canary.
 		s.scheduleOneAvailableAgentUpdate(ctx, s.cfg.EdgeClubID)
 		return
 	}

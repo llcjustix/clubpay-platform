@@ -72,13 +72,11 @@ func checkAutomaticUpdates(ctx context.Context, cfg config.Config, server *httpa
 			server.SetAgentUpdateRelease(core.AgentUpdateCommand{
 				Version: agentArtifact.Version, DownloadURL: agentArtifact.DownloadURL, ChecksumURL: agentArtifact.ChecksumURL,
 			})
-			if mode == "cloud" || mode == "manager" {
-				// A Manager can temporarily own the only live Agent socket during
-				// Controller failover. It must therefore deliver the same one-at-a-time
-				// update as Cloud; otherwise a recovered primary can never receive a
-				// failover-capable Agent from an older Manager.
-				server.ScheduleAvailableAgentUpdates(ctx)
-			}
+			// Release discovery is enough to attempt one safe, idle-Agent update.
+			// An edge Controller must not wait for the next successful Cloud snapshot:
+			// it already owns the LAN WebSocket, and a temporary sync outage must not
+			// strand a connected canary on an obsolete build.
+			server.ScheduleAvailableAgentUpdates(ctx)
 		}
 
 		// Cloud never replaces its own process from this loop. It publishes Agent
