@@ -215,6 +215,7 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("POST /api/edge/pc-commands", s.handleEdgePCCommandEnqueue)
 	mux.HandleFunc("GET /api/edge/pc-commands", s.handleEdgePCCommandList)
 	mux.HandleFunc("POST /api/edge/pc-commands/{command_id}/complete", s.handleEdgePCCommandComplete)
+	mux.HandleFunc("POST /api/edge/agent-updates", s.handleEdgeAgentUpdate)
 	mux.HandleFunc("GET /api/admin/catalog", s.handleAdminCatalog)
 	mux.HandleFunc("GET /api/admin/pcs", s.handleAdminPCs)
 	mux.HandleFunc("POST /api/admin/pcs/{pc_id}/wake", s.handleAdminPCWake)
@@ -3770,6 +3771,24 @@ func (s *Server) scheduleOneAvailableAgentUpdate(ctx context.Context, clubID str
 		err = dispatcher.UpdateAgent(updateCtx, externalPCID, update)
 		cancel()
 		if err != nil {
+			// A previously installed Agent can still be connected to Cloud while
+			// its local primary Controller route is stale. Ask Cloud to deliver the
+			// same signed artifact over that existing authenticated socket. The
+			// replacement rehydrates primary/Manager routes before it reconnects,
+			// so this is a one-time self-healing bridge, not a second controller.
+			if errors.Is(err, core.ErrAgentOffline) && s.edgeNodeMode() {
+				relayCtx, relayCancel := context.WithTimeout(ctx, 20*time.Second)
+				relayErr := s.requestCloudAgentUpdate(relayCtx, clubID, externalPCID, update)
+				relayCancel()
+				if relayErr == nil {
+					fmt.Printf("update_event component=agent action=scheduled version=%s club_id=%s external_pc_id=%s ring=%s channel=cloud_recovery\n", update.Version, clubID, externalPCID, s.cfg.AutoUpdateRing)
+					s.agentUpdateMu.Lock()
+					s.agentUpdateScheduled[externalPCID] = update.Version
+					s.agentUpdateMu.Unlock()
+					return
+				}
+				err = fmt.Errorf("local delivery: %w; cloud recovery: %v", err, relayErr)
+			}
 			fmt.Printf("update_event component=agent action=deferred version=%s club_id=%s external_pc_id=%s reason=%q\n", update.Version, clubID, externalPCID, err.Error())
 			// Pre-auto-update Agents report an unknown command as invalid_state.
 			// Remember that one bootstrap exception instead of sending it the same
