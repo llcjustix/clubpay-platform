@@ -44,6 +44,7 @@ type Server struct {
 	agentUpdateMu        sync.Mutex
 	agentUpdate          core.AgentUpdateCommand
 	agentUpdateScheduled map[string]string
+	agentUpdateLast      string
 }
 
 type coreEventSubscriber interface {
@@ -324,6 +325,9 @@ func (s *Server) nodeStatusPayload() map[string]any {
 		clubID = strings.TrimSpace(s.cfg.EdgeClubID)
 	}
 	syncEnabled := s.localNodeMode() && strings.TrimSpace(s.cfg.CloudBaseURL) != "" && strings.TrimSpace(s.cfg.EdgeClubID) != ""
+	s.agentUpdateMu.Lock()
+	lastAgentUpdate := s.agentUpdateLast
+	s.agentUpdateMu.Unlock()
 	return map[string]any{
 		"ok":                              true,
 		"service":                         "clubpay-api",
@@ -339,8 +343,9 @@ func (s *Server) nodeStatusPayload() map[string]any {
 		// Expose configuration readiness, never credential values. This lets
 		// deployment monitoring distinguish a missing secret from a provider
 		// delivery failure without leaking SMS credentials.
-		"sms_configured": strings.TrimSpace(s.cfg.SMSUsername) != "" && strings.TrimSpace(s.cfg.SMSSecretKey) != "" && s.cfg.SMSService > 0,
-		"capabilities":   s.nodeCapabilities(),
+		"sms_configured":    strings.TrimSpace(s.cfg.SMSUsername) != "" && strings.TrimSpace(s.cfg.SMSSecretKey) != "" && s.cfg.SMSService > 0,
+		"capabilities":      s.nodeCapabilities(),
+		"last_agent_update": lastAgentUpdate,
 	}
 }
 
@@ -3784,12 +3789,16 @@ func (s *Server) scheduleOneAvailableAgentUpdate(ctx context.Context, clubID str
 					fmt.Printf("update_event component=agent action=scheduled version=%s club_id=%s external_pc_id=%s ring=%s channel=cloud_recovery\n", update.Version, clubID, externalPCID, s.cfg.AutoUpdateRing)
 					s.agentUpdateMu.Lock()
 					s.agentUpdateScheduled[externalPCID] = update.Version
+					s.agentUpdateLast = fmt.Sprintf("scheduled %s through Cloud recovery for %s", update.Version, externalPCID)
 					s.agentUpdateMu.Unlock()
 					return
 				}
 				err = fmt.Errorf("local delivery: %w; cloud recovery: %v", err, relayErr)
 			}
 			fmt.Printf("update_event component=agent action=deferred version=%s club_id=%s external_pc_id=%s reason=%q\n", update.Version, clubID, externalPCID, err.Error())
+			s.agentUpdateMu.Lock()
+			s.agentUpdateLast = fmt.Sprintf("deferred %s for %s: %s", update.Version, externalPCID, err)
+			s.agentUpdateMu.Unlock()
 			// Pre-auto-update Agents report an unknown command as invalid_state.
 			// Remember that one bootstrap exception instead of sending it the same
 			// unsupported command on every two-second edge sync. A manual
@@ -3807,6 +3816,7 @@ func (s *Server) scheduleOneAvailableAgentUpdate(ctx context.Context, clubID str
 		fmt.Printf("update_event component=agent action=scheduled version=%s club_id=%s external_pc_id=%s ring=%s\n", update.Version, clubID, externalPCID, s.cfg.AutoUpdateRing)
 		s.agentUpdateMu.Lock()
 		s.agentUpdateScheduled[externalPCID] = update.Version
+		s.agentUpdateLast = fmt.Sprintf("scheduled %s directly for %s", update.Version, externalPCID)
 		s.agentUpdateMu.Unlock()
 		return
 	}
