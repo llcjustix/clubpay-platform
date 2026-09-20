@@ -3722,10 +3722,11 @@ func (s *Server) syncEdgeOnce(ctx context.Context) error {
 	return nil
 }
 
-// scheduleOneAvailableAgentUpdate rolls a club forward gently: one free,
-// connected Agent per edge synchronization. Busy, frozen and sleeping PCs are
-// never asked to update; an idle Agent schedules its own restart after ACKing
-// this command, so there is no chance of dropping an active player session.
+// scheduleOneAvailableAgentUpdate rolls a club forward gently: one idle,
+// connected Agent per edge synchronization.  A local lock screen is sometimes
+// represented as "blocked" by legacy Controllers even though no player has a
+// session. The Agent is the final authority and rejects occupied or frozen
+// states, so those idle legacy states must not strand a canary forever.
 func (s *Server) scheduleOneAvailableAgentUpdate(ctx context.Context, clubID string) {
 	if (!s.edgeNodeMode() && !s.cloudNodeMode() && !s.managerNodeMode()) || strings.TrimSpace(clubID) == "" {
 		return
@@ -3743,7 +3744,8 @@ func (s *Server) scheduleOneAvailableAgentUpdate(ctx context.Context, clubID str
 	rows, err := s.db.Query(ctx, `
 		SELECT external_pc_id
 		FROM pc_refs
-		WHERE club_id = $1 AND status_cache = 'available'
+		WHERE club_id = $1
+		  AND status_cache IN ('available', 'blocked', 'unknown')
 		ORDER BY created_at
 	`, clubID)
 	if err != nil {
@@ -3768,6 +3770,7 @@ func (s *Server) scheduleOneAvailableAgentUpdate(ctx context.Context, clubID str
 		err = dispatcher.UpdateAgent(updateCtx, externalPCID, update)
 		cancel()
 		if err != nil {
+			fmt.Printf("update_event component=agent action=deferred version=%s club_id=%s external_pc_id=%s reason=%q\n", update.Version, clubID, externalPCID, err.Error())
 			// Pre-auto-update Agents report an unknown command as invalid_state.
 			// Remember that one bootstrap exception instead of sending it the same
 			// unsupported command on every two-second edge sync. A manual
