@@ -3729,10 +3729,11 @@ func (s *Server) syncEdgeOnce(ctx context.Context) error {
 }
 
 // scheduleOneAvailableAgentUpdate rolls a club forward gently: one idle,
-// connected Agent per edge synchronization.  A local lock screen is sometimes
-// represented as "blocked" by legacy Controllers even though no player has a
-// session. The Agent is the final authority and rejects occupied or frozen
-// states, so those idle legacy states must not strand a canary forever.
+// connected Agent per edge synchronization. A local lock screen is sometimes
+// represented as "blocked", and a formerly connected Agent as "offline", by
+// legacy Controllers even though no player has a session. The Agent is the
+// final authority and rejects occupied or frozen states, so those idle legacy
+// states must not strand a canary forever.
 func (s *Server) scheduleOneAvailableAgentUpdate(ctx context.Context, clubID string) {
 	if (!s.edgeNodeMode() && !s.cloudNodeMode() && !s.managerNodeMode()) || strings.TrimSpace(clubID) == "" {
 		return
@@ -3751,7 +3752,7 @@ func (s *Server) scheduleOneAvailableAgentUpdate(ctx context.Context, clubID str
 		SELECT external_pc_id
 		FROM pc_refs
 		WHERE club_id = $1
-		  AND status_cache IN ('available', 'blocked', 'unknown')
+		  AND status_cache IN ('available', 'blocked', 'unknown', 'offline')
 		ORDER BY created_at
 	`, clubID)
 	if err != nil {
