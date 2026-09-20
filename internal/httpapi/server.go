@@ -3820,6 +3820,29 @@ func (s *Server) scheduleOneAvailableAgentUpdate(ctx context.Context, clubID str
 		s.agentUpdateMu.Unlock()
 		return
 	}
+	// A freshly recovered legacy Controller can have no local PC snapshot yet,
+	// while its explicit canary PC is already connected to Cloud. Do not wait
+	// for the next cloud pull: use that bounded recovery route directly.
+	if s.edgeNodeMode() {
+		for _, externalPCID := range s.cfg.AutoUpdateCanaryPCIDs {
+			externalPCID = strings.TrimSpace(externalPCID)
+			if externalPCID == "" || !s.autoUpdateAllowsAgent(clubID, externalPCID) {
+				continue
+			}
+			relayCtx, cancel := context.WithTimeout(ctx, 20*time.Second)
+			err := s.requestCloudAgentUpdate(relayCtx, clubID, externalPCID, update)
+			cancel()
+			s.agentUpdateMu.Lock()
+			if err == nil {
+				s.agentUpdateScheduled[externalPCID] = update.Version
+				s.agentUpdateLast = fmt.Sprintf("scheduled %s through Cloud recovery for %s", update.Version, externalPCID)
+			} else {
+				s.agentUpdateLast = fmt.Sprintf("deferred %s for %s: %s", update.Version, externalPCID, err)
+			}
+			s.agentUpdateMu.Unlock()
+			return
+		}
+	}
 }
 
 func (s *Server) autoUpdateAllowsAgent(clubID, externalPCID string) bool {
