@@ -3737,10 +3737,6 @@ func (s *Server) scheduleOneAvailableAgentUpdate(ctx context.Context, clubID str
 	if (!s.edgeNodeMode() && !s.cloudNodeMode() && !s.managerNodeMode()) || strings.TrimSpace(clubID) == "" {
 		return
 	}
-	dispatcher, ok := s.core.(core.AgentUpdateDispatcher)
-	if !ok {
-		return
-	}
 	s.agentUpdateMu.Lock()
 	update := s.agentUpdate
 	s.agentUpdateMu.Unlock()
@@ -3773,7 +3769,7 @@ func (s *Server) scheduleOneAvailableAgentUpdate(ctx context.Context, clubID str
 			continue
 		}
 		updateCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
-		err = dispatcher.UpdateAgent(updateCtx, externalPCID, update)
+		err = s.dispatchAgentUpdate(updateCtx, externalPCID, update)
 		cancel()
 		if err != nil {
 			// A previously installed Agent can still be connected to Cloud while

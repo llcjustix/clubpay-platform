@@ -23,6 +23,46 @@ type edgeAgentUpdateRequest struct {
 	ChecksumURL  string `json:"checksum_url"`
 }
 
+// dispatchAgentUpdate handles the normal signed update command. Older Agents
+// treated their idle locked screen as "frozen" and rejected update_agent,
+// even though no session was running. For that one legacy state we temporarily
+// enter repair mode (the kiosk remains locked), schedule the replacement, then
+// restore the normal locked state. Occupied and paused sessions never qualify.
+func (s *Server) dispatchAgentUpdate(ctx context.Context, externalPCID string, update core.AgentUpdateCommand) error {
+	dispatcher, ok := s.core.(core.AgentUpdateDispatcher)
+	if !ok {
+		return fmt.Errorf("Agent update dispatcher is unavailable")
+	}
+	err := dispatcher.UpdateAgent(ctx, externalPCID, update)
+	if err == nil || !strings.HasPrefix(strings.ToLower(err.Error()), "pc_busy:") {
+		return err
+	}
+
+	adapter, ok := s.core.(core.Adapter)
+	if !ok {
+		return err
+	}
+	status, statusErr := adapter.GetPCStatus(ctx, externalPCID)
+	if statusErr != nil || !strings.EqualFold(status.Status, "frozen") || strings.TrimSpace(status.CurrentSessionID) != "" || status.RemainingSeconds > 0 {
+		return err
+	}
+	if repairErr := adapter.SetRepair(ctx, externalPCID, true); repairErr != nil {
+		return fmt.Errorf("legacy idle update preparation: %w", repairErr)
+	}
+	retryErr := dispatcher.UpdateAgent(ctx, externalPCID, update)
+	// UpdateAgent has already handed off its detached updater once it succeeds.
+	// Restore the visible locked state either way; the restart will preserve no
+	// transient repair flag.
+	restoreErr := adapter.SetRepair(ctx, externalPCID, false)
+	if retryErr != nil {
+		return retryErr
+	}
+	if restoreErr != nil {
+		return fmt.Errorf("Agent update was scheduled but locked state restore failed: %w", restoreErr)
+	}
+	return nil
+}
+
 func (s *Server) requestCloudAgentUpdate(ctx context.Context, clubID, externalPCID string, update core.AgentUpdateCommand) error {
 	if !s.edgeNodeMode() || strings.TrimSpace(s.cfg.CloudBaseURL) == "" {
 		return fmt.Errorf("cloud recovery is unavailable")
@@ -93,14 +133,9 @@ func (s *Server) handleEdgeAgentUpdate(w http.ResponseWriter, r *http.Request) {
 		}
 		return
 	}
-	dispatcher, ok := s.core.(core.AgentUpdateDispatcher)
-	if !ok {
-		writeError(w, http.StatusServiceUnavailable, "Cloud Agent dispatcher is unavailable")
-		return
-	}
 	ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
 	defer cancel()
-	if err := dispatcher.UpdateAgent(ctx, req.ExternalPCID, core.AgentUpdateCommand{
+	if err := s.dispatchAgentUpdate(ctx, req.ExternalPCID, core.AgentUpdateCommand{
 		Version: req.Version, DownloadURL: req.DownloadURL, ChecksumURL: req.ChecksumURL,
 	}); err != nil {
 		writeError(w, http.StatusConflict, "Agent update delivery failed: "+err.Error())
