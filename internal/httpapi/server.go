@@ -12,6 +12,7 @@ import (
 	"errors"
 	"fmt"
 	"html/template"
+	"io"
 	"math"
 	"net"
 	"net/http"
@@ -4266,6 +4267,11 @@ func (s *Server) postCloudJSON(ctx context.Context, path string, body any, resul
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+		detail := strings.TrimSpace(string(body))
+		if detail != "" {
+			return fmt.Errorf("cloud sync failed: HTTP %d: %s", resp.StatusCode, detail)
+		}
 		return fmt.Errorf("cloud sync failed: HTTP %d", resp.StatusCode)
 	}
 	if result != nil {
