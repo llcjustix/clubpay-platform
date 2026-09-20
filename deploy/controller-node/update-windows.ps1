@@ -6,6 +6,7 @@ $ErrorActionPreference = 'Stop'
 
 $bundle = Split-Path -Parent $MyInvocation.MyCommand.Path
 $newExecutable = Join-Path $bundle 'ClubPay.Controller.exe'
+$newVersionMarker = Join-Path $bundle 'clubpay-version.json'
 if (-not (Test-Path $newExecutable)) {
     throw "ClubPay.Controller.exe was not found next to the updater: $newExecutable"
 }
@@ -70,6 +71,9 @@ Start-Sleep -Seconds 1
 
 try {
     Copy-Item -Path $newExecutable -Destination (Join-Path $target 'ClubPay.Controller.exe') -Force
+    if (Test-Path $newVersionMarker) {
+        Copy-Item -Path $newVersionMarker -Destination (Join-Path $target 'clubpay-version.json') -Force
+    }
     foreach ($directory in @('web', 'migrations')) {
         $source = Join-Path $bundle $directory
         if (-not (Test-Path $source)) {

@@ -212,7 +212,13 @@ func scheduleLocalUpdate(artifact release.Artifact, updaterName string) error {
 	}
 	marker := updateMarkerPath()
 	if data, err := os.ReadFile(marker); err == nil && strings.TrimSpace(string(data)) == artifact.Version {
-		return nil
+		// A pending marker must not become a permanent dead end. An interrupted
+		// Scheduled Task can leave it behind before the replacement starts; retry
+		// after a short lease instead of pretending the target version is installed.
+		if info, statErr := os.Stat(marker); statErr == nil && time.Since(info.ModTime()) < 3*time.Minute {
+			return nil
+		}
+		_ = os.Remove(marker)
 	}
 	updatesDir := filepath.Join(root, "updates")
 	if err := os.MkdirAll(updatesDir, 0o755); err != nil {
