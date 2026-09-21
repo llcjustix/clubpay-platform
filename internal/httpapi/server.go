@@ -308,6 +308,28 @@ func (s *Server) handleNodeSync(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := s.syncEdgeOnce(r.Context()); err != nil {
+		// The Agent installer asks for a best-effort reconciliation immediately
+		// before its bootstrap request. A Controller that already holds the
+		// requested club snapshot can still bootstrap the Agent safely when its
+		// subsequent Cloud push/pull is temporarily unavailable. Do not turn a
+		// recoverable Cloud outage into a failed local Agent installation. A
+		// genuinely fresh Controller has no PC records and continues to return a
+		// hard error below, so we never install an Agent against an empty cache.
+		var hasLocalPC bool
+		cacheErr := s.db.QueryRow(r.Context(), `
+			SELECT EXISTS(
+				SELECT 1 FROM pc_refs
+				WHERE club_id = $1 AND status_cache <> 'deleted'
+			)
+		`, s.cfg.EdgeClubID).Scan(&hasLocalPC)
+		if cacheErr == nil && hasLocalPC {
+			writeJSON(w, http.StatusAccepted, map[string]any{
+				"success":       true,
+				"sync_deferred": true,
+				"warning":       "Cloud synchronization is temporarily unavailable; using the verified local club snapshot",
+			})
+			return
+		}
 		writeError(w, http.StatusBadGateway, "initial cloud synchronization failed: "+err.Error())
 		return
 	}
@@ -4427,6 +4449,11 @@ func (s *Server) edgeSnapshotData(ctx context.Context, clubID string, includeTec
 		FROM users u
 		LEFT JOIN user_club_roles ucr ON ucr.user_id = u.id
 		WHERE u.club_id = $1 OR ucr.club_id = $1 OR u.global_role = 'super_admin'
+		   OR u.id IN (
+			   SELECT cp.admin_user_id
+			   FROM cash_payments cp
+			   WHERE cp.club_id = $1 AND cp.admin_user_id IS NOT NULL
+		   )
 		ORDER BY u.name
 	`, clubID)
 	if err != nil {

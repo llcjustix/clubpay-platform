@@ -143,10 +143,41 @@ func TestZoneValueIntegration(t *testing.T) {
 	if currentUnits() != originalUnits+1500000 {
 		t.Fatal("price edit revalued past time")
 	}
+	// A cash payment can reference an operator whose current club/role fields
+	// no longer describe this club. The snapshot must still carry that user:
+	// cash_payments.admin_user_id is a foreign key on a fresh Controller.
+	var cashAdmin string
+	if err = pool.QueryRow(ctx, `
+		INSERT INTO users (name, email, role)
+		VALUES ('Historical cash operator', 'cash-sync-operator@example.test', 'admin')
+		RETURNING id
+	`).Scan(&cashAdmin); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = pool.Exec(ctx, `
+		INSERT INTO cash_payments (club_id, admin_user_id, pc_ref_id, amount_tiyin, duration_minutes, duration_seconds, reason)
+		VALUES ($1, $2, $3, 1500000, 60, 3600, 'cash')
+	`, club, cashAdmin, pc); err != nil {
+		t.Fatal(err)
+	}
 	// Snapshot transport preserves value/rate/ledger fields.
 	snapshot, err := s.edgeSnapshotData(ctx, club, true)
 	if err != nil {
 		t.Fatal(err)
+	}
+	users, ok := snapshot["users"].([]map[string]any)
+	if !ok {
+		t.Fatalf("snapshot users type %T", snapshot["users"])
+	}
+	foundCashAdmin := false
+	for _, user := range users {
+		if fmt.Sprint(user["id"]) == cashAdmin {
+			foundCashAdmin = true
+			break
+		}
+	}
+	if !foundCashAdmin {
+		t.Fatal("snapshot omitted cash payment operator")
 	}
 	if err = s.applyEdgeSnapshotData(ctx, club, snapshot); err != nil {
 		t.Fatal(err)
