@@ -8,7 +8,9 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"time"
 
+	"clubpay/internal/core"
 	"github.com/jackc/pgx/v5"
 )
 
@@ -20,6 +22,8 @@ type edgePCCommand struct {
 	PCID          string `json:"pc_id"`
 	ExternalPCID  string `json:"external_pc_id"`
 	DesiredStatus string `json:"desired_status"`
+	GrantID       string `json:"grant_id,omitempty"`
+	CoreSessionID string `json:"core_session_id,omitempty"`
 	Reason        string `json:"reason,omitempty"`
 	TargetNodeID  string `json:"target_node_id,omitempty"`
 }
@@ -39,6 +43,10 @@ func isRemotePCStatus(status string) bool {
 	}
 }
 
+func isEdgePCCommand(status string) bool {
+	return isRemotePCStatus(status) || status == "end_session"
+}
+
 // enqueuePrimaryPCCommand sends a Manager action to Cloud. The Manager has an
 // authenticated local user session, but it never owns Agent connections.
 func (s *Server) enqueuePrimaryPCCommand(ctx context.Context, command edgePCCommand) (string, error) {
@@ -56,15 +64,16 @@ func (s *Server) enqueuePrimaryPCCommand(ctx context.Context, command edgePCComm
 		// Manager connection and reject every command before it was queued.
 		err = s.db.QueryRow(ctx, `
 			SELECT id::text FROM edge_pc_commands
-			WHERE club_id = $1 AND pc_ref_id = $2 AND desired_status = $3 AND status = 'pending'
+			WHERE club_id = $1 AND pc_ref_id = $2 AND desired_status = $3
+			  AND COALESCE(core_session_id, '') = $4 AND status = 'pending'
 			ORDER BY created_at DESC LIMIT 1
-		`, command.ClubID, command.PCID, command.DesiredStatus).Scan(&command.ID)
+		`, command.ClubID, command.PCID, command.DesiredStatus, command.CoreSessionID).Scan(&command.ID)
 		if errors.Is(err, pgx.ErrNoRows) {
 			err = s.db.QueryRow(ctx, `
-				INSERT INTO edge_pc_commands (club_id, pc_ref_id, external_pc_id, desired_status, reason, requested_by_node, target_node_id)
-				VALUES ($1, $2, $3, $4, NULLIF($5, ''), NULLIF($6, ''), $7)
+				INSERT INTO edge_pc_commands (club_id, pc_ref_id, external_pc_id, desired_status, grant_id, core_session_id, reason, requested_by_node, target_node_id)
+				VALUES ($1, $2, $3, $4, NULLIF($5, '')::uuid, NULLIF($6, ''), NULLIF($7, ''), NULLIF($8, ''), $9)
 				RETURNING id::text
-			`, command.ClubID, command.PCID, command.ExternalPCID, command.DesiredStatus, command.Reason, "cloud", command.TargetNodeID).Scan(&command.ID)
+			`, command.ClubID, command.PCID, command.ExternalPCID, command.DesiredStatus, command.GrantID, command.CoreSessionID, command.Reason, "cloud", command.TargetNodeID).Scan(&command.ID)
 		}
 		if err != nil {
 			return "", err
@@ -104,8 +113,8 @@ func (s *Server) handleEdgePCCommandEnqueue(w http.ResponseWriter, r *http.Reque
 	command.PCID = strings.TrimSpace(command.PCID)
 	command.ExternalPCID = strings.TrimSpace(command.ExternalPCID)
 	command.DesiredStatus = strings.TrimSpace(command.DesiredStatus)
-	if command.ClubID == "" || command.PCID == "" || !isRemotePCStatus(command.DesiredStatus) {
-		writeError(w, http.StatusBadRequest, "club_id, pc_id and a supported desired_status are required")
+	if command.ClubID == "" || command.PCID == "" || !isEdgePCCommand(command.DesiredStatus) || (command.DesiredStatus == "end_session" && strings.TrimSpace(command.CoreSessionID) == "") {
+		writeError(w, http.StatusBadRequest, "club_id, pc_id and a supported command are required")
 		return
 	}
 	if authorizedClubID != "" && authorizedClubID != command.ClubID {
@@ -146,15 +155,16 @@ func (s *Server) handleEdgePCCommandEnqueue(w http.ResponseWriter, r *http.Reque
 	// two suspend commands to the same PC.
 	err = s.db.QueryRow(r.Context(), `
 		SELECT id::text FROM edge_pc_commands
-		WHERE club_id = $1 AND pc_ref_id = $2 AND desired_status = $3 AND status = 'pending'
+		WHERE club_id = $1 AND pc_ref_id = $2 AND desired_status = $3
+		  AND COALESCE(core_session_id, '') = $4 AND status = 'pending'
 		ORDER BY created_at DESC LIMIT 1
-	`, command.ClubID, command.PCID, command.DesiredStatus).Scan(&command.ID)
+	`, command.ClubID, command.PCID, command.DesiredStatus, command.CoreSessionID).Scan(&command.ID)
 	if errors.Is(err, pgx.ErrNoRows) {
 		err = s.db.QueryRow(r.Context(), `
-			INSERT INTO edge_pc_commands (club_id, pc_ref_id, external_pc_id, desired_status, reason, requested_by_node, target_node_id)
-			VALUES ($1, $2, $3, $4, NULLIF($5, ''), NULLIF($6, ''), $7)
+			INSERT INTO edge_pc_commands (club_id, pc_ref_id, external_pc_id, desired_status, grant_id, core_session_id, reason, requested_by_node, target_node_id)
+			VALUES ($1, $2, $3, $4, NULLIF($5, '')::uuid, NULLIF($6, ''), NULLIF($7, ''), NULLIF($8, ''), $9)
 			RETURNING id::text
-		`, command.ClubID, command.PCID, command.ExternalPCID, command.DesiredStatus, command.Reason, r.Header.Get("X-Edge-Node-ID"), command.TargetNodeID).Scan(&command.ID)
+		`, command.ClubID, command.PCID, command.ExternalPCID, command.DesiredStatus, command.GrantID, command.CoreSessionID, command.Reason, r.Header.Get("X-Edge-Node-ID"), command.TargetNodeID).Scan(&command.ID)
 	}
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
@@ -187,7 +197,8 @@ func (s *Server) handleEdgePCCommandList(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	rows, err := s.db.Query(r.Context(), `
-		SELECT id::text, club_id::text, pc_ref_id::text, external_pc_id, desired_status, COALESCE(reason, ''), COALESCE(target_node_id, '')
+		SELECT id::text, club_id::text, pc_ref_id::text, external_pc_id, desired_status,
+		       COALESCE(grant_id::text, ''), COALESCE(core_session_id, ''), COALESCE(reason, ''), COALESCE(target_node_id, '')
 		FROM edge_pc_commands
 		WHERE club_id = $1 AND status = 'pending' AND target_node_id = $2
 		ORDER BY created_at
@@ -201,7 +212,7 @@ func (s *Server) handleEdgePCCommandList(w http.ResponseWriter, r *http.Request)
 	commands := make([]edgePCCommand, 0)
 	for rows.Next() {
 		var command edgePCCommand
-		if err := rows.Scan(&command.ID, &command.ClubID, &command.PCID, &command.ExternalPCID, &command.DesiredStatus, &command.Reason, &command.TargetNodeID); err != nil {
+		if err := rows.Scan(&command.ID, &command.ClubID, &command.PCID, &command.ExternalPCID, &command.DesiredStatus, &command.GrantID, &command.CoreSessionID, &command.Reason, &command.TargetNodeID); err != nil {
 			writeError(w, http.StatusInternalServerError, err.Error())
 			return
 		}
@@ -278,10 +289,27 @@ func (s *Server) processPendingEdgePCCommands(ctx context.Context, clubID string
 	}
 	changed := false
 	for _, command := range response.Commands {
-		if command.ID == "" || command.PCID == "" || command.ExternalPCID == "" || !isRemotePCStatus(command.DesiredStatus) {
+		if command.ID == "" || command.PCID == "" || command.ExternalPCID == "" || !isEdgePCCommand(command.DesiredStatus) || (command.DesiredStatus == "end_session" && (command.GrantID == "" || command.CoreSessionID == "")) {
 			continue
 		}
-		err := s.applyPCStatusCommand(ctx, command.ExternalPCID, command.DesiredStatus, command.Reason)
+		var err error
+		if command.DesiredStatus == "end_session" {
+			remaining := s.remainingSecondsForAcceptedGrant(ctx, command.GrantID)
+			result, endErr := s.core.EndSession(ctx, command.CoreSessionID, core.EndSessionCommand{
+				RequestID: "mobile_end_" + command.GrantID + "_" + randomHex(4), ExternalPCID: command.ExternalPCID,
+				Reason: "CLIENT_LEFT", EndedBy: map[string]string{"type": "player"}, CreatedAt: time.Now().UTC().Format(time.RFC3339),
+			})
+			if endErr != nil {
+				err = endErr
+			} else {
+				if result.RemainingSeconds > 0 {
+					remaining = result.RemainingSeconds
+				}
+				_, err = s.finishGrant(ctx, command.GrantID, "player_left_from_mobile", remaining)
+			}
+		} else {
+			err = s.applyPCStatusCommand(ctx, command.ExternalPCID, command.DesiredStatus, command.Reason)
+		}
 		// A command ACK only proves that Agent Core received the request. Its
 		// pc_status_changed/heartbeat event is authoritative: Windows may refuse
 		// sleep (especially in a VM), or wake immediately after accepting it.

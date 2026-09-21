@@ -4865,6 +4865,7 @@ func (s *Server) applyEdgeSnapshotData(ctx context.Context, clubID string, paylo
 		SELECT id, club_id, pc_ref_id, payment_order_id, cash_payment_id, parent_grant_id, player_id, duration_minutes, COALESCE(NULLIF(duration_seconds, 0), duration_minutes * 60), COALESCE(NULLIF(status, ''), 'pending'), NULLIF(core_session_id, ''), voucher_id, returned_voucher_id, COALESCE(NULLIF(source, ''), 'online_payment'), accepted_at, planned_ends_at, grace_ends_at, ended_at, NULLIF(end_reason, ''), COALESCE(remaining_minutes, 0), COALESCE(NULLIF(remaining_seconds, 0), remaining_minutes * 60, 0), NULLIF(last_error, ''), COALESCE(created_at, now()), time_value_rate
 		FROM input
 		ON CONFLICT (id) DO UPDATE SET parent_grant_id = EXCLUDED.parent_grant_id, player_id = EXCLUDED.player_id, duration_minutes = EXCLUDED.duration_minutes, duration_seconds = EXCLUDED.duration_seconds, status = EXCLUDED.status, core_session_id = EXCLUDED.core_session_id, voucher_id = EXCLUDED.voucher_id, returned_voucher_id = EXCLUDED.returned_voucher_id, accepted_at = EXCLUDED.accepted_at, planned_ends_at = EXCLUDED.planned_ends_at, grace_ends_at = EXCLUDED.grace_ends_at, ended_at = EXCLUDED.ended_at, end_reason = EXCLUDED.end_reason, remaining_minutes = EXCLUDED.remaining_minutes, remaining_seconds = EXCLUDED.remaining_seconds, last_error = EXCLUDED.last_error, time_value_rate = COALESCE(game_access_grants.time_value_rate, EXCLUDED.time_value_rate)
+		WHERE game_access_grants.status <> 'ended' OR EXCLUDED.status = 'ended'
 	`, payload["game_access_grants"]); err != nil {
 		return err
 	}
@@ -5334,15 +5335,37 @@ func grantByID(ctx context.Context, q queryRower, grantID string) (activeGrantRo
 // the grant that started the current PC session. The Agent displays this URL as
 // a QR code; it must never derive an extension link from the static PC QR.
 func (s *Server) createSessionExtendURL(ctx context.Context, clubID, pcID, grantID string, expiresAt time.Time) (string, error) {
-	token := "se_" + randomHex(16)
-	_, err := s.db.Exec(ctx, `
+	token, err := s.ensureSessionExtendToken(ctx, clubID, pcID, grantID, expiresAt)
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimRight(s.cfg.FrontendBaseURL, "/") + "/qr/" + token, nil
+}
+
+// ensureSessionExtendToken makes the extension flow robust when Cloud learns
+// about a just-started LAN session before the Controller's next snapshot.
+func (s *Server) ensureSessionExtendToken(ctx context.Context, clubID, pcID, grantID string, expiresAt time.Time) (string, error) {
+	var token string
+	err := s.db.QueryRow(ctx, `
+		SELECT public_token FROM qr_codes
+		WHERE session_grant_id=$1 AND type='session_extend' AND status='active' AND expires_at>now()
+		ORDER BY created_at DESC LIMIT 1
+	`, grantID).Scan(&token)
+	if err == nil {
+		return token, nil
+	}
+	if !errors.Is(err, pgx.ErrNoRows) {
+		return "", err
+	}
+	token = "se_" + randomHex(16)
+	_, err = s.db.Exec(ctx, `
 		INSERT INTO qr_codes (club_id, pc_ref_id, public_token, type, status, session_grant_id, expires_at)
 		VALUES ($1, $2, $3, 'session_extend', 'active', $4, $5)
 	`, clubID, pcID, token, grantID, expiresAt.UTC())
 	if err != nil {
 		return "", err
 	}
-	return strings.TrimRight(s.cfg.FrontendBaseURL, "/") + "/qr/" + token, nil
+	return token, nil
 }
 
 func (s *Server) updateSessionExtendQRExpiry(ctx context.Context, grantID string, expiresAt time.Time) {
@@ -6908,21 +6931,33 @@ func (s *Server) finishGrant(ctx context.Context, grantID, reason string, remain
 	}
 	grantID = sessionGrantID
 
-	var clubID, pcID string
+	var clubID, pcID, grantStatus string
 	var playerID *string
 	var paymentOrderID, returnedVoucherID *string
 	err = tx.QueryRow(ctx, `
-		SELECT g.club_id, g.pc_ref_id, COALESCE(g.player_id, po.player_id), g.payment_order_id, g.returned_voucher_id
+		SELECT g.club_id, g.pc_ref_id, g.status, COALESCE(g.player_id, po.player_id), g.payment_order_id, g.returned_voucher_id
 		FROM game_access_grants g
 		LEFT JOIN payment_orders po ON po.id=g.payment_order_id
 		WHERE g.id = $1
 		FOR UPDATE OF g
-	`, grantID).Scan(&clubID, &pcID, &playerID, &paymentOrderID, &returnedVoucherID)
+	`, grantID).Scan(&clubID, &pcID, &grantStatus, &playerID, &paymentOrderID, &returnedVoucherID)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, fmt.Errorf("grant not found")
 	}
 	if err != nil {
 		return nil, err
+	}
+	// Agent acknowledgement and its session_ended event can arrive almost at
+	// the same time. A completed grant is immutable: a stale retry must never
+	// mint another balance or voucher response.
+	if grantStatus == "ended" {
+		if err := tx.Commit(ctx); err != nil {
+			return nil, err
+		}
+		return map[string]any{"success": true, "grant_id": grantID, "status": "ended", "already_ended": true}, nil
+	}
+	if grantStatus != "accepted" {
+		return nil, fmt.Errorf("grant is not active")
 	}
 	_, err = tx.Exec(ctx, `
 		UPDATE game_access_grants
