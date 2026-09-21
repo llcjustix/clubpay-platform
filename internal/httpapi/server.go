@@ -4475,6 +4475,7 @@ func (s *Server) edgeSnapshotData(ctx context.Context, clubID string, includeTec
 		WHERE EXISTS (SELECT 1 FROM player_club_balances b WHERE b.player_id = p.id AND b.club_id = $1)
 		   OR EXISTS (SELECT 1 FROM payment_orders po WHERE po.player_id = p.id AND po.club_id = $1)
 		   OR EXISTS (SELECT 1 FROM game_access_grants g WHERE g.player_id = p.id AND g.club_id = $1)
+		   OR EXISTS (SELECT 1 FROM mobile_reservations r WHERE r.player_id = p.id AND r.club_id = $1)
 		ORDER BY p.created_at
 	`, clubID)
 	if err != nil {
@@ -4490,6 +4491,16 @@ func (s *Server) edgeSnapshotData(ctx context.Context, clubID string, includeTec
 	playerLedger, err := s.queryMaps(ctx, `
 		SELECT id, player_id, club_id, seconds_delta, kind, game_access_grant_id, payment_order_id, idempotency_key, created_at, time_value_delta
 		FROM player_time_ledger WHERE club_id = $1 ORDER BY created_at
+	`, clubID)
+	if err != nil {
+		return nil, err
+	}
+	reservations, err := s.queryMaps(ctx, `
+		SELECT id, player_id, club_id, pc_ref_id, starts_at, duration_minutes, entry_code,
+		       status, cancelled_at, created_at, updated_at
+		FROM mobile_reservations
+		WHERE club_id = $1
+		ORDER BY starts_at, created_at
 	`, clubID)
 	if err != nil {
 		return nil, err
@@ -4579,6 +4590,7 @@ func (s *Server) edgeSnapshotData(ctx context.Context, clubID string, includeTec
 		"users":                 users,
 		"user_club_roles":       roles,
 		"players":               players,
+		"mobile_reservations":   reservations,
 		"player_club_balances":  playerBalances,
 		"player_time_ledger":    playerLedger,
 		"payment_orders":        paymentOrders,
@@ -4779,6 +4791,30 @@ func (s *Server) applyEdgeSnapshotData(ctx context.Context, clubID string, paylo
 		FROM input
 		ON CONFLICT (id) DO UPDATE SET phone = EXCLUDED.phone, telegram_chat_id = EXCLUDED.telegram_chat_id, telegram_username = EXCLUDED.telegram_username, first_name = EXCLUDED.first_name, status = EXCLUDED.status, phone_verified_at = EXCLUDED.phone_verified_at, telegram_consent_at = EXCLUDED.telegram_consent_at, updated_at = EXCLUDED.updated_at
 	`, payload["players"]); err != nil {
+		return err
+	}
+	if err := execJSON(ctx, tx, `
+		WITH input AS (
+			SELECT * FROM jsonb_to_recordset($1::jsonb) AS x(
+				id uuid, player_id uuid, club_id uuid, pc_ref_id uuid, starts_at timestamptz,
+				duration_minutes int, entry_code text, status text, cancelled_at timestamptz,
+				created_at timestamptz, updated_at timestamptz
+			)
+		)
+		INSERT INTO mobile_reservations (
+			id, player_id, club_id, pc_ref_id, starts_at, duration_minutes, entry_code,
+			status, cancelled_at, created_at, updated_at
+		)
+		SELECT id, player_id, club_id, pc_ref_id, starts_at, duration_minutes, entry_code,
+		       COALESCE(NULLIF(status, ''), 'confirmed'), cancelled_at,
+		       COALESCE(created_at, now()), COALESCE(updated_at, now())
+		FROM input
+		ON CONFLICT (id) DO UPDATE SET
+			player_id = EXCLUDED.player_id, club_id = EXCLUDED.club_id, pc_ref_id = EXCLUDED.pc_ref_id,
+			starts_at = EXCLUDED.starts_at, duration_minutes = EXCLUDED.duration_minutes,
+			entry_code = EXCLUDED.entry_code, status = EXCLUDED.status,
+			cancelled_at = EXCLUDED.cancelled_at, updated_at = EXCLUDED.updated_at
+	`, payload["mobile_reservations"]); err != nil {
 		return err
 	}
 	if err := execJSON(ctx, tx, `

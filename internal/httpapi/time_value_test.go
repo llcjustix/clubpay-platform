@@ -160,6 +160,24 @@ func TestZoneValueIntegration(t *testing.T) {
 	`, club, cashAdmin, pc); err != nil {
 		t.Fatal(err)
 	}
+	// A mobile reservation can be the first interaction a player has with a
+	// club. It therefore must bring both the player and reservation into an
+	// edge snapshot; otherwise a local Controller cannot show its protected
+	// reservation screen to the Agent.
+	var reservationPlayer, reservationID string
+	if err = pool.QueryRow(ctx, `
+		INSERT INTO players (phone) VALUES ('+998900000098') RETURNING id
+	`).Scan(&reservationPlayer); err != nil {
+		t.Fatal(err)
+	}
+	if err = pool.QueryRow(ctx, `
+		INSERT INTO mobile_reservations (
+			player_id, club_id, pc_ref_id, starts_at, duration_minutes, entry_code, status
+		) VALUES ($1, $2, $3, now() + interval '5 minutes', 60, '123456', 'confirmed')
+		RETURNING id
+	`, reservationPlayer, club, pc).Scan(&reservationID); err != nil {
+		t.Fatal(err)
+	}
 	// Snapshot transport preserves value/rate/ledger fields.
 	snapshot, err := s.edgeSnapshotData(ctx, club, true)
 	if err != nil {
@@ -179,8 +197,34 @@ func TestZoneValueIntegration(t *testing.T) {
 	if !foundCashAdmin {
 		t.Fatal("snapshot omitted cash payment operator")
 	}
+	reservations, ok := snapshot["mobile_reservations"].([]map[string]any)
+	if !ok {
+		t.Fatalf("snapshot mobile_reservations type %T", snapshot["mobile_reservations"])
+	}
+	foundReservation := false
+	for _, reservation := range reservations {
+		if fmt.Sprint(reservation["id"]) == reservationID {
+			foundReservation = true
+			break
+		}
+	}
+	if !foundReservation {
+		t.Fatal("snapshot omitted mobile reservation")
+	}
+	// Delete the source rows to prove the import recreates both sides of the
+	// reservation foreign keys on a fresh local Controller.
+	if _, err = pool.Exec(ctx, `DELETE FROM mobile_reservations WHERE id=$1`, reservationID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = pool.Exec(ctx, `DELETE FROM players WHERE id=$1`, reservationPlayer); err != nil {
+		t.Fatal(err)
+	}
 	if err = s.applyEdgeSnapshotData(ctx, club, snapshot); err != nil {
 		t.Fatal(err)
+	}
+	var importedReservationStatus string
+	if err = pool.QueryRow(ctx, `SELECT status FROM mobile_reservations WHERE id=$1`, reservationID).Scan(&importedReservationStatus); err != nil || importedReservationStatus != "confirmed" {
+		t.Fatalf("reservation snapshot import = %q, %v", importedReservationStatus, err)
 	}
 	if currentUnits() != originalUnits+1500000 {
 		t.Fatal("snapshot changed credit")
