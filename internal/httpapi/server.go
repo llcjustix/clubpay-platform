@@ -3740,6 +3740,9 @@ func (s *Server) syncEdgeOnce(ctx context.Context) error {
 	if s.startPendingEdgeGrants(ctx, clubID) {
 		changed = true
 	}
+	if s.startPendingEdgeExtensions(ctx, clubID) {
+		changed = true
+	}
 	if changed {
 		go func() {
 			syncCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
@@ -4073,10 +4076,47 @@ func (s *Server) startPendingManagerEdgeGrants(ctx context.Context, clubID strin
 	for rows.Next() {
 		var externalPCID string
 		if rows.Scan(&externalPCID) == nil && inspector.HasConnectedAgent(externalPCID) {
-			return s.startPendingEdgeGrants(ctx, clubID)
+			started := s.startPendingEdgeGrants(ctx, clubID)
+			return s.startPendingEdgeExtensions(ctx, clubID) || started
 		}
 	}
 	return false
+}
+
+// startPendingEdgeExtensions completes child grants created by Cloud for a
+// paid extension or use of an existing balance. The Controller is the only
+// process that can deliver this command to the LAN Agent.
+func (s *Server) startPendingEdgeExtensions(ctx context.Context, clubID string) bool {
+	if (!s.edgeNodeMode() && !s.managerNodeMode()) || strings.TrimSpace(clubID) == "" {
+		return false
+	}
+	rows, err := s.db.Query(ctx, `
+		SELECT child.id::text, parent.id::text, parent.core_session_id, child.pc_ref_id::text,
+		       pc.external_pc_id, child.duration_seconds, COALESCE(child.payment_order_id::text, ''), child.source
+		FROM game_access_grants child
+		JOIN game_access_grants parent ON parent.id=child.parent_grant_id
+		JOIN pc_refs pc ON pc.id=child.pc_ref_id
+		WHERE child.club_id=$1 AND child.status='pending' AND parent.status='accepted'
+		  AND COALESCE(parent.core_session_id, '')<>'' AND child.duration_seconds>0
+		ORDER BY child.created_at
+		LIMIT 20
+	`, clubID)
+	if err != nil {
+		return false
+	}
+	defer rows.Close()
+	changed := false
+	for rows.Next() {
+		var childID, parentID, coreSessionID, pcID, externalPCID, paymentOrderID, source string
+		var seconds int
+		if err := rows.Scan(&childID, &parentID, &coreSessionID, &pcID, &externalPCID, &seconds, &paymentOrderID, &source); err != nil {
+			continue
+		}
+		if err := s.extendGrantSession(ctx, childID, parentID, coreSessionID, clubID, pcID, externalPCID, seconds, defaultString(source, "online_payment"), paymentOrderID, ""); err == nil {
+			changed = true
+		}
+	}
+	return changed
 }
 
 // handoffPlayerSession closes every other active root session for a player in
@@ -5132,6 +5172,11 @@ func (s *Server) applyPaymentSuccess(ctx context.Context, success paymentSuccess
 				SET redeemed_grant_id = $1
 				WHERE id = $2 AND redeemed_grant_id IS NULL
 			`, extensionGrantID, *order.VoucherID)
+		}
+		// The Cloud records a paid extension, but the primary Controller owns the
+		// Agent socket. Its edge pull executes this pending child grant.
+		if s.cloudNodeMode() {
+			return extensionGrantID, nil
 		}
 		err = s.extendGrantSession(ctx, extensionGrantID, sessionGrant.ID, sessionGrant.CoreSessionID, order.ClubID, order.PCID, order.ExternalPCID, order.DurationSeconds, "online_payment", order.ID, success.InvoiceID)
 		if err != nil {

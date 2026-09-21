@@ -549,6 +549,12 @@ func (s *Server) redeemPlayerBalanceToPC(ctx context.Context, req redeemPlayerBa
 	if err := tx.Commit(ctx); err != nil {
 		return nil, err
 	}
+	// Cloud owns the mobile balance and grant, but it never owns the LAN Agent
+	// WebSocket. Leave root and extension grants pending for the primary
+	// Controller's durable pull instead of issuing a direct core command.
+	if s.cloudNodeMode() {
+		return map[string]any{"success": true, "status": "queued", "grant_id": grantID, "seconds_used": seconds, "minutes_used": minutes, "extended": extending}, nil
+	}
 
 	if extending {
 		if err := s.extendGrantSession(ctx, grantID, parent.ID, parent.CoreSessionID, clubID, pcID, externalPCID, seconds, "player_balance", "", ""); err != nil {
