@@ -100,8 +100,19 @@ class PaymentRepository {
     if ((j['http_status'] as num? ?? 0) >= 400 &&
         result.invoice == null &&
         result.grant == null) {
-      await clear();
-      throw const FormatException('operation_failed');
+      // Older Cloud releases preserve a rejected idempotency key.  Keeping it
+      // makes every later status check replay that historical error forever,
+      // even though the request did not create an order or a game-access
+      // grant.  In that narrow, safe case start a fresh operation immediately.
+      // A key is never replaced once an invoice or grant exists, so this cannot
+      // duplicate a payment or playing time.
+      final retry = PendingOperation(
+        key: const Uuid().v4(),
+        path: p.path,
+        body: p.body,
+      );
+      await remember(retry);
+      return _submit(retry);
     }
     await remember(result);
     return result;
