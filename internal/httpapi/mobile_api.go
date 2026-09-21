@@ -177,6 +177,27 @@ func (s *Server) handleMobileOperation(w http.ResponseWriter, r *http.Request) {
 		mobileInternal(w)
 		return
 	}
+	// A rejected request that did not create either an invoice or a grant is
+	// safe to retry.  Older mobile clients persist that failed key and would
+	// otherwise keep polling the old error forever, even after a Controller or
+	// reservation route was repaired.  Returning 404 makes the client replay
+	// its original, idempotent payload; no payment or access can be duplicated
+	// because those operations always have an invoice or grant before success.
+	if status != nil && *status >= http.StatusBadRequest && invoice == "" && grant == "" {
+		tag, deleteErr := s.db.Exec(r.Context(), `
+			DELETE FROM mobile_operations
+			WHERE player_id=$1 AND request_key=$2
+			  AND http_status >= $3 AND invoice_id IS NULL AND grant_id IS NULL
+		`, p.ID, r.PathValue("key"), http.StatusBadRequest)
+		if deleteErr != nil {
+			mobileInternal(w)
+			return
+		}
+		if tag.RowsAffected() > 0 {
+			writeError(w, http.StatusNotFound, "operation_retryable")
+			return
+		}
+	}
 	var value any
 	if len(response) > 0 {
 		_ = json.Unmarshal(response, &value)
