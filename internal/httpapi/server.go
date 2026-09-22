@@ -351,6 +351,13 @@ func (s *Server) nodeStatusPayload() map[string]any {
 		clubID = strings.TrimSpace(s.cfg.EdgeClubID)
 	}
 	syncEnabled := s.localNodeMode() && strings.TrimSpace(s.cfg.CloudBaseURL) != "" && strings.TrimSpace(s.cfg.EdgeClubID) != ""
+	activeSessionCount := 0
+	if s.localNodeMode() {
+		// Expose only a readiness bit/count, never a player or PC identity. The
+		// local Windows updater uses it to defer package replacement until every
+		// root session has finished.
+		_ = s.db.QueryRow(context.Background(), `SELECT COUNT(*) FROM game_access_grants WHERE status='accepted' AND parent_grant_id IS NULL`).Scan(&activeSessionCount)
+	}
 	s.agentUpdateMu.Lock()
 	lastAgentUpdate := s.agentUpdateLast
 	s.agentUpdateMu.Unlock()
@@ -369,9 +376,10 @@ func (s *Server) nodeStatusPayload() map[string]any {
 		// Expose configuration readiness, never credential values. This lets
 		// deployment monitoring distinguish a missing secret from a provider
 		// delivery failure without leaking SMS credentials.
-		"sms_configured":    strings.TrimSpace(s.cfg.SMSUsername) != "" && strings.TrimSpace(s.cfg.SMSSecretKey) != "" && s.cfg.SMSService > 0,
-		"capabilities":      s.nodeCapabilities(),
-		"last_agent_update": lastAgentUpdate,
+		"sms_configured":       strings.TrimSpace(s.cfg.SMSUsername) != "" && strings.TrimSpace(s.cfg.SMSSecretKey) != "" && s.cfg.SMSService > 0,
+		"capabilities":         s.nodeCapabilities(),
+		"last_agent_update":    lastAgentUpdate,
+		"active_session_count": activeSessionCount,
 	}
 }
 

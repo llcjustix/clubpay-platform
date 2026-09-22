@@ -74,6 +74,10 @@ try {
     if (Test-Path $newVersionMarker) {
         Copy-Item -Path $newVersionMarker -Destination (Join-Path $target 'clubpay-version.json') -Force
     }
+    $newAutoUpdater = Join-Path $bundle 'auto-update-windows.ps1'
+    if (Test-Path $newAutoUpdater) {
+        Copy-Item -Path $newAutoUpdater -Destination (Join-Path $target 'auto-update-windows.ps1') -Force
+    }
     foreach ($directory in @('web', 'migrations')) {
         $source = Join-Path $bundle $directory
         if (-not (Test-Path $source)) {

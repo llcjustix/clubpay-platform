@@ -20,6 +20,13 @@ if errorlevel 1 (
   exit /b 1
 )
 
+rem Automatic updates run only while the local Controller reports no active
+rem player session. The updater verifies the immutable GitHub release checksum
+rem and keeps update-windows.ps1's rollback/health-check path.
+if exist "%~dp0auto-update-windows.ps1" (
+  schtasks.exe /Create /TN "ClubPay Controller Auto Update" /SC MINUTE /MO 15 /RU SYSTEM /RL HIGHEST /TR "powershell.exe -NoProfile -ExecutionPolicy Bypass -File \"%~dp0auto-update-windows.ps1\"" /F >nul
+)
+
 rem The PostgreSQL runtime embedded by the Controller requires the supported
 rem Microsoft Visual C++ x64 runtime. Fresh Windows Server/VM images often do
 rem not include it; without this preflight initdb fails with 0xC0000135.
