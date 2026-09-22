@@ -41,7 +41,40 @@ func (s *Server) lockTimeValue(ctx context.Context, tx pgx.Tx, playerID, clubID 
 		err = fmt.Errorf("club has no priced zone")
 		return
 	}
+	// player_club_balances is deliberately only a projection. In particular, an
+	// edge snapshot can arrive while Cloud has not yet imported the snapshot's
+	// ledger rows. Never debit that projection as if it were money: when ledger
+	// history exists, reconstruct the exact spendable value while holding the
+	// balance row lock. This makes a stale/doubled cache harmless even between
+	// mobile balance reads.
+	var ledgerRows int
+	var ledgerUnits int64
+	err = tx.QueryRow(ctx, `
+		SELECT COUNT(*), COALESCE(SUM(COALESCE(
+		  NULLIF(time_value_delta, 0),
+		  seconds_delta::bigint * $3
+		)), 0)
+		FROM player_time_ledger
+		WHERE player_id=$1 AND club_id=$2
+	`, playerID, clubID, reference).Scan(&ledgerRows, &ledgerUnits)
+	if err != nil {
+		return
+	}
+	if ledgerRows > 0 {
+		if ledgerUnits < 0 {
+			ledgerUnits = 0
+		}
+		units = ledgerUnits
+	}
+	projected, projectionErr := timeAtRate(units, reference)
+	if projectionErr != nil {
+		err = projectionErr
+		return
+	}
 	_, err = tx.Exec(ctx, `UPDATE player_club_balances SET time_value_units=$3,reference_price_tiyin=$4 WHERE player_id=$1 AND club_id=$2`, playerID, clubID, units, reference)
+	if err == nil {
+		_, err = tx.Exec(ctx, `UPDATE player_club_balances SET seconds_balance=$3 WHERE player_id=$1 AND club_id=$2`, playerID, clubID, projected)
+	}
 	return
 }
 

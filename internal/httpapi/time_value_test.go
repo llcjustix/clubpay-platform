@@ -273,6 +273,27 @@ func TestZoneValueIntegration(t *testing.T) {
 	if currentUnits() != originalUnits+1500000 {
 		t.Fatal("ledger did not lower inflated balance projection")
 	}
+	// A player can redeem immediately, before the mobile app happens to fetch a
+	// fresh balance screen. The mutation path itself must therefore use ledger
+	// value, not the stale projection it found in player_club_balances.
+	if _, err = pool.Exec(ctx, `UPDATE player_club_balances SET seconds_balance=7202,time_value_units=$3 WHERE player_id=$1 AND club_id=$2`, player, club, (originalUnits+1500000)*2); err != nil {
+		t.Fatal(err)
+	}
+	tx, err = pool.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lockedUnits, _, err := s.lockTimeValue(ctx, tx, player, club)
+	if err != nil {
+		tx.Rollback(ctx)
+		t.Fatal(err)
+	}
+	if err = tx.Commit(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if lockedUnits != originalUnits+1500000 || currentUnits() != originalUnits+1500000 {
+		t.Fatalf("stale balance was accepted for a redemption: locked=%d projected=%d", lockedUnits, currentUnits())
+	}
 	// The balance row is a projection. If a stale edge snapshot overwrites it,
 	// the immutable ledger restores the credited time on the next profile read.
 	if _, err = pool.Exec(ctx, `UPDATE player_time_ledger SET time_value_delta=NULL WHERE player_id=$1 AND club_id=$2`, player, club); err != nil {

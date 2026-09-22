@@ -4924,6 +4924,20 @@ func (s *Server) applyEdgeSnapshotData(ctx context.Context, clubID string, paylo
 	`, payload["game_access_grants"]); err != nil {
 		return err
 	}
+	// Import the immutable ledger before its fast balance projection. The balance
+	// upsert below intentionally refuses to overwrite a row once ledger history
+	// exists; doing this in the opposite order allowed a first delayed edge
+	// snapshot to resurrect a spent (and sometimes doubled) balance.
+	if err := execJSON(ctx, tx, `
+		WITH input AS (
+			SELECT * FROM jsonb_to_recordset($1::jsonb) AS x(id uuid, player_id uuid, club_id uuid, seconds_delta int, kind text, game_access_grant_id uuid, payment_order_id uuid, idempotency_key text, created_at timestamptz, time_value_delta bigint)
+		)
+		INSERT INTO player_time_ledger (id, player_id, club_id, seconds_delta, kind, game_access_grant_id, payment_order_id, idempotency_key, created_at, time_value_delta)
+		SELECT id, player_id, club_id, seconds_delta, kind, game_access_grant_id, payment_order_id, idempotency_key, COALESCE(created_at, now()), time_value_delta FROM input
+		ON CONFLICT DO NOTHING
+	`, payload["player_time_ledger"]); err != nil {
+		return err
+	}
 	if err := execJSON(ctx, tx, `
 		WITH input AS (
 			SELECT * FROM jsonb_to_recordset($1::jsonb) AS x(player_id uuid, club_id uuid, seconds_balance int, updated_at timestamptz, time_value_units bigint, reference_price_tiyin bigint)
