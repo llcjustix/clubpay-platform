@@ -333,6 +333,26 @@ func TestZoneValueIntegration(t *testing.T) {
 		t.Fatalf("agent grant not ended: %v %v", ended, err)
 	}
 
+	// The Agent is not the financial authority. Even if a stale/replayed Agent
+	// reports a countdown larger than this grant, finishGrant must clamp it to
+	// the server-side planned end before it reaches the immutable balance ledger.
+	inflatedGrant := createEarlyEndGrant("agent-end-inflated-remaining")
+	inflatedResult, err := s.finishGrant(ctx, inflatedGrant, "client_left", 36_000)
+	if err != nil {
+		t.Fatal(err)
+	}
+	inflatedRemaining, _ := inflatedResult["remaining_seconds"].(int)
+	if inflatedRemaining < 3500 || inflatedRemaining > 3600 {
+		t.Fatalf("inflated Agent remainder was credited: %#v", inflatedResult)
+	}
+	var recordedReturn int
+	if err := pool.QueryRow(ctx, `SELECT seconds_delta FROM player_time_ledger WHERE idempotency_key='session-return:' || $1::text`, inflatedGrant).Scan(&recordedReturn); err != nil {
+		t.Fatal(err)
+	}
+	if recordedReturn != inflatedRemaining {
+		t.Fatalf("ledger recorded %d seconds, want bounded %d", recordedReturn, inflatedRemaining)
+	}
+
 	// The asynchronous session_ended event has the same fallback when an older
 	// Agent omits the remainder from its payload.
 	eventGrant := createEarlyEndGrant("event-end-without-remaining")

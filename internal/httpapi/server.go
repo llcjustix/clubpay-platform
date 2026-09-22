@@ -7060,15 +7060,26 @@ func (s *Server) finishGrant(ctx context.Context, grantID, reason string, remain
 	grantID = sessionGrantID
 
 	var clubID, pcID, grantStatus string
+	var plannedRemainingSeconds int
 	var playerID *string
 	var paymentOrderID, returnedVoucherID *string
 	err = tx.QueryRow(ctx, `
-		SELECT g.club_id, g.pc_ref_id, g.status, COALESCE(g.player_id, po.player_id), g.payment_order_id, g.returned_voucher_id
+		SELECT g.club_id, g.pc_ref_id, g.status, COALESCE(g.player_id, po.player_id), g.payment_order_id, g.returned_voucher_id,
+		       GREATEST(CEIL(EXTRACT(EPOCH FROM (
+		         COALESCE(
+		           g.planned_ends_at,
+		           g.accepted_at + make_interval(secs => g.duration_seconds),
+		           g.accepted_at + make_interval(mins => g.duration_minutes),
+		           g.created_at + make_interval(secs => g.duration_seconds),
+		           g.created_at + make_interval(mins => g.duration_minutes),
+		           now()
+		         ) - now()
+		       )))::int, 0)
 		FROM game_access_grants g
 		LEFT JOIN payment_orders po ON po.id=g.payment_order_id
 		WHERE g.id = $1
 		FOR UPDATE OF g
-	`, grantID).Scan(&clubID, &pcID, &grantStatus, &playerID, &paymentOrderID, &returnedVoucherID)
+	`, grantID).Scan(&clubID, &pcID, &grantStatus, &playerID, &paymentOrderID, &returnedVoucherID, &plannedRemainingSeconds)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, fmt.Errorf("grant not found")
 	}
@@ -7095,9 +7106,11 @@ func (s *Server) finishGrant(ctx context.Context, grantID, reason string, remain
 	if err != nil {
 		return nil, err
 	}
-	if remainingSeconds < 0 {
-		remainingSeconds = 0
-	}
+	// This is the final trust boundary for returned time. Every caller may be
+	// retried through a different Controller and older Agents can report a stale
+	// (or malformed) countdown. A profile must never receive more time than the
+	// accepted grant still had at the instant this row was locked.
+	remainingSeconds = boundedSessionRemainder(plannedRemainingSeconds, remainingSeconds)
 	remainingMinutes := secondsToMinutesCeil(remainingSeconds)
 
 	_, err = tx.Exec(ctx, `
