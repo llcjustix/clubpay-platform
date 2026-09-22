@@ -2112,6 +2112,7 @@ func (s *Server) handleCreateCheckout(w http.ResponseWriter, r *http.Request) {
 			"duration_minutes":            orderSeed.DurationMinutes,
 			"duration_seconds":            orderSeed.DurationSeconds,
 			"voucher_seconds":             orderSeed.VoucherSeconds,
+			"is_extension":                orderSeed.ExtensionGrantID != "",
 			"split_platform_amount_tiyin": platformSplitAmount,
 			"split_club_amount_tiyin":     clubSplitAmount,
 			"split_payload":               splitPayload,
@@ -3622,14 +3623,14 @@ func (s *Server) RunEdgeSync(ctx context.Context) {
 		return
 	}
 	interval := time.Duration(s.cfg.EdgeSyncIntervalSeconds) * time.Second
-	// The Controller is the only node that can address LAN Agents. Keep its
-	// outbound Cloud pull short enough for a paid QR session to feel immediate.
-	// Older Controller env files contain 15 seconds, so cap them during the
-	// migration rather than requiring each club to edit its configuration.
-	if interval < time.Second || interval > 2*time.Second {
-		interval = 2 * time.Second
+	// The Controller is the only node that can address LAN Agents. Mobile end
+	// and extension commands used to wait for the next two-second pull plus a
+	// full push/pull round, which was visibly five seconds in practice. Keep
+	// the local command loop at one second regardless of stale env files.
+	if interval != time.Second {
+		interval = time.Second
 	}
-	timer := time.NewTimer(2 * time.Second)
+	timer := time.NewTimer(interval)
 	defer timer.Stop()
 	for {
 		select {
@@ -4192,9 +4193,7 @@ func (s *Server) handoffPlayerSession(ctx context.Context, playerID, targetPCID 
 		if err != nil {
 			return fmt.Errorf("could not close the previous player session: %w", err)
 		}
-		if result.RemainingSeconds > 0 {
-			remaining = result.RemainingSeconds
-		}
+		remaining = boundedSessionRemainder(remaining, result.RemainingSeconds)
 		if _, err := s.finishGrant(ctx, session.grantID, "player_switched_pc", remaining); err != nil {
 			return err
 		}
@@ -5452,7 +5451,32 @@ func (s *Server) extendGrantSession(ctx context.Context, extensionGrantID, sessi
 	if coreSessionID == "" {
 		return fmt.Errorf("core_session_id is required for extension")
 	}
-	_, err := s.core.ExtendSession(ctx, coreSessionID, core.ExtendSessionCommand{
+
+	// The Agent treats extension grant ids as idempotent.  The Controller must
+	// do the same for its own parent-grant accounting: a retry after the Agent
+	// accepted a command must not add those seconds a second time.
+	var childStatus string
+	err := s.db.QueryRow(ctx, `
+		UPDATE game_access_grants
+		SET status='applying', last_error=NULL
+		WHERE id=$1 AND status='pending'
+		RETURNING status
+	`, extensionGrantID).Scan(&childStatus)
+	if errors.Is(err, pgx.ErrNoRows) {
+		if err = s.db.QueryRow(ctx, `SELECT status FROM game_access_grants WHERE id=$1`, extensionGrantID).Scan(&childStatus); err != nil {
+			return err
+		}
+		if childStatus == "extended" {
+			return nil
+		}
+		if childStatus != "applying" {
+			return fmt.Errorf("extension grant is not pending")
+		}
+	} else if err != nil {
+		return err
+	}
+
+	_, err = s.core.ExtendSession(ctx, coreSessionID, core.ExtendSessionCommand{
 		RequestID:      "extend_" + extensionGrantID + "_" + randomHex(4),
 		GrantID:        extensionGrantID,
 		ClubID:         clubID,
@@ -5466,12 +5490,28 @@ func (s *Server) extendGrantSession(ctx context.Context, extensionGrantID, sessi
 	if err != nil {
 		_, _ = s.db.Exec(ctx, `
 			UPDATE game_access_grants
-			SET last_error = $1
-			WHERE id = $2
+			SET status='pending', last_error = $1
+			WHERE id = $2 AND status='applying'
 		`, err.Error(), extensionGrantID)
 		return err
 	}
-	_, err = s.db.Exec(ctx, `
+
+	tx, err := s.db.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+	if err = tx.QueryRow(ctx, `SELECT status FROM game_access_grants WHERE id=$1 FOR UPDATE`, extensionGrantID).Scan(&childStatus); err != nil {
+		return err
+	}
+	if childStatus == "extended" {
+		return tx.Commit(ctx)
+	}
+	if childStatus != "applying" {
+		return fmt.Errorf("extension grant changed state before confirmation")
+	}
+
+	_, err = tx.Exec(ctx, `
 		UPDATE game_access_grants
 		SET duration_seconds = duration_seconds + $1,
 		    duration_minutes = CEIL((duration_seconds + $1) / 60.0)::int,
@@ -5489,11 +5529,11 @@ func (s *Server) extendGrantSession(ctx context.Context, extensionGrantID, sessi
 	if err != nil {
 		return err
 	}
-	_, err = s.db.Exec(ctx, `UPDATE pc_refs SET status_cache = 'occupied' WHERE id = $1`, pcID)
+	_, err = tx.Exec(ctx, `UPDATE pc_refs SET status_cache = 'occupied' WHERE id = $1`, pcID)
 	if err != nil {
 		return err
 	}
-	_, err = s.db.Exec(ctx, `
+	_, err = tx.Exec(ctx, `
 		UPDATE qr_codes q
 		SET expires_at = COALESCE(g.grace_ends_at, g.planned_ends_at, q.expires_at)
 		FROM game_access_grants g
@@ -5505,14 +5545,17 @@ func (s *Server) extendGrantSession(ctx context.Context, extensionGrantID, sessi
 	if err != nil {
 		return err
 	}
-	_, err = s.db.Exec(ctx, `
+	_, err = tx.Exec(ctx, `
 		UPDATE game_access_grants extension_grant
 		SET status = 'extended', core_session_id = $1, accepted_at = now(),
 		    planned_ends_at = session_grant.planned_ends_at, grace_ends_at = session_grant.grace_ends_at, last_error = NULL
 		FROM game_access_grants session_grant
-		WHERE extension_grant.id = $2 AND session_grant.id = $3
+		WHERE extension_grant.id = $2 AND extension_grant.status='applying' AND session_grant.id = $3
 	`, coreSessionID, extensionGrantID, sessionGrantID)
-	return err
+	if err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
 }
 
 func (s *Server) handleAdminPCs(w http.ResponseWriter, r *http.Request) {
@@ -6879,6 +6922,20 @@ func (s *Server) remainingSecondsForAcceptedGrant(ctx context.Context, grantID s
 		return 0
 	}
 	return remaining
+}
+
+// boundedSessionRemainder accepts an Agent countdown only as a tighter value
+// than the Controller's planned end. An old/replayed Agent may report a stale
+// countdown from before an extension; trusting it could return hours that were
+// never purchased to a player's saved balance.
+func boundedSessionRemainder(plannedSeconds, agentSeconds int) int {
+	if plannedSeconds <= 0 {
+		return 0
+	}
+	if agentSeconds <= 0 || agentSeconds > plannedSeconds {
+		return plannedSeconds
+	}
+	return agentSeconds
 }
 
 // reconcileMissingProfileRemainders repairs sessions ended by an older Agent

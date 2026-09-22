@@ -168,6 +168,10 @@ class AppLocalizationsUz extends AppLocalizations {
   String get customHelp => 'Ushbu kompyuterdagi o‘yin vaqti uchun to‘lov.';
 
   @override
+  String get extensionCustomHelp =>
+      'Bu summa shu kompyuterdagi faol seans vaqtingizga qo‘shiladi.';
+
+  @override
   String get providers => 'To‘lov usuli';
 
   @override
@@ -183,10 +187,16 @@ class AppLocalizationsUz extends AppLocalizations {
   String get testPayAndStart => 'Sinov to‘lovi va ishga tushirish';
 
   @override
+  String get testPayAndExtend => 'Sinov to‘lovi va uzaytirish';
+
+  @override
   String get noProviders => 'To‘lov hozir mavjud emas';
 
   @override
   String get pay => 'To‘lash';
+
+  @override
+  String get payAndExtend => 'To‘lash va uzaytirish';
 
   @override
   String get clubBalance => 'Bu klubdagi vaqtingiz';
@@ -225,17 +235,30 @@ class AppLocalizationsUz extends AppLocalizations {
   String get payment => 'To‘lov va sessiya';
 
   @override
+  String get extensionPayment => 'To‘lov va uzaytirish';
+
+  @override
   String get waitingPayment => 'To‘lov kutilmoqda';
 
   @override
   String get startingSession => 'Sessiya boshlanmoqda';
 
   @override
+  String get extendingSession => 'Seans uzaytirilmoqda';
+
+  @override
   String get startingHelp =>
       'To‘lov tasdiqlandi. Klub kompyuteridan sessiya boshlanganligi tasdig‘ini kutyapmiz. Bu biroz vaqt olishi mumkin.';
 
   @override
+  String get extendingHelp =>
+      'To‘lov tasdiqlandi. To‘langan vaqt klub kompyuteridagi faol seansga qo‘shilmoqda.';
+
+  @override
   String get sessionReady => 'Sessiya boshlandi';
+
+  @override
+  String get extensionReady => 'Seans uzaytirildi';
 
   @override
   String get sessionEnded => 'Sessiya tugadi';

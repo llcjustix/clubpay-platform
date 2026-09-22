@@ -24,6 +24,7 @@ class PaymentRepository {
     String? provider,
     bool redeem = false,
     bool testPayment = false,
+    bool isExtension = false,
   }) async {
     final old = await pending();
     if (old != null) {
@@ -41,6 +42,7 @@ class PaymentRepository {
         if (!redeem && amount != null) 'amount_uzs': amount,
         if (!redeem && amount == null) 'tariff_block_id': tariff,
       },
+      isExtension: isExtension,
     );
     // Save the exact operation before submission, including its immutable key.
     await remember(operation);
@@ -68,6 +70,7 @@ class PaymentRepository {
       key: operation.key,
       invoice: json['order']?['invoice_id'] as String?,
       grant: json['grant_id'] as String?,
+      isExtension: (json['order']?['is_extension'] == true) || operation.isExtension,
     );
     await remember(saved);
     return saved;
@@ -94,6 +97,7 @@ class PaymentRepository {
       key: p.key,
       path: p.path,
       body: p.body,
+      isExtension: p.isExtension,
       invoice: invoice?.isEmpty == false ? invoice : null,
       grant: grant?.isEmpty == false ? grant : null,
     );
@@ -110,6 +114,7 @@ class PaymentRepository {
         key: const Uuid().v4(),
         path: p.path,
         body: p.body,
+        isExtension: p.isExtension,
       );
       await remember(retry);
       return _submit(retry);

@@ -210,8 +210,9 @@ func (s *Server) handleMobileOrder(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	rows, err := s.queryMaps(r.Context(), `SELECT po.invoice_id,po.status,po.duration_seconds,po.checkout_url,pc.label AS pc_label,
+ po.extension_grant_id IS NOT NULL AS is_extension,
  COALESCE(g.id::text,'') AS grant_id,COALESCE(g.status,'pending') AS grant_status,
- COALESCE(g.duration_seconds,po.duration_seconds) AS session_seconds,g.planned_ends_at
+ CASE WHEN po.extension_grant_id IS NOT NULL THEN po.duration_seconds ELSE COALESCE(g.duration_seconds,po.duration_seconds) END AS session_seconds,g.planned_ends_at
  FROM payment_orders po JOIN pc_refs pc ON pc.id=po.pc_ref_id
  LEFT JOIN LATERAL (SELECT * FROM game_access_grants WHERE payment_order_id=po.id ORDER BY created_at DESC LIMIT 1) g ON true
  WHERE po.invoice_id=$1 AND po.player_id=$2`, r.PathValue("invoice_id"), p.ID)

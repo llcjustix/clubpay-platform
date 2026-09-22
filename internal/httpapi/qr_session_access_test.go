@@ -90,3 +90,24 @@ func TestAgentEndReason(t *testing.T) {
 		}
 	}
 }
+
+func TestBoundedSessionRemainder(t *testing.T) {
+	tests := []struct {
+		name              string
+		planned, reported int
+		want              int
+	}{
+		{name: "agent reports tighter current countdown", planned: 3600, reported: 2400, want: 2400},
+		{name: "agent omits countdown", planned: 3600, reported: 0, want: 3600},
+		{name: "stale pre-extension agent countdown is capped", planned: 3600, reported: 36000, want: 3600},
+		{name: "no planned time never returns credit", planned: 0, reported: 3600, want: 0},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := boundedSessionRemainder(tt.planned, tt.reported)
+			if got != tt.want {
+				t.Fatalf("boundedSessionRemainder(%d, %d) = %d, want %d", tt.planned, tt.reported, got, tt.want)
+			}
+		})
+	}
+}

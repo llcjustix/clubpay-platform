@@ -67,6 +67,7 @@ class _ComputerScreenState extends ConsumerState<ComputerScreen> {
         provider: provider,
         redeem: redeem,
         testPayment: !redeem && provider == 'mock',
+        isExtension: pc.type == 'session_extend',
       );
       if (mounted) context.push('/session');
       ref.read(analyticsProvider).track('checkout_created', screen: 'computer');
@@ -314,7 +315,7 @@ class _ComputerScreenState extends ConsumerState<ComputerScreen> {
                 onChanged: (_) => setState(() {}),
               ),
               gap,
-              Text(l.customHelp),
+              Text(extension ? l.extensionCustomHelp : l.customHelp),
             ],
             if (!pc.previewOnly) ...[
               const SizedBox(height: 28),
@@ -337,7 +338,11 @@ class _ComputerScreenState extends ConsumerState<ComputerScreen> {
                   ],
                 ),
               ActionButton(
-                label: selectedProvider == 'mock' ? l.testPayAndStart : l.pay,
+                label: extension
+                    ? (selectedProvider == 'mock'
+                          ? l.testPayAndExtend
+                          : l.payAndExtend)
+                    : (selectedProvider == 'mock' ? l.testPayAndStart : l.pay),
                 icon: selectedProvider == 'mock'
                     ? Icons.play_arrow
                     : Icons.open_in_new,

@@ -167,6 +167,10 @@ class AppLocalizationsRu extends AppLocalizations {
   String get customHelp => 'Сумма оплаты за игровое время на этом ПК.';
 
   @override
+  String get extensionCustomHelp =>
+      'Эта сумма добавится к времени текущей сессии на этом ПК.';
+
+  @override
   String get providers => 'Способ оплаты';
 
   @override
@@ -182,10 +186,16 @@ class AppLocalizationsRu extends AppLocalizations {
   String get testPayAndStart => 'Тестово оплатить и запустить';
 
   @override
+  String get testPayAndExtend => 'Тестово оплатить и продлить';
+
+  @override
   String get noProviders => 'Оплата сейчас недоступна';
 
   @override
   String get pay => 'Оплатить';
+
+  @override
+  String get payAndExtend => 'Оплатить и продлить';
 
   @override
   String get clubBalance => 'Ваше время в этом клубе';
@@ -240,17 +250,30 @@ class AppLocalizationsRu extends AppLocalizations {
   String get payment => 'Оплата и сессия';
 
   @override
+  String get extensionPayment => 'Оплата и продление';
+
+  @override
   String get waitingPayment => 'Ожидаем оплату';
 
   @override
   String get startingSession => 'Запускаем сессию';
 
   @override
+  String get extendingSession => 'Продлеваем сеанс';
+
+  @override
   String get startingHelp =>
       'Оплата подтверждена. Ожидаем подтверждение запуска компьютером клуба. Это может занять некоторое время.';
 
   @override
+  String get extendingHelp =>
+      'Оплата подтверждена. Добавляем оплаченное время к текущей сессии на компьютере клуба.';
+
+  @override
   String get sessionReady => 'Сессия запущена';
+
+  @override
+  String get extensionReady => 'Сеанс продлён';
 
   @override
   String get sessionEnded => 'Сессия завершена';

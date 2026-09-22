@@ -392,6 +392,12 @@ abstract class AppLocalizations {
   /// **'Сумма оплаты за игровое время на этом ПК.'**
   String get customHelp;
 
+  /// No description provided for @extensionCustomHelp.
+  ///
+  /// In ru, this message translates to:
+  /// **'Эта сумма добавится к времени текущей сессии на этом ПК.'**
+  String get extensionCustomHelp;
+
   /// No description provided for @providers.
   ///
   /// In ru, this message translates to:
@@ -422,6 +428,12 @@ abstract class AppLocalizations {
   /// **'Тестово оплатить и запустить'**
   String get testPayAndStart;
 
+  /// No description provided for @testPayAndExtend.
+  ///
+  /// In ru, this message translates to:
+  /// **'Тестово оплатить и продлить'**
+  String get testPayAndExtend;
+
   /// No description provided for @noProviders.
   ///
   /// In ru, this message translates to:
@@ -433,6 +445,12 @@ abstract class AppLocalizations {
   /// In ru, this message translates to:
   /// **'Оплатить'**
   String get pay;
+
+  /// No description provided for @payAndExtend.
+  ///
+  /// In ru, this message translates to:
+  /// **'Оплатить и продлить'**
+  String get payAndExtend;
 
   /// No description provided for @clubBalance.
   ///
@@ -482,6 +500,12 @@ abstract class AppLocalizations {
   /// **'Оплата и сессия'**
   String get payment;
 
+  /// No description provided for @extensionPayment.
+  ///
+  /// In ru, this message translates to:
+  /// **'Оплата и продление'**
+  String get extensionPayment;
+
   /// No description provided for @waitingPayment.
   ///
   /// In ru, this message translates to:
@@ -494,17 +518,35 @@ abstract class AppLocalizations {
   /// **'Запускаем сессию'**
   String get startingSession;
 
+  /// No description provided for @extendingSession.
+  ///
+  /// In ru, this message translates to:
+  /// **'Продлеваем сеанс'**
+  String get extendingSession;
+
   /// No description provided for @startingHelp.
   ///
   /// In ru, this message translates to:
   /// **'Оплата подтверждена. Ожидаем подтверждение запуска компьютером клуба. Это может занять некоторое время.'**
   String get startingHelp;
 
+  /// No description provided for @extendingHelp.
+  ///
+  /// In ru, this message translates to:
+  /// **'Оплата подтверждена. Добавляем оплаченное время к текущей сессии на компьютере клуба.'**
+  String get extendingHelp;
+
   /// No description provided for @sessionReady.
   ///
   /// In ru, this message translates to:
   /// **'Сессия запущена'**
   String get sessionReady;
+
+  /// No description provided for @extensionReady.
+  ///
+  /// In ru, this message translates to:
+  /// **'Сеанс продлён'**
+  String get extensionReady;
 
   /// No description provided for @sessionEnded.
   ///

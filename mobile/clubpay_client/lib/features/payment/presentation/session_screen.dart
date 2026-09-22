@@ -98,10 +98,12 @@ class _SessionScreenState extends ConsumerState<SessionScreen>
   Widget build(BuildContext context) {
     final l = context.l;
     final status = _status;
+    final isExtension =
+        (_operation?.isExtension ?? false) || (status?.isExtension ?? false);
     final title = switch (status?.phase) {
       SessionPhase.waitingPayment => l.waitingPayment,
-      SessionPhase.starting => l.startingSession,
-      SessionPhase.active => l.sessionReady,
+      SessionPhase.starting => isExtension ? l.extendingSession : l.startingSession,
+      SessionPhase.active => isExtension ? l.extensionReady : l.sessionReady,
       SessionPhase.ended => l.sessionEnded,
       SessionPhase.paymentFailed => l.paymentFailed,
       SessionPhase.startFailed => l.startFailed,
@@ -109,7 +111,7 @@ class _SessionScreenState extends ConsumerState<SessionScreen>
     };
     final success = status?.phase == SessionPhase.active;
     return AppPage(
-      title: l.payment,
+      title: isExtension ? l.extensionPayment : l.payment,
       children: [
         InfoCard(
           accent: true,
@@ -140,7 +142,7 @@ class _SessionScreenState extends ConsumerState<SessionScreen>
             ],
             if (status?.phase == SessionPhase.starting) ...[
               gap,
-              Text(l.startingHelp),
+              Text(isExtension ? l.extendingHelp : l.startingHelp),
             ],
             if (status == null) ...[gap, Text(l.operationHelp)],
           ],

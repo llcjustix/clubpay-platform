@@ -139,9 +139,7 @@ func (s *Server) handleMobileActiveSessionEnd(w http.ResponseWriter, r *http.Req
 		writeError(w, http.StatusBadGateway, "agent did not confirm session end: "+err.Error())
 		return
 	}
-	if result.RemainingSeconds > 0 {
-		remainingSeconds = result.RemainingSeconds
-	}
+	remainingSeconds = boundedSessionRemainder(remainingSeconds, result.RemainingSeconds)
 	finished, err := s.finishGrant(r.Context(), grantID, "player_left_from_mobile", remainingSeconds)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())

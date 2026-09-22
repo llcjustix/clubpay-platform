@@ -13,11 +13,13 @@ class SessionStatus {
     this.pcLabel,
     this.seconds, {
     this.checkoutUrl,
+    this.isExtension = false,
   });
   final SessionPhase phase;
   final String pcLabel;
   final int seconds;
   final String? checkoutUrl;
+  final bool isExtension;
   factory SessionStatus.fromJson(Map<String, dynamic> j) {
     final payment = j['status'] as String?;
     final grant = j['grant_status'] as String?;
@@ -32,7 +34,7 @@ class SessionStatus {
       phase = SessionPhase.paymentFailed;
     } else if (['start_failed', 'failed', 'rejected'].contains(grant)) {
       phase = SessionPhase.startFailed;
-    } else if (grant == 'accepted') {
+    } else if (['accepted', 'extended'].contains(grant)) {
       phase = SessionPhase.active;
     } else if (['ended', 'completed', 'expired'].contains(grant)) {
       phase = SessionPhase.ended;
@@ -47,6 +49,7 @@ class SessionStatus {
       (j['session_seconds'] as num? ?? j['duration_seconds'] as num? ?? 0)
           .toInt(),
       checkoutUrl: j['checkout_url'] as String?,
+      isExtension: j['is_extension'] == true,
     );
   }
   bool get terminal => [
@@ -64,16 +67,19 @@ class PendingOperation {
     this.grant,
     this.path,
     this.body,
+    this.isExtension = false,
   });
   final String key;
   final String? invoice, grant, path;
   final Map<String, dynamic>? body;
+  final bool isExtension;
   Map<String, dynamic> toJson() => {
     'key': key,
     'invoice': invoice,
     'grant': grant,
     'path': path,
     'body': body,
+    'is_extension': isExtension,
   };
   factory PendingOperation.fromJson(Map<String, dynamic> j) => PendingOperation(
     key: j['key'] as String,
@@ -83,5 +89,6 @@ class PendingOperation {
     body: j['body'] == null
         ? null
         : Map<String, dynamic>.from(j['body'] as Map),
+    isExtension: j['is_extension'] == true,
   );
 }

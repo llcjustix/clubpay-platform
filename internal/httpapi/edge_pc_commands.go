@@ -302,9 +302,7 @@ func (s *Server) processPendingEdgePCCommands(ctx context.Context, clubID string
 			if endErr != nil {
 				err = endErr
 			} else {
-				if result.RemainingSeconds > 0 {
-					remaining = result.RemainingSeconds
-				}
+				remaining = boundedSessionRemainder(remaining, result.RemainingSeconds)
 				_, err = s.finishGrant(ctx, command.GrantID, "player_left_from_mobile", remaining)
 			}
 		} else {
