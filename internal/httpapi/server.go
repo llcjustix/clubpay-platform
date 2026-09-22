@@ -226,6 +226,7 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("GET /api/admin/orders", s.handleAdminOrders)
 	mux.HandleFunc("GET /api/admin/grants", s.handleAdminGrants)
 	mux.HandleFunc("POST /api/admin/grants/{grant_id}/end", s.handleAdminEndGrant)
+	mux.HandleFunc("POST /api/admin/grants/{grant_id}/reconcile-player-balance", s.handleAdminGrantBalanceReconcile)
 	mux.HandleFunc("POST /api/admin/cash-sessions", s.handleCashSession)
 	mux.HandleFunc("GET /api/owner/summary", s.handleOwnerSummary)
 	mux.HandleFunc("POST /api/vouchers", s.handleCreateVoucher)
@@ -6178,6 +6179,54 @@ func (s *Server) handleAdminEndGrant(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	writeJSON(w, http.StatusOK, result)
+}
+
+// handleAdminGrantBalanceReconcile rebuilds the affected player's fast balance
+// cache from the immutable ledger. It is deliberately scoped to a grant instead
+// of accepting a phone number, so an operator cannot accidentally reconcile a
+// different player's account while investigating a session.
+func (s *Server) handleAdminGrantBalanceReconcile(w http.ResponseWriter, r *http.Request) {
+	auth, ok := s.requireAuth(w, r)
+	if !ok {
+		return
+	}
+	grantID := strings.TrimSpace(r.PathValue("grant_id"))
+	if grantID == "" {
+		writeError(w, http.StatusBadRequest, "grant_id is required")
+		return
+	}
+
+	var clubID, playerID string
+	err := s.db.QueryRow(r.Context(), `
+		SELECT g.club_id::text, COALESCE(g.player_id, po.player_id)::text
+		FROM game_access_grants g
+		LEFT JOIN payment_orders po ON po.id=g.payment_order_id
+		WHERE g.id=$1 AND COALESCE(g.player_id, po.player_id) IS NOT NULL
+	`, grantID).Scan(&clubID, &playerID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		writeError(w, http.StatusNotFound, "profile grant not found")
+		return
+	}
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if _, ok := s.requireClubRole(w, r, auth, clubID, "owner", "manager", "admin"); !ok {
+		return
+	}
+	if err := s.repairProfileBalanceProjection(r.Context(), playerID); err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	var seconds int
+	if err := s.db.QueryRow(r.Context(), `SELECT COALESCE(seconds_balance,0) FROM player_club_balances WHERE player_id=$1 AND club_id=$2`, playerID, clubID).Scan(&seconds); err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	metadata, _ := json.Marshal(map[string]any{"grant_id": grantID, "player_id": playerID, "seconds_balance": seconds})
+	_, _ = s.db.Exec(r.Context(), `INSERT INTO audit_logs(club_id,user_id,action,entity_type,entity_id,metadata) VALUES($1,$2,'admin_player_balance_reconciled','game_access_grant',$3,$4)`, clubID, auth.UserID, grantID, metadata)
+	writeJSON(w, http.StatusOK, map[string]any{"success": true, "grant_id": grantID, "seconds_balance": seconds})
 }
 
 // handleAgentEndSession is the player-facing equivalent of the admin "end session" action.
