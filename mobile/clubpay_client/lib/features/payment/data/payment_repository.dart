@@ -28,10 +28,21 @@ class PaymentRepository {
   }) async {
     final old = await pending();
     if (old != null) {
-      if (testPayment && old.invoice != null) {
-        await _completeTestPayment(old.invoice!);
+      // A payment/session result is deliberately kept in secure storage until
+      // the result screen has rendered it.  Do not let a completed operation
+      // from an earlier flow (notably an extension) hijack a new reservation
+      // start.  We only remove it after the server confirms a terminal state;
+      // an unreachable or still-pending operation remains protected by its
+      // original idempotency key and can never be charged twice.
+      final oldStatus = await status(old);
+      if (oldStatus?.terminal == true) {
+        await clear();
+      } else {
+        if (testPayment && old.invoice != null) {
+          await _completeTestPayment(old.invoice!);
+        }
+        return old;
       }
-      return old;
     }
     final operation = PendingOperation(
       key: const Uuid().v4(),

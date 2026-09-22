@@ -112,6 +112,40 @@ void main() {
     expect(pending.key, isNotEmpty);
     expect(posts, 1);
   });
+  test('A finished extension cannot replace a new reservation balance start',
+      () async {
+    final vault = SessionVault(MemoryStore());
+    await vault.store.write(
+      'mobile.pending',
+      '{"key":"old-extension","grant":"grant_old","is_extension":true}',
+    );
+    final api = ApiClient(
+      vault,
+      dio: stubDio((request) async {
+        if (request.path == '/api/mobile/sessions/grant_old') {
+          return (200, {
+            'grant_status': 'ended',
+            'pc_label': 'Pilot PC #01',
+            'session_seconds': 1200,
+          });
+        }
+        if (request.path == '/api/player-balance/redeem') {
+          expect(request.data['qr_token'], 'reservation_pc');
+          return (200, {'grant_id': 'grant_new'});
+        }
+        fail('Unexpected request ${request.path}');
+      }),
+    );
+
+    final started = await PaymentRepository(api).begin(
+      token: 'reservation_pc',
+      redeem: true,
+      isExtension: false,
+    );
+
+    expect(started.grant, 'grant_new');
+    expect(started.isExtension, isFalse);
+  });
   test(
     'Recovery retries only the saved request with the original key',
     () async {
