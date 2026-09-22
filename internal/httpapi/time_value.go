@@ -120,10 +120,14 @@ func (s *Server) recordTimeValue(ctx context.Context, tx pgx.Tx, playerID, clubI
 }
 
 // repairProfileBalanceProjection restores the fast balance projection from the
-// immutable ledger. Edge snapshots may arrive after a cloud-side session end
-// without the new ledger entry; they must never make already returned profile
-// time disappear. We only raise a projection to the confirmed net ledger
-// value, so a newer local debit is never undone.
+// immutable ledger. A balance row is only a cache: accepting a higher value
+// from a delayed edge snapshot can resurrect time that was already consumed
+// in Cloud, and a later session return then effectively credits it twice.
+//
+// New mutations always write their ledger record and balance projection in the
+// same transaction. Therefore, for a player/club that has ledger history, the
+// ledger total is authoritative in both directions (including lowering a
+// stale, inflated projection).
 func (s *Server) repairProfileBalanceProjection(ctx context.Context, playerID string) error {
 	tx, err := s.db.Begin(ctx)
 	if err != nil {
@@ -173,7 +177,7 @@ func (s *Server) repairProfileBalanceProjection(ctx context.Context, playerID st
 		if err != nil {
 			return err
 		}
-		if current >= item.units {
+		if current == item.units {
 			continue
 		}
 		seconds, err := timeAtRate(item.units, reference)

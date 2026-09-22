@@ -4931,7 +4931,17 @@ func (s *Server) applyEdgeSnapshotData(ctx context.Context, clubID string, paylo
 		INSERT INTO player_club_balances (player_id, club_id, seconds_balance, updated_at, time_value_units, reference_price_tiyin)
 		SELECT player_id, club_id, GREATEST(seconds_balance, 0), COALESCE(updated_at, now()), time_value_units, reference_price_tiyin FROM input
 		ON CONFLICT (player_id, club_id) DO UPDATE SET seconds_balance = EXCLUDED.seconds_balance, updated_at = EXCLUDED.updated_at, time_value_units=EXCLUDED.time_value_units, reference_price_tiyin=EXCLUDED.reference_price_tiyin
-        WHERE EXCLUDED.updated_at >= player_club_balances.updated_at AND (EXCLUDED.time_value_units IS NOT NULL OR player_club_balances.time_value_units IS NULL)
+		-- A snapshot balance is a cache, not a transaction. Once Cloud has any
+		-- immutable time ledger entry for this player/club, accepting an edge
+		-- value here can restore a balance that Cloud has already debited. Keep
+		-- the snapshot update only as bootstrap for legacy rows with no ledger.
+        WHERE EXCLUDED.updated_at >= player_club_balances.updated_at
+		  AND (EXCLUDED.time_value_units IS NOT NULL OR player_club_balances.time_value_units IS NULL)
+		  AND NOT EXISTS (
+			SELECT 1 FROM player_time_ledger l
+			WHERE l.player_id=player_club_balances.player_id
+			  AND l.club_id=player_club_balances.club_id
+		  )
 	`, payload["player_club_balances"]); err != nil {
 		return err
 	}

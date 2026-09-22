@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"testing"
+	"time"
 
 	"clubpay/internal/config"
 	"clubpay/internal/core"
@@ -239,6 +240,38 @@ func TestZoneValueIntegration(t *testing.T) {
 	}
 	if currentUnits() != originalUnits+1500000 {
 		t.Fatal("snapshot changed credit")
+	}
+	// A delayed Controller snapshot can carry a higher, pre-debit balance with
+	// a newer wall-clock timestamp. It must never resurrect spent time once the
+	// Cloud ledger exists; otherwise an end-session return credits the same time
+	// for a second time.
+	balances, ok := snapshot["player_club_balances"].([]map[string]any)
+	if !ok {
+		t.Fatalf("snapshot balance type %T", snapshot["player_club_balances"])
+	}
+	for _, balance := range balances {
+		if fmt.Sprint(balance["player_id"]) == player && fmt.Sprint(balance["club_id"]) == club {
+			balance["time_value_units"] = (originalUnits + 1500000) * 2
+			balance["seconds_balance"] = 7202
+			balance["updated_at"] = time.Now().UTC().Add(time.Hour)
+		}
+	}
+	if err = s.applyEdgeSnapshotData(ctx, club, snapshot); err != nil {
+		t.Fatal(err)
+	}
+	if currentUnits() != originalUnits+1500000 {
+		t.Fatal("stale snapshot resurrected spent balance")
+	}
+	// The mobile profile read also corrects any inflated cache written by an
+	// earlier Controller release, from the immutable ledger total.
+	if _, err = pool.Exec(ctx, `UPDATE player_club_balances SET seconds_balance=7202,time_value_units=$3 WHERE player_id=$1 AND club_id=$2`, player, club, (originalUnits+1500000)*2); err != nil {
+		t.Fatal(err)
+	}
+	if err = s.repairProfileBalanceProjection(ctx, player); err != nil {
+		t.Fatal(err)
+	}
+	if currentUnits() != originalUnits+1500000 {
+		t.Fatal("ledger did not lower inflated balance projection")
 	}
 	// The balance row is a projection. If a stale edge snapshot overwrites it,
 	// the immutable ledger restores the credited time on the next profile read.
