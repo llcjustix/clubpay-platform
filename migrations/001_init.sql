@@ -403,7 +403,7 @@ CREATE TABLE IF NOT EXISTS player_time_ledger (
   player_id UUID NOT NULL REFERENCES players(id) ON DELETE CASCADE,
   club_id UUID NOT NULL REFERENCES clubs(id) ON DELETE CASCADE,
   seconds_delta INT NOT NULL CHECK (seconds_delta <> 0),
-  kind TEXT NOT NULL CHECK (kind IN ('session_remaining', 'session_start', 'session_start_refund', 'manual_adjustment')),
+  kind TEXT NOT NULL CHECK (kind IN ('session_remaining', 'session_start', 'session_start_refund', 'manual_adjustment', 'balance_integrity_reversal')),
   game_access_grant_id UUID,
   payment_order_id UUID,
   idempotency_key TEXT NOT NULL UNIQUE,
