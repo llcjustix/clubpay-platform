@@ -546,6 +546,20 @@ func (s *Server) redeemPlayerBalanceToPC(ctx context.Context, req redeemPlayerBa
 	if err := s.recordPlayerTime(ctx, tx, player.ID, clubID, -seconds, "session_start", grantID, "", "session-start:"+grantID); err != nil {
 		return nil, err
 	}
+	// Starting access from the reservation owner's mobile app is the check-in.
+	// Do this in the same transaction as the grant and balance debit: a failed
+	// start must leave the reservation visible, whereas a durable grant must not
+	// be rendered as a still-pending booking by either the mobile app or Agent.
+	if _, err := tx.Exec(ctx, `
+		UPDATE mobile_reservations
+		SET status='started', updated_at=now()
+		WHERE pc_ref_id=$1::uuid AND player_id=$2::uuid
+		  AND status IN ('confirmed','checked_in')
+		  AND starts_at-interval '15 minutes'<=now()
+		  AND starts_at+interval '15 minutes'>=now()
+	`, pcID, player.ID); err != nil {
+		return nil, err
+	}
 	if err := tx.Commit(ctx); err != nil {
 		return nil, err
 	}

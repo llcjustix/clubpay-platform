@@ -341,10 +341,8 @@ func (s *Server) handleMobileReservationStart(w http.ResponseWriter, r *http.Req
 }
 
 // reservationAllowsPlayerSession keeps a held PC private to its reservation
-// owner.  Reaching the real checkout or balance-redemption action is itself
-// an unambiguous check-in: a Cloud/edge sync can otherwise briefly restore the
-// replicated reservation as "confirmed" after the mobile start action has
-// completed, trapping its owner behind a stale intermediate state.
+// owner. The actual grant creation marks the reservation started atomically;
+// this check only establishes whether that owner is allowed to create it.
 func reservationAllowsPlayerSession(ctx context.Context, q interface {
 	QueryRow(context.Context, string, ...any) pgx.Row
 }, pcID, playerID string) (bool, error) {

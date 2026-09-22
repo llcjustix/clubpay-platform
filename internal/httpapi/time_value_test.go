@@ -226,6 +226,17 @@ func TestZoneValueIntegration(t *testing.T) {
 	if err = pool.QueryRow(ctx, `SELECT status FROM mobile_reservations WHERE id=$1`, reservationID).Scan(&importedReservationStatus); err != nil || importedReservationStatus != "confirmed" {
 		t.Fatalf("reservation snapshot import = %q, %v", importedReservationStatus, err)
 	}
+	// A lagging edge snapshot must never restore a reservation that Cloud has
+	// already completed after the Agent ended the session.
+	if _, err = pool.Exec(ctx, `UPDATE mobile_reservations SET status='completed',updated_at=now() WHERE id=$1`, reservationID); err != nil {
+		t.Fatal(err)
+	}
+	if err = s.applyEdgeSnapshotData(ctx, club, snapshot); err != nil {
+		t.Fatal(err)
+	}
+	if err = pool.QueryRow(ctx, `SELECT status FROM mobile_reservations WHERE id=$1`, reservationID).Scan(&importedReservationStatus); err != nil || importedReservationStatus != "completed" {
+		t.Fatalf("stale reservation snapshot overwrote completed status: %q, %v", importedReservationStatus, err)
+	}
 	if currentUnits() != originalUnits+1500000 {
 		t.Fatal("snapshot changed credit")
 	}

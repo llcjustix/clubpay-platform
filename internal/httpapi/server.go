@@ -4049,6 +4049,20 @@ func (s *Server) startPendingEdgeGrants(ctx context.Context, clubID string) bool
 		`, coreSessionID, plannedEndsAt, graceEndsAt, grantID); err != nil {
 			continue
 		}
+		// Paid checkouts reach this point on the Controller (rather than through
+		// redeemPlayerBalanceToPC), so consume the owner's current reservation
+		// here too. This is intentionally idempotent for grants that were already
+		// marked started by Cloud before they arrived at the LAN Controller.
+		if playerID != "" {
+			_, _ = s.db.Exec(ctx, `
+				UPDATE mobile_reservations
+				SET status='started', updated_at=now()
+				WHERE pc_ref_id=$1::uuid AND player_id=$2::uuid
+				  AND status IN ('confirmed','checked_in')
+				  AND starts_at-interval '15 minutes'<=now()
+				  AND starts_at+interval '15 minutes'>=now()
+			`, pcID, playerID)
+		}
 		s.updateSessionExtendQRExpiry(ctx, grantID, graceEndsAt)
 		_, _ = s.db.Exec(ctx, `UPDATE pc_refs SET status_cache = 'occupied' WHERE id = $1`, pcID)
 		activeByPC[pcID] = activeGrantRow{ID: grantID, CoreSessionID: coreSessionID, PlannedEndsAt: plannedEndsAt, DurationMinutes: secondsToMinutesCeil(durationSeconds), DurationSeconds: durationSeconds}
@@ -4854,6 +4868,7 @@ func (s *Server) applyEdgeSnapshotData(ctx context.Context, clubID string, paylo
 			starts_at = EXCLUDED.starts_at, duration_minutes = EXCLUDED.duration_minutes,
 			entry_code = EXCLUDED.entry_code, status = EXCLUDED.status,
 			cancelled_at = EXCLUDED.cancelled_at, updated_at = EXCLUDED.updated_at
+		WHERE EXCLUDED.updated_at >= mobile_reservations.updated_at
 	`, payload["mobile_reservations"]); err != nil {
 		return err
 	}
@@ -7043,6 +7058,20 @@ func (s *Server) finishGrant(ctx context.Context, grantID, reason string, remain
 	}
 
 	isProfileSession := playerID != nil && *playerID != ""
+	if isProfileSession {
+		// A reservation is consumed by the session that it started.  Leaving it
+		// in confirmed/started after Agent ends the session reopens the booking
+		// screen and can hold the PC indefinitely. Never touch a future booking.
+		if _, err = tx.Exec(ctx, `
+			UPDATE mobile_reservations
+			SET status='completed', updated_at=now()
+			WHERE player_id=$1::uuid AND pc_ref_id=$2::uuid
+			  AND status IN ('confirmed','checked_in','started')
+			  AND starts_at<=now()
+		`, *playerID, pcID); err != nil {
+			return nil, err
+		}
+	}
 	result := map[string]any{
 		"success": true, "grant_id": grantID, "status": "ended",
 		"remaining_minutes": remainingMinutes, "remaining_seconds": remainingSeconds,

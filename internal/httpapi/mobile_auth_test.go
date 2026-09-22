@@ -445,6 +445,15 @@ func TestMobileIntegration(t *testing.T) {
 	if !foundVIP {
 		t.Fatal("missing zone equivalents")
 	}
+	// A reservation is consumed by the session created from its owner's mobile
+	// balance and remains resolved after the Agent ends that session.
+	var reservationID string
+	if err = pool.QueryRow(ctx, `
+		INSERT INTO mobile_reservations(player_id,club_id,pc_ref_id,starts_at,duration_minutes,entry_code,status)
+		VALUES($1,$2,$3,now(),60,'654321','confirmed') RETURNING id
+	`, me["id"], club, vipPC).Scan(&reservationID); err != nil {
+		t.Fatal(err)
+	}
 	redeem := expect(200, "POST", "/api/player-balance/redeem", access, "redeem-test-key-001", map[string]any{"qr_token": qr})
 	again := expect(200, "POST", "/api/player-balance/redeem", access, "redeem-test-key-001", map[string]any{"qr_token": qr})
 	if redeem["grant_id"] != again["grant_id"] || redeem["seconds_used"] != float64(160) {
@@ -454,9 +463,16 @@ func TestMobileIntegration(t *testing.T) {
 	if balanceStatus["grant_status"] != "accepted" {
 		t.Fatal("mobile balance grant did not start")
 	}
+	var reservationStatus string
+	if err = pool.QueryRow(ctx, `SELECT status FROM mobile_reservations WHERE id=$1`, reservationID).Scan(&reservationStatus); err != nil || reservationStatus != "started" {
+		t.Fatalf("reservation after mobile start = %q, %v", reservationStatus, err)
+	}
 
 	if _, err = s.finishGrant(ctx, redeem["grant_id"].(string), "player_end", 160); err != nil {
 		t.Fatal(err)
+	}
+	if err = pool.QueryRow(ctx, `SELECT status FROM mobile_reservations WHERE id=$1`, reservationID).Scan(&reservationStatus); err != nil || reservationStatus != "completed" {
+		t.Fatalf("reservation after Agent session end = %q, %v", reservationStatus, err)
 	}
 	balances = expect(200, "GET", "/api/mobile/balances", access, "", nil)
 	if balances["balances"].([]any)[0].(map[string]any)["seconds_balance"] != float64(321) {
