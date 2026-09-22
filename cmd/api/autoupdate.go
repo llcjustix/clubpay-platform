@@ -86,6 +86,29 @@ func checkAutomaticUpdates(ctx context.Context, cfg config.Config, server *httpa
 		}
 	}
 
+	// A Manager ships a local Controller together with its desktop application.
+	// Do not wait for an unrelated Manager UI release to refresh that Controller:
+	// it owns LAN sessions and the update scheduler itself.  Updating it first
+	// also prevents two independent replacement tasks from racing over the same
+	// local installation.
+	if mode == "manager" {
+		controllerArtifact, controllerErr := release.Latest(ctx, releaseHTTPClient, platformReleasesAPI, "controller-v", "ClubPay-Controller-win-x64.zip")
+		if controllerErr != nil {
+			log.Printf("automatic manager Controller update lookup: %v", controllerErr)
+		} else if release.CompareVersions(controllerArtifact.Version, currentVersion) > 0 {
+			if !autoUpdateAllowsLocalNode(cfg) {
+				log.Printf("update_event component=manager-controller action=held version=%s ring=%s node_id=%s club_id=%s", controllerArtifact.Version, cfg.AutoUpdateRing, localUpdateNodeID(cfg), cfg.EdgeClubID)
+				return
+			}
+			if err := scheduleLocalUpdate(controllerArtifact, "update-windows.ps1"); err != nil {
+				log.Printf("schedule automatic manager Controller update to %s: %v", controllerArtifact.Version, err)
+				return
+			}
+			log.Printf("update_event component=manager-controller action=scheduled version=%s ring=%s node_id=%s club_id=%s", controllerArtifact.Version, cfg.AutoUpdateRing, localUpdateNodeID(cfg), cfg.EdgeClubID)
+			return
+		}
+	}
+
 	var (
 		artifact    release.Artifact
 		err         error
