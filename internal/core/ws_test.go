@@ -21,9 +21,12 @@ func TestWSControllerStartSessionCommand(t *testing.T) {
 		t.Fatalf("dial websocket: %v", err)
 	}
 	defer conn.Close()
+	waitForWSAgent(t, controller, "pc-001")
 
 	commands := make(chan commandMessage, 1)
+	done := make(chan struct{})
 	go func() {
+		defer close(done)
 		var msg commandMessage
 		if err := conn.ReadJSON(&msg); err != nil {
 			t.Errorf("read command: %v", err)
@@ -80,6 +83,25 @@ func TestWSControllerStartSessionCommand(t *testing.T) {
 	case <-time.After(time.Second):
 		t.Fatal("command was not sent")
 	}
+	// Do not return and close the websocket while the mock Agent is still
+	// writing its acknowledgement. That race made this test flaky in Docker CI.
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("mock agent did not finish command acknowledgement")
+	}
+}
+
+func waitForWSAgent(t *testing.T, controller *WSController, externalPCID string) {
+	t.Helper()
+	deadline := time.Now().Add(time.Second)
+	for time.Now().Before(deadline) {
+		if controller.HasConnectedAgent(externalPCID) {
+			return
+		}
+		time.Sleep(time.Millisecond)
+	}
+	t.Fatalf("agent %q was not registered", externalPCID)
 }
 
 func TestWSControllerWakesAndWaitsForAgentBeforeStartingSession(t *testing.T) {
