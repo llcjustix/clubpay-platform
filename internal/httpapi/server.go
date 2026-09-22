@@ -227,6 +227,7 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("GET /api/admin/grants", s.handleAdminGrants)
 	mux.HandleFunc("POST /api/admin/grants/{grant_id}/end", s.handleAdminEndGrant)
 	mux.HandleFunc("POST /api/admin/grants/{grant_id}/reconcile-player-balance", s.handleAdminGrantBalanceReconcile)
+	mux.HandleFunc("POST /api/admin/grants/{grant_id}/repair-player-balance", s.handleAdminGrantBalanceRepair)
 	mux.HandleFunc("GET /api/admin/grants/{grant_id}/player-ledger", s.handleAdminGrantPlayerLedger)
 	mux.HandleFunc("POST /api/admin/cash-sessions", s.handleCashSession)
 	mux.HandleFunc("GET /api/owner/summary", s.handleOwnerSummary)
@@ -6223,6 +6224,146 @@ func (s *Server) handleAdminGrantBalanceReconcile(w http.ResponseWriter, r *http
 	writeJSON(w, http.StatusOK, map[string]any{"success": true, "grant_id": grantID, "seconds_balance": seconds})
 }
 
+// handleAdminGrantBalanceRepair reverses only ledger entries which could never
+// have represented spendable time. It does not touch purchases or ordinary
+// root-session returns. The correction is immutable and idempotent.
+func (s *Server) handleAdminGrantBalanceRepair(w http.ResponseWriter, r *http.Request) {
+	auth, ok := s.requireAuth(w, r)
+	if !ok {
+		return
+	}
+	grantID := strings.TrimSpace(r.PathValue("grant_id"))
+	if grantID == "" {
+		writeError(w, http.StatusBadRequest, "grant_id is required")
+		return
+	}
+	var clubID, playerID string
+	err := s.db.QueryRow(r.Context(), `
+		SELECT g.club_id::text, COALESCE(g.player_id, po.player_id)::text
+		FROM game_access_grants g
+		LEFT JOIN payment_orders po ON po.id=g.payment_order_id
+		WHERE g.id=$1 AND COALESCE(g.player_id, po.player_id) IS NOT NULL
+	`, grantID).Scan(&clubID, &playerID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		writeError(w, http.StatusNotFound, "profile grant not found")
+		return
+	}
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if _, ok := s.requireClubRole(w, r, auth, clubID, "owner", "manager", "admin"); !ok {
+		return
+	}
+	repaired, secondsRemoved, secondsBalance, err := s.repairKnownProfileLedgerInflation(r.Context(), playerID, clubID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	metadata, _ := json.Marshal(map[string]any{
+		"grant_id": grantID, "player_id": playerID, "repaired_entries": repaired,
+		"seconds_removed": secondsRemoved, "seconds_balance": secondsBalance,
+	})
+	_, _ = s.db.Exec(r.Context(), `INSERT INTO audit_logs(club_id,user_id,action,entity_type,entity_id,metadata) VALUES($1,$2,'admin_player_balance_integrity_repaired','game_access_grant',$3,$4)`, clubID, auth.UserID, grantID, metadata)
+	writeJSON(w, http.StatusOK, map[string]any{
+		"success": true, "grant_id": grantID, "repaired_entries": repaired,
+		"seconds_removed": secondsRemoved, "seconds_balance": secondsBalance,
+	})
+}
+
+// repairKnownProfileLedgerInflation repairs only two impossible patterns left
+// by retired Controller logic: a returned balance after an earlier start
+// refund, and a returned balance on a child extension. Extensions amend the
+// root grant, which owns the single session countdown and its return.
+func (s *Server) repairKnownProfileLedgerInflation(ctx context.Context, playerID, clubID string) (repaired, secondsRemoved, secondsBalance int, err error) {
+	tx, err := s.db.Begin(ctx)
+	if err != nil {
+		return 0, 0, 0, err
+	}
+	defer tx.Rollback(ctx)
+	units, reference, err := s.lockTimeValue(ctx, tx, playerID, clubID)
+	if err != nil {
+		return 0, 0, 0, err
+	}
+	type badReturn struct {
+		ledgerID, grantID string
+		seconds           int
+		units             int64
+	}
+	rows, err := tx.Query(ctx, `
+		SELECT l.id::text, COALESCE(l.game_access_grant_id::text,''), l.seconds_delta,
+		       COALESCE(NULLIF(l.time_value_delta,0), l.seconds_delta::bigint * $3)
+		FROM player_time_ledger l
+		LEFT JOIN game_access_grants g ON g.id=l.game_access_grant_id
+		WHERE l.player_id=$1 AND l.club_id=$2
+		  AND l.kind='session_remaining' AND l.seconds_delta > 0
+		  AND NOT EXISTS (
+			SELECT 1 FROM player_time_ledger reversal
+			WHERE reversal.idempotency_key='integrity-reversal:' || l.id::text
+		  )
+		  AND (
+			g.parent_grant_id IS NOT NULL
+			OR EXISTS (
+				SELECT 1 FROM player_time_ledger refund
+				WHERE refund.game_access_grant_id=l.game_access_grant_id
+				  AND refund.player_id=l.player_id AND refund.club_id=l.club_id
+				  AND refund.kind='session_start_refund'
+			)
+		  )
+		FOR UPDATE OF l
+	`, playerID, clubID, reference)
+	if err != nil {
+		return 0, 0, 0, err
+	}
+	bad := make([]badReturn, 0)
+	var unitsToRemove int64
+	for rows.Next() {
+		var entry badReturn
+		if err := rows.Scan(&entry.ledgerID, &entry.grantID, &entry.seconds, &entry.units); err != nil {
+			rows.Close()
+			return 0, 0, 0, err
+		}
+		if entry.units <= 0 || unitsToRemove > math.MaxInt64-entry.units {
+			rows.Close()
+			return 0, 0, 0, fmt.Errorf("invalid profile ledger correction")
+		}
+		unitsToRemove += entry.units
+		bad = append(bad, entry)
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return 0, 0, 0, err
+	}
+	rows.Close()
+	if unitsToRemove > units {
+		return 0, 0, 0, fmt.Errorf("profile ledger correction exceeds current balance")
+	}
+	for _, entry := range bad {
+		_, err = tx.Exec(ctx, `
+			INSERT INTO player_time_ledger(player_id,club_id,seconds_delta,kind,game_access_grant_id,idempotency_key,time_value_delta)
+			VALUES($1,$2,$3,'balance_integrity_reversal',NULLIF($4,'')::uuid,$5,$6)
+			ON CONFLICT(idempotency_key) DO NOTHING
+		`, playerID, clubID, -entry.seconds, entry.grantID, "integrity-reversal:"+entry.ledgerID, -entry.units)
+		if err != nil {
+			return 0, 0, 0, err
+		}
+		repaired++
+		secondsRemoved += entry.seconds
+	}
+	remainingUnits := units - unitsToRemove
+	secondsBalance, err = timeAtRate(remainingUnits, reference)
+	if err != nil {
+		return 0, 0, 0, err
+	}
+	if _, err = tx.Exec(ctx, `UPDATE player_club_balances SET time_value_units=$3,reference_price_tiyin=$4,seconds_balance=$5,updated_at=now() WHERE player_id=$1 AND club_id=$2`, playerID, clubID, remainingUnits, reference, secondsBalance); err != nil {
+		return 0, 0, 0, err
+	}
+	if err = tx.Commit(ctx); err != nil {
+		return 0, 0, 0, err
+	}
+	return repaired, secondsRemoved, secondsBalance, nil
+}
+
 // handleAdminGrantPlayerLedger exposes a narrowly scoped, read-only audit trail
 // for investigating a profile session. It intentionally starts from a grant ID
 // (not an arbitrary phone number) and returns no authentication or payment data.
@@ -7098,6 +7239,7 @@ func (s *Server) reconcileMissingProfileRemainders(ctx context.Context, playerID
 		LEFT JOIN payment_orders po ON po.id=g.payment_order_id
 		WHERE COALESCE(g.player_id, po.player_id)=$1
 		  AND g.status='ended'
+		  AND g.parent_grant_id IS NULL
 		  AND g.remaining_seconds=0
 		  AND g.ended_at IS NOT NULL
 		  AND COALESCE(

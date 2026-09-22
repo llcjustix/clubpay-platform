@@ -432,6 +432,24 @@ func TestZoneValueIntegration(t *testing.T) {
 		t.Fatalf("legacy remainder duplicated: %d %v", returns, err)
 	}
 
+	// Extensions amend the root grant's planned end. They are not independent
+	// sessions and must never receive a second "missing" remainder during a
+	// later profile refresh.
+	var childGrant string
+	if err := pool.QueryRow(ctx, `
+		INSERT INTO game_access_grants(club_id,pc_ref_id,player_id,parent_grant_id,duration_minutes,duration_seconds,status,accepted_at,planned_ends_at,ended_at,source)
+		VALUES($1,$2,$3,$4,20,1200,'ended',now(),now()+interval '20 minutes',now(),'session_extend')
+		RETURNING id
+	`, club, pc, player, legacyGrant).Scan(&childGrant); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.reconcileMissingProfileRemainders(ctx, player); err != nil {
+		t.Fatal(err)
+	}
+	if err := pool.QueryRow(ctx, `SELECT COUNT(*) FROM player_time_ledger WHERE game_access_grant_id=$1 AND kind='session_remaining'`, childGrant).Scan(&returns); err != nil || returns != 0 {
+		t.Fatalf("extension received a duplicate remainder: %d %v", returns, err)
+	}
+
 	// Some controller releases incorrectly label a manually stopped session as
 	// time_expired. Its recorded timestamp is still before the planned end, so
 	// it must be restored exactly once as well.
