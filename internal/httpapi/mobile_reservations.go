@@ -341,8 +341,10 @@ func (s *Server) handleMobileReservationStart(w http.ResponseWriter, r *http.Req
 }
 
 // reservationAllowsPlayerSession keeps a held PC private to its reservation
-// owner. Starting the reservation in ClubPay changes it to checked_in; only
-// then may that player use the normal checkout or existing-balance flow.
+// owner.  Reaching the real checkout or balance-redemption action is itself
+// an unambiguous check-in: a Cloud/edge sync can otherwise briefly restore the
+// replicated reservation as "confirmed" after the mobile start action has
+// completed, trapping its owner behind a stale intermediate state.
 func reservationAllowsPlayerSession(ctx context.Context, q interface {
 	QueryRow(context.Context, string, ...any) pgx.Row
 }, pcID, playerID string) (bool, error) {
@@ -361,7 +363,8 @@ func reservationAllowsPlayerSession(ctx context.Context, q interface {
 	if err != nil {
 		return false, err
 	}
-	return (status == "checked_in" || status == "started") && playerID != "" && reservationPlayerID == playerID, nil
+	return (status == "confirmed" || status == "checked_in" || status == "started") &&
+		playerID != "" && reservationPlayerID == playerID, nil
 }
 
 func (s *Server) handleMobileReservationCancel(w http.ResponseWriter, r *http.Request) {
