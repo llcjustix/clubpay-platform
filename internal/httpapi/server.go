@@ -227,6 +227,7 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("GET /api/admin/grants", s.handleAdminGrants)
 	mux.HandleFunc("POST /api/admin/grants/{grant_id}/end", s.handleAdminEndGrant)
 	mux.HandleFunc("POST /api/admin/grants/{grant_id}/reconcile-player-balance", s.handleAdminGrantBalanceReconcile)
+	mux.HandleFunc("GET /api/admin/grants/{grant_id}/player-ledger", s.handleAdminGrantPlayerLedger)
 	mux.HandleFunc("POST /api/admin/cash-sessions", s.handleCashSession)
 	mux.HandleFunc("GET /api/owner/summary", s.handleOwnerSummary)
 	mux.HandleFunc("POST /api/vouchers", s.handleCreateVoucher)
@@ -6227,6 +6228,72 @@ func (s *Server) handleAdminGrantBalanceReconcile(w http.ResponseWriter, r *http
 	metadata, _ := json.Marshal(map[string]any{"grant_id": grantID, "player_id": playerID, "seconds_balance": seconds})
 	_, _ = s.db.Exec(r.Context(), `INSERT INTO audit_logs(club_id,user_id,action,entity_type,entity_id,metadata) VALUES($1,$2,'admin_player_balance_reconciled','game_access_grant',$3,$4)`, clubID, auth.UserID, grantID, metadata)
 	writeJSON(w, http.StatusOK, map[string]any{"success": true, "grant_id": grantID, "seconds_balance": seconds})
+}
+
+// handleAdminGrantPlayerLedger exposes a narrowly scoped, read-only audit trail
+// for investigating a profile session. It intentionally starts from a grant ID
+// (not an arbitrary phone number) and returns no authentication or payment data.
+func (s *Server) handleAdminGrantPlayerLedger(w http.ResponseWriter, r *http.Request) {
+	auth, ok := s.requireAuth(w, r)
+	if !ok {
+		return
+	}
+	grantID := strings.TrimSpace(r.PathValue("grant_id"))
+	if grantID == "" {
+		writeError(w, http.StatusBadRequest, "grant_id is required")
+		return
+	}
+	var clubID, playerID string
+	err := s.db.QueryRow(r.Context(), `
+		SELECT g.club_id::text, COALESCE(g.player_id, po.player_id)::text
+		FROM game_access_grants g
+		LEFT JOIN payment_orders po ON po.id=g.payment_order_id
+		WHERE g.id=$1 AND COALESCE(g.player_id, po.player_id) IS NOT NULL
+	`, grantID).Scan(&clubID, &playerID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		writeError(w, http.StatusNotFound, "profile grant not found")
+		return
+	}
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if _, ok := s.requireClubRole(w, r, auth, clubID, "owner", "manager", "admin"); !ok {
+		return
+	}
+	rows, err := s.db.Query(r.Context(), `
+		SELECT id::text, seconds_delta, kind, COALESCE(game_access_grant_id::text,''),
+		       COALESCE(time_value_delta,0), created_at
+		FROM player_time_ledger
+		WHERE player_id=$1 AND club_id=$2
+		ORDER BY created_at DESC
+		LIMIT 100
+	`, playerID, clubID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	defer rows.Close()
+	entries := make([]map[string]any, 0)
+	for rows.Next() {
+		var id, entryGrantID, kind string
+		var seconds int
+		var units int64
+		var createdAt time.Time
+		if err := rows.Scan(&id, &seconds, &kind, &entryGrantID, &units, &createdAt); err != nil {
+			writeError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		entries = append(entries, map[string]any{
+			"id": id, "seconds_delta": seconds, "kind": kind, "grant_id": entryGrantID,
+			"time_value_delta": units, "created_at": createdAt,
+		})
+	}
+	if err := rows.Err(); err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"grant_id": grantID, "entries": entries})
 }
 
 // handleAgentEndSession is the player-facing equivalent of the admin "end session" action.
