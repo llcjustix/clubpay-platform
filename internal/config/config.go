@@ -21,6 +21,10 @@ type Config struct {
 	LocalDatabaseRuntimeDir string
 	AdminAPIToken           string
 	CloudBaseURL            string
+	// A JavaScript Maps key is visible in a browser/WebView by design. It is
+	// delivered to authenticated mobile clients at runtime so a locally built
+	// IPA cannot silently lose its map when a build flag is omitted.
+	YandexMapsAPIKey string
 
 	DefaultPaymentProvider string
 	MockPaymentsEnabled    bool
@@ -98,6 +102,7 @@ func Load() (Config, error) {
 		LocalDatabaseRuntimeDir:   strings.TrimSpace(env("LOCAL_DATABASE_RUNTIME_DIR", "runtime/postgres")),
 		AdminAPIToken:             env("ADMIN_API_TOKEN", ""),
 		CloudBaseURL:              strings.TrimRight(env("CLOUD_BASE_URL", ""), "/"),
+		YandexMapsAPIKey:          strings.TrimSpace(env("YANDEX_MAPS_API_KEY", "")),
 		DefaultPaymentProvider:    strings.ToLower(env("DEFAULT_PAYMENT_PROVIDER", "mock")),
 		MockPaymentsEnabled:       envBool("MOCK_PAYMENTS_ENABLED", !strings.EqualFold(appEnv, "production")),
 		ClickCheckoutURL:          strings.TrimRight(env("CLICK_CHECKOUT_URL", "https://my.click.uz/services/pay"), "/"),

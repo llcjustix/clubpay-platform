@@ -19,6 +19,11 @@ class ClubCatalogRepository {
         .toList();
   }
 
+  Future<String> mapAPIKey() async {
+    final data = await api.get('/api/mobile/map-config');
+    return (data['yandex_maps_api_key'] as String? ?? '').trim();
+  }
+
   Future<ClubCatalog> club(String id) async => ClubCatalog.fromJson(
     await api.get('/api/mobile/clubs/${Uri.encodeComponent(id)}'),
   );

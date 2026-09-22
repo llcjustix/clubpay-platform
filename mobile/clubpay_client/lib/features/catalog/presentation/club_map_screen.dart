@@ -13,8 +13,6 @@ import '../../../core/ui.dart';
 import '../domain/club_catalog.dart';
 import 'club_browser_screen.dart';
 
-const _yandexMapsKey = String.fromEnvironment('YANDEX_MAPS_API_KEY');
-
 class ClubMapScreen extends ConsumerStatefulWidget {
   const ClubMapScreen({super.key});
   @override
@@ -22,7 +20,7 @@ class ClubMapScreen extends ConsumerStatefulWidget {
 }
 
 class _ClubMapScreenState extends ConsumerState<ClubMapScreen> {
-  late Future<List<ClubSearchResult>> _clubs;
+  late Future<_MapData> _mapData;
   ClubSearchResult? _selected;
   MapPoint? _playerLocation;
   bool _locating = false;
@@ -30,8 +28,20 @@ class _ClubMapScreenState extends ConsumerState<ClubMapScreen> {
   @override
   void initState() {
     super.initState();
-    _clubs = ref.read(clubCatalogRepositoryProvider).search('');
+    _mapData = _loadMap();
     ref.read(analyticsProvider).track('club_map_opened', screen: 'club_map');
+  }
+
+  Future<_MapData> _loadMap() async {
+    final repository = ref.read(clubCatalogRepositoryProvider);
+    final values = await Future.wait([
+      repository.search(''),
+      repository.mapAPIKey(),
+    ]);
+    return _MapData(
+      clubs: values[0] as List<ClubSearchResult>,
+      apiKey: values[1] as String,
+    );
   }
 
   Future<void> _locatePlayer() async {
@@ -66,10 +76,11 @@ class _ClubMapScreenState extends ConsumerState<ClubMapScreen> {
   }
 
   @override
-  Widget build(BuildContext context) => FutureBuilder<List<ClubSearchResult>>(
-    future: _clubs,
+  Widget build(BuildContext context) => FutureBuilder<_MapData>(
+    future: _mapData,
     builder: (context, snapshot) {
-      final clubs = (snapshot.data ?? const <ClubSearchResult>[])
+      final data = snapshot.data;
+      final clubs = (data?.clubs ?? const <ClubSearchResult>[])
           .where((club) => club.latitude != null && club.longitude != null)
           .toList();
       return Scaffold(
@@ -84,7 +95,7 @@ class _ClubMapScreenState extends ConsumerState<ClubMapScreen> {
             ? const SafeArea(child: PageSkeleton(rows: 3))
             : snapshot.hasError
             ? Center(child: Text(errorLabel(context, snapshot.error!)))
-            : _yandexMapsKey.isEmpty
+            : data == null || data.apiKey.isEmpty
             ? Center(
                 child: Padding(
                   padding: const EdgeInsets.all(24),
@@ -101,6 +112,7 @@ class _ClubMapScreenState extends ConsumerState<ClubMapScreen> {
                       '${clubs.map((club) => club.id).join(',')}:$_playerLocation',
                     ),
                     clubs: clubs,
+                    apiKey: data.apiKey,
                     playerLocation: _playerLocation,
                     onClubTap: (id) {
                       final club = clubs
@@ -236,14 +248,22 @@ class MapPoint {
   String toString() => '$latitude,$longitude';
 }
 
+class _MapData {
+  const _MapData({required this.clubs, required this.apiKey});
+  final List<ClubSearchResult> clubs;
+  final String apiKey;
+}
+
 class YandexClubMap extends StatefulWidget {
   const YandexClubMap({
     super.key,
     required this.clubs,
+    required this.apiKey,
     required this.playerLocation,
     required this.onClubTap,
   });
   final List<ClubSearchResult> clubs;
+  final String apiKey;
   final MapPoint? playerLocation;
   final ValueChanged<String> onClubTap;
   @override
@@ -263,14 +283,16 @@ class _YandexClubMapState extends State<YandexClubMap> {
         'ClubPayMap',
         onMessageReceived: (message) => widget.onClubTap(message.message),
       )
-      ..loadHtmlString(_mapHTML(widget.clubs, widget.playerLocation));
+      ..loadHtmlString(
+        _mapHTML(widget.clubs, widget.playerLocation, widget.apiKey),
+      );
   }
 
   @override
   Widget build(BuildContext context) => WebViewWidget(controller: _controller);
 }
 
-String _mapHTML(List<ClubSearchResult> clubs, MapPoint? player) {
+String _mapHTML(List<ClubSearchResult> clubs, MapPoint? player, String apiKey) {
   final markers = clubs
       .map(
         (club) => {
@@ -290,5 +312,5 @@ String _mapHTML(List<ClubSearchResult> clubs, MapPoint? player) {
           'lon': clubs.firstOrNull?.longitude ?? 69.2797,
         }
       : {'lat': player.latitude, 'lon': player.longitude};
-  return '''<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no"><style>html,body,#map{margin:0;width:100%;height:100%;background:#000}.ymaps-2-1-79-map{font-family:-apple-system,BlinkMacSystemFont,sans-serif!important}</style><script src="https://api-maps.yandex.ru/2.1/?apikey=$_yandexMapsKey&lang=ru_RU"></script></head><body><div id="map"></div><script>const clubs=${jsonEncode(markers)}, center=${jsonEncode(center)}; ymaps.ready(()=>{const map=new ymaps.Map('map',{center:[center.lat,center.lon],zoom:13,controls:['zoomControl'],openBalloonOnClick:false}); clubs.forEach(c=>{const marker=new ymaps.Placemark([c.lat,c.lon],{}, {preset:c.online?'islands#violetIcon':'islands#grayIcon',openBalloonOnClick:false}); marker.events.add('click',(event)=>{event.preventDefault();window.ClubPayMap.postMessage(c.id);});map.geoObjects.add(marker);});${player == null ? '' : "map.geoObjects.add(new ymaps.Placemark([${player.latitude},${player.longitude}],{},{preset:'islands#blueCircleIcon',openBalloonOnClick:false}));"}});</script></body></html>''';
+  return '''<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no"><style>html,body,#map{margin:0;width:100%;height:100%;background:#000}.ymaps-2-1-79-map{font-family:-apple-system,BlinkMacSystemFont,sans-serif!important}</style><script src="https://api-maps.yandex.ru/2.1/?apikey=${Uri.encodeQueryComponent(apiKey)}&lang=ru_RU"></script></head><body><div id="map"></div><script>const clubs=${jsonEncode(markers)}, center=${jsonEncode(center)}; ymaps.ready(()=>{const map=new ymaps.Map('map',{center:[center.lat,center.lon],zoom:13,controls:['zoomControl'],openBalloonOnClick:false}); clubs.forEach(c=>{const marker=new ymaps.Placemark([c.lat,c.lon],{}, {preset:c.online?'islands#violetIcon':'islands#grayIcon',openBalloonOnClick:false}); marker.events.add('click',(event)=>{event.preventDefault();window.ClubPayMap.postMessage(c.id);});map.geoObjects.add(marker);});${player == null ? '' : "map.geoObjects.add(new ymaps.Placemark([${player.latitude},${player.longitude}],{},{preset:'islands#blueCircleIcon',openBalloonOnClick:false}));"}});</script></body></html>''';
 }

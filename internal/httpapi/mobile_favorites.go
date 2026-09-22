@@ -5,6 +5,19 @@ import (
 	"strings"
 )
 
+// The JavaScript Maps key is public once used inside a WebView. Fetching it
+// from Cloud at runtime, rather than compiling it into an IPA, means a manual
+// development build cannot accidentally ship without map configuration.
+func (s *Server) handleMobileMapConfig(w http.ResponseWriter, r *http.Request) {
+	if _, ok := s.requireMobile(w, r); !ok {
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"yandex_maps_api_key": s.cfg.YandexMapsAPIKey,
+		"configured":          strings.TrimSpace(s.cfg.YandexMapsAPIKey) != "",
+	})
+}
+
 func (s *Server) handleMobileFavorites(w http.ResponseWriter, r *http.Request) {
 	p, ok := s.requireMobile(w, r)
 	if !ok {
