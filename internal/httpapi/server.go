@@ -5291,13 +5291,10 @@ func (s *Server) applyPaymentSuccess(ctx context.Context, success paymentSuccess
 	extendExpiry := time.Now().UTC().Add(time.Duration(sessionDurationSeconds)*time.Second + s.sessionGraceDuration())
 	extendURL, err := s.createSessionExtendURL(ctx, order.ClubID, order.PCID, grantID, extendExpiry)
 	if err != nil {
-		_, _ = s.db.Exec(ctx, `
-			UPDATE game_access_grants
-			SET status = 'start_failed', last_error = $1
-			WHERE id = $2
-		`, err.Error(), grantID)
 		if profileBalanceSeconds > 0 {
 			s.refundPlayerBalance(ctx, profilePlayerID, order.ClubID, profileBalanceSeconds, grantID, err.Error())
+		} else {
+			_, _ = s.db.Exec(ctx, `UPDATE game_access_grants SET status='start_failed',last_error=$1 WHERE id=$2 AND status='pending'`, err.Error(), grantID)
 		}
 		return "", err
 	}
@@ -5323,15 +5320,11 @@ func (s *Server) applyPaymentSuccess(ctx context.Context, success paymentSuccess
 		CreatedAt:       time.Now().UTC().Format(time.RFC3339),
 	})
 	if err != nil {
-		s.deactivateSessionExtendQR(ctx, grantID)
-		_, _ = s.db.Exec(ctx, `
-			UPDATE game_access_grants
-			SET status = 'start_failed', last_error = $1
-			WHERE id = $2
-		`, err.Error(), grantID)
-		if profileBalanceSeconds > 0 {
-			s.refundPlayerBalance(ctx, profilePlayerID, order.ClubID, profileBalanceSeconds, grantID, err.Error())
-		}
+		// An Agent timeout is ambiguous: it may have accepted the command and
+		// emit session_started immediately afterwards. Do not refund a profile
+		// balance until a definite pre-dispatch failure; otherwise the late event
+		// starts paid time that was already returned to the player.
+		_, _ = s.db.Exec(ctx, `UPDATE game_access_grants SET last_error=$1 WHERE id=$2 AND status='pending'`, err.Error(), grantID)
 		return "", err
 	}
 	coreSessionID := startResult.CoreSessionID

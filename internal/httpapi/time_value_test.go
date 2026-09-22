@@ -374,6 +374,19 @@ func TestZoneValueIntegration(t *testing.T) {
 		t.Fatalf("ledger recorded %d seconds, want bounded %d", recordedReturn, inflatedRemaining)
 	}
 
+	// A late Agent acknowledgement must not be able to turn a timeout refund
+	// into extra player time. Accepted grants are already owned by the session
+	// lifecycle, so refundPlayerBalance is a strict pending-only operation.
+	lateGrant := createEarlyEndGrant("late-agent-acknowledgement")
+	s.refundPlayerBalance(ctx, player, club, 3600, lateGrant, "agent command timeout")
+	var refundRows int
+	if err := pool.QueryRow(ctx, `SELECT COUNT(*) FROM player_time_ledger WHERE idempotency_key='session-refund:' || $1::text`, lateGrant).Scan(&refundRows); err != nil {
+		t.Fatal(err)
+	}
+	if refundRows != 0 {
+		t.Fatal("accepted grant received a start refund")
+	}
+
 	// The asynchronous session_ended event has the same fallback when an older
 	// Agent omits the remainder from its payload.
 	eventGrant := createEarlyEndGrant("event-end-without-remaining")

@@ -572,7 +572,10 @@ func (s *Server) redeemPlayerBalanceToPC(ctx context.Context, req redeemPlayerBa
 
 	if extending {
 		if err := s.extendGrantSession(ctx, grantID, parent.ID, parent.CoreSessionID, clubID, pcID, externalPCID, seconds, "player_balance", "", ""); err != nil {
-			s.refundPlayerBalance(ctx, player.ID, clubID, seconds, grantID, err.Error())
+			// extend_session, like start_session, can time out after delivery. Keep
+			// the debit and let its resulting session_extended event or durable
+			// retry settle the child grant instead of minting a duplicate balance.
+			_, _ = s.db.Exec(ctx, `UPDATE game_access_grants SET last_error=$1 WHERE id=$2 AND status IN ('pending','applying')`, err.Error(), grantID)
 			return nil, err
 		}
 		return map[string]any{"success": true, "grant_id": grantID, "seconds_used": seconds, "minutes_used": minutes, "extended": true}, nil
@@ -593,8 +596,12 @@ func (s *Server) redeemPlayerBalanceToPC(ctx context.Context, req redeemPlayerBa
 	}
 	start, err := s.core.StartSession(ctx, core.StartSessionCommand{RequestID: "start_" + grantID, GrantID: grantID, ClubID: clubID, PCID: pcID, PCExternalID: externalPCID, DurationSeconds: seconds, DurationMinutes: minutes, GraceSeconds: s.cfg.SessionGraceSeconds, Source: "player_balance", ExtendURL: extendURL, CreatedAt: time.Now().UTC().Format(time.RFC3339)})
 	if err != nil {
-		s.deactivateSessionExtendQR(ctx, grantID)
-		s.refundPlayerBalance(ctx, player.ID, clubID, seconds, grantID, err.Error())
+		// The command can time out after the Agent has already received it. A
+		// refund here races the later session_started event: the player gets the
+		// debit back and then receives the remaining session time as well. Keep
+		// the grant pending so the durable Controller retry/event path decides
+		// whether it started; only failures before a command is sent are refunded.
+		_, _ = s.db.Exec(ctx, `UPDATE game_access_grants SET last_error=$1 WHERE id=$2 AND status='pending'`, err.Error(), grantID)
 		return nil, err
 	}
 	coreSessionID := start.CoreSessionID
@@ -620,10 +627,25 @@ func (s *Server) refundPlayerBalance(ctx context.Context, playerID, clubID strin
 		return
 	}
 	defer tx.Rollback(ctx)
+	// A refund is valid only before a session can become active. If a late Agent
+	// acknowledgement already moved this grant forward, leave its debit intact;
+	// session_started/session_ended will settle that one authoritative session.
+	var marked string
+	err = tx.QueryRow(ctx, `
+		UPDATE game_access_grants
+		SET status='start_failed', last_error=$1
+		WHERE id=$2 AND status='pending' AND core_session_id IS NULL
+		RETURNING id::text
+	`, cause, grantID).Scan(&marked)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return
+	}
+	if err != nil {
+		return
+	}
 	if err := s.recordPlayerTime(ctx, tx, playerID, clubID, seconds, "session_start_refund", grantID, "", "session-refund:"+grantID); err != nil {
 		return
 	}
-	_, _ = tx.Exec(ctx, `UPDATE game_access_grants SET status = 'start_failed', last_error = $1 WHERE id = $2`, cause, grantID)
 	_ = tx.Commit(ctx)
 }
 
