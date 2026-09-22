@@ -474,6 +474,15 @@ func TestMobileIntegration(t *testing.T) {
 	if err = pool.QueryRow(ctx, `SELECT status FROM mobile_reservations WHERE id=$1`, reservationID).Scan(&reservationStatus); err != nil || reservationStatus != "completed" {
 		t.Fatalf("reservation after Agent session end = %q, %v", reservationStatus, err)
 	}
+	// Records left by older Controllers are repaired on the next mobile or
+	// Agent bootstrap read rather than being shown as a new pending booking.
+	if _, err = pool.Exec(ctx, `UPDATE mobile_reservations SET status='confirmed',updated_at=now() WHERE id=$1`, reservationID); err != nil {
+		t.Fatal(err)
+	}
+	s.resolveCompletedReservations(ctx)
+	if err = pool.QueryRow(ctx, `SELECT status FROM mobile_reservations WHERE id=$1`, reservationID).Scan(&reservationStatus); err != nil || reservationStatus != "completed" {
+		t.Fatalf("stale reservation repair = %q, %v", reservationStatus, err)
+	}
 	balances = expect(200, "GET", "/api/mobile/balances", access, "", nil)
 	if balances["balances"].([]any)[0].(map[string]any)["seconds_balance"] != float64(321) {
 		t.Fatal("VIP round trip lost value")

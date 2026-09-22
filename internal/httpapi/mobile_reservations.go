@@ -26,6 +26,27 @@ func reservationJSON(rows []map[string]any) []map[string]any {
 	return rows
 }
 
+// resolveCompletedReservations repairs reservations created by a release that
+// did not close them when the Agent ended their profile session. The temporal
+// predicate makes this safe for a new future reservation on the same PC.
+func (s *Server) resolveCompletedReservations(ctx context.Context) {
+	_, _ = s.db.Exec(ctx, `
+		UPDATE mobile_reservations r
+		SET status='completed', updated_at=now()
+		WHERE r.status IN ('confirmed','checked_in','started')
+		  AND r.starts_at<=now()
+		  AND EXISTS (
+			SELECT 1
+			FROM game_access_grants g
+			WHERE g.player_id=r.player_id
+			  AND g.pc_ref_id=r.pc_ref_id
+			  AND g.status='ended'
+			  AND g.accepted_at>=r.starts_at-interval '15 minutes'
+			  AND COALESCE(g.ended_at, now())>=r.starts_at-interval '15 minutes'
+		)
+	`)
+}
+
 func (s *Server) handleMobileReservations(w http.ResponseWriter, r *http.Request) {
 	p, ok := s.requireMobile(w, r)
 	if !ok {
@@ -42,6 +63,7 @@ WHERE r.status='checked_in' AND EXISTS (
   SELECT 1 FROM game_access_grants g
   WHERE g.pc_ref_id=r.pc_ref_id AND g.player_id=r.player_id AND g.status='accepted'
 )`)
+	s.resolveCompletedReservations(r.Context())
 	rows, err := s.queryMaps(r.Context(), `SELECT r.id::text,r.pc_ref_id::text,r.status,r.starts_at,
  r.starts_at + make_interval(mins => r.duration_minutes) AS ends_at,
  r.starts_at - interval '15 minutes' AS held_from,

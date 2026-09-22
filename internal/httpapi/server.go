@@ -3336,6 +3336,7 @@ func (s *Server) handleCoreBootstrap(w http.ResponseWriter, r *http.Request) {
 	_, _ = s.db.Exec(r.Context(), `UPDATE mobile_reservations
 SET status='expired',updated_at=now()
 WHERE status IN ('confirmed','checked_in','started') AND starts_at + interval '15 minutes' < now()`)
+	s.resolveCompletedReservations(r.Context())
 	clubIDFilter := strings.TrimSpace(r.URL.Query().Get("club_id"))
 	if externalPCID == "" {
 		writeError(w, http.StatusBadRequest, "external_pc_id is required")
