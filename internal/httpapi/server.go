@@ -5504,7 +5504,31 @@ func (s *Server) extendGrantSession(ctx context.Context, extensionGrantID, sessi
 		return err
 	}
 
-	_, err = s.core.ExtendSession(ctx, coreSessionID, core.ExtendSessionCommand{
+	// Remember the end that was in force before dispatching the command.  The
+	// Agent emits session_extended as part of handling extend_session, so that
+	// event can reach this Controller before the command response does.  Never
+	// use the row's value after the command as an additive base: doing so adds
+	// the same extension twice (once from the event and once below), leaving
+	// mobile with a longer countdown than the Agent actually has.
+	var previousEndsAt time.Time
+	err = s.db.QueryRow(ctx, `
+		SELECT GREATEST(
+		  COALESCE(
+		    planned_ends_at,
+		    accepted_at + make_interval(secs => duration_seconds),
+		    accepted_at + make_interval(mins => duration_minutes),
+		    now()
+		  ),
+		  now()
+		)
+		FROM game_access_grants
+		WHERE id=$1 AND status='accepted' AND parent_grant_id IS NULL
+	`, sessionGrantID).Scan(&previousEndsAt)
+	if err != nil {
+		return err
+	}
+
+	extended, err := s.core.ExtendSession(ctx, coreSessionID, core.ExtendSessionCommand{
 		RequestID:      "extend_" + extensionGrantID + "_" + randomHex(4),
 		GrantID:        extensionGrantID,
 		ClubID:         clubID,
@@ -5523,6 +5547,17 @@ func (s *Server) extendGrantSession(ctx context.Context, extensionGrantID, sessi
 		`, err.Error(), extensionGrantID)
 		return err
 	}
+	// Prefer the Agent's exact deadline.  HTTP/mock adapters may only return a
+	// remaining counter, in which case calculate a fresh deadline from that
+	// counter.  The pre-command deadline is a safe last fallback and, crucially,
+	// is never read again after the Agent event may have updated the database.
+	newEndsAt := previousEndsAt.Add(time.Duration(addSeconds) * time.Second)
+	if extended.NewEndsAt != nil {
+		newEndsAt = extended.NewEndsAt.UTC()
+	} else if extended.RemainingSeconds > 0 {
+		newEndsAt = time.Now().UTC().Add(time.Duration(extended.RemainingSeconds) * time.Second)
+	}
+	newGraceEndsAt := newEndsAt.Add(s.sessionGraceDuration())
 
 	tx, err := s.db.Begin(ctx)
 	if err != nil {
@@ -5543,17 +5578,11 @@ func (s *Server) extendGrantSession(ctx context.Context, extensionGrantID, sessi
 		UPDATE game_access_grants
 		SET duration_seconds = duration_seconds + $1,
 		    duration_minutes = CEIL((duration_seconds + $1) / 60.0)::int,
-		    planned_ends_at = GREATEST(
-		      COALESCE(planned_ends_at, accepted_at + make_interval(secs => duration_seconds), accepted_at + make_interval(mins => duration_minutes), now()),
-		      now()
-		    ) + make_interval(secs => $1),
-		    grace_ends_at = GREATEST(
-		      COALESCE(planned_ends_at, accepted_at + make_interval(secs => duration_seconds), accepted_at + make_interval(mins => duration_minutes), now()),
-		      now()
-		    ) + make_interval(secs => $1 + $3),
+		    planned_ends_at = $2,
+		    grace_ends_at = $3,
 		    last_error = NULL
-		WHERE id = $2
-	`, addSeconds, sessionGrantID, int(s.sessionGraceDuration().Seconds()))
+		WHERE id = $4
+	`, addSeconds, newEndsAt, newGraceEndsAt, sessionGrantID)
 	if err != nil {
 		return err
 	}
