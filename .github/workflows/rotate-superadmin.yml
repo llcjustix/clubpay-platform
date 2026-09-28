@@ -54,3 +54,16 @@ jobs:
             1\|*) echo "Superadmin password rotated; sessions revoked" ;;
             *) echo "Expected exactly one superadmin account, got: $result" >&2; exit 1 ;;
           esac
+
+          # The database may be reachable from the runner while the public API
+          # is pointing at a different deployment. Verify the credential on the
+          # same endpoint that users log into, without printing a token/body.
+          public_status="$(printf '{\"login\":\"superadmin@clubpay.local\",\"password\":\"%s\"}' "$SUPERADMIN_BOOTSTRAP_PASSWORD" | \
+            curl --silent --show-error --output /tmp/public-login-response --write-out '%{http_code}' \
+              --request POST https://api-clubpay.justix.uz/api/auth/login \
+              --header 'Content-Type: application/json' --data-binary @-)"
+          if [ "$public_status" != "200" ]; then
+            echo "Public API rejected the newly rotated credential (HTTP $public_status)." >&2
+            exit 1
+          fi
+          echo "Public API accepted the rotated superadmin credential"
