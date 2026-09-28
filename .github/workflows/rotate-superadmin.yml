@@ -34,7 +34,7 @@ jobs:
             exit 1
           fi
 
-          result="$(docker run --rm --network "container:$api_container" \
+          result="$(docker run --rm -i --network "container:$api_container" \
             -e PGHOST="$DB_HOST" -e PGPORT="$DB_PORT" -e PGDATABASE="$DB_NAME" \
             -e PGUSER="$DB_USER" -e PGPASSWORD="$DB_PASSWORD" -e PGSSLMODE=disable \
             postgres:16-alpine psql -v ON_ERROR_STOP=1 -v "new_hash=$password_hash" -At -F '|' <<'SQL'
