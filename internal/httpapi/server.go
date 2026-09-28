@@ -300,11 +300,11 @@ func (s *Server) handleNodeStatus(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, s.nodeStatusPayload())
 }
 
-// handleNodeSync lets a freshly installed Agent ask the primary Controller for
-// an immediate cloud reconciliation before its bootstrap check. A Manager has
-// a local cache too, but must never become an authority for PC presence.
+// handleNodeSync lets a freshly installed Agent ask a local Controller for an
+// immediate cloud reconciliation before its bootstrap check. The Manager path
+// in syncEdgeOnce is pull-only; it must never publish PC presence from its cache.
 func (s *Server) handleNodeSync(w http.ResponseWriter, r *http.Request) {
-	if !s.edgeNodeMode() {
+	if !s.localNodeMode() {
 		writeError(w, http.StatusNotFound, "local synchronization is unavailable on this node")
 		return
 	}
