@@ -59,7 +59,7 @@ jobs:
           # is pointing at a different deployment. Verify the credential on the
           # same endpoint that users log into, without printing a token/body.
           public_probe="$(printf '{\"login\":\"superadmin@clubpay.local\",\"password\":\"%s\"}' "$SUPERADMIN_BOOTSTRAP_PASSWORD" | \
-            curl --noproxy '*' --silent --show-error --output /tmp/public-login-response --write-out '%{http_code}|%{remote_ip}' \
+            curl --noproxy '*' --resolve 'api-clubpay.justix.uz:443:62.238.126.214' --silent --show-error --output /tmp/public-login-response --write-out '%{http_code}|%{remote_ip}' \
               --request POST https://api-clubpay.justix.uz/api/auth/login \
               --header 'Content-Type: application/json' --data-binary @-)"
           public_status="${public_probe%%|*}"
