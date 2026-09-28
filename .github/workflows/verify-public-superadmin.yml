@@ -1,0 +1,21 @@
+name: Verify public superadmin login
+
+on:
+  workflow_dispatch:
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Verify the external API accepts the recovery credential
+        env:
+          SUPERADMIN_BOOTSTRAP_PASSWORD: ${{ secrets.SUPERADMIN_BOOTSTRAP_PASSWORD }}
+        run: |
+          set -euo pipefail
+          status="$(printf '{\"login\":\"superadmin@clubpay.local\",\"password\":\"%s\"}' "$SUPERADMIN_BOOTSTRAP_PASSWORD" | \
+            curl --silent --show-error --output /tmp/login.json --write-out '%{http_code}' \
+              --request POST https://api-clubpay.justix.uz/api/auth/login \
+              --header 'Content-Type: application/json' --data-binary @-)"
+          test "$status" = 200
+          grep -q '"token"' /tmp/login.json
+          echo 'External public login accepted'
