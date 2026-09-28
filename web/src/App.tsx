@@ -695,8 +695,8 @@ function AuthenticatedApp({ path }: { path: string }) {
 }
 
 function LoginPage({ onLogin, error }: { onLogin: (payload: AuthPayload) => void; error?: string }) {
-  const [login, setLogin] = useState('admin@clubpay.local');
-  const [password, setPassword] = useState('admin123');
+  const [login, setLogin] = useState('');
+  const [password, setPassword] = useState('');
   const [message, setMessage] = useState(error || '');
   const [loading, setLoading] = useState(false);
 
@@ -739,6 +739,7 @@ function LoginPage({ onLogin, error }: { onLogin: (payload: AuthPayload) => void
             Логин
             <input
               autoComplete="username"
+              required
               value={login}
               onChange={(event) => setLogin(event.target.value)}
               placeholder="email или телефон"
@@ -748,6 +749,7 @@ function LoginPage({ onLogin, error }: { onLogin: (payload: AuthPayload) => void
             Пароль
             <input
               autoComplete="current-password"
+              required
               value={password}
               onChange={(event) => setPassword(event.target.value)}
               type="password"
