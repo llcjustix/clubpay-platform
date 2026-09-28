@@ -72,4 +72,8 @@ jobs:
             echo "Public API rejected the newly rotated credential (HTTP $public_status)." >&2
             exit 1
           fi
+          if ! grep -q '"token"' /tmp/public-login-response; then
+            echo 'Public endpoint returned HTTP 200 but not an authentication payload.' >&2
+            exit 1
+          fi
           echo "Public API accepted the rotated superadmin credential"
