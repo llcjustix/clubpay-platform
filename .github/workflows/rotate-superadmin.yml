@@ -1,0 +1,56 @@
+name: Rotate production superadmin password
+
+on:
+  workflow_dispatch:
+
+jobs:
+  rotate:
+    runs-on:
+      group: jlearnx runner
+      labels: [self-hosted, docker, jlearnx]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Rotate password and revoke sessions
+        env:
+          DB_HOST: ${{ secrets.DB_HOST }}
+          DB_PORT: ${{ secrets.DB_PORT }}
+          DB_NAME: ${{ secrets.DB_NAME }}
+          DB_USER: ${{ secrets.DB_USER }}
+          DB_PASSWORD: ${{ secrets.DB_PASSWORD }}
+          DOCKER_USERNAME: ${{ secrets.DOCKER_USERNAME }}
+          SUPERADMIN_BOOTSTRAP_PASSWORD: ${{ secrets.SUPERADMIN_BOOTSTRAP_PASSWORD }}
+        run: |
+          set -euo pipefail
+          if [ "${#SUPERADMIN_BOOTSTRAP_PASSWORD}" -lt 32 ]; then
+            echo "SUPERADMIN_BOOTSTRAP_PASSWORD must contain at least 32 characters" >&2
+            exit 1
+          fi
+
+          password_hash="$(printf 'clubpay-demo-salt:%s' "$SUPERADMIN_BOOTSTRAP_PASSWORD" | sha256sum | cut -d ' ' -f 1)"
+          api_container="$(docker compose ps -q api)"
+          if [ -z "$api_container" ]; then
+            echo "ClubPay API container is not running" >&2
+            exit 1
+          fi
+
+          result="$(docker run --rm --network "container:$api_container" \
+            -e PGHOST="$DB_HOST" -e PGPORT="$DB_PORT" -e PGDATABASE="$DB_NAME" \
+            -e PGUSER="$DB_USER" -e PGPASSWORD="$DB_PASSWORD" -e PGSSLMODE=disable \
+            postgres:16-alpine psql -v ON_ERROR_STOP=1 -v "new_hash=$password_hash" -At -F '|' <<'SQL'
+          WITH rotated AS (
+            UPDATE users
+            SET password_hash = :'new_hash', updated_at = now()
+            WHERE lower(COALESCE(email, '')) = 'superadmin@clubpay.local'
+              AND global_role = 'super_admin'
+            RETURNING id
+          ), revoked AS (
+            DELETE FROM auth_sessions WHERE user_id IN (SELECT id FROM rotated) RETURNING id
+          )
+          SELECT (SELECT count(*) FROM rotated), (SELECT count(*) FROM revoked);
+          SQL
+          )"
+          case "$result" in
+            1\|*) echo "Superadmin password rotated; sessions revoked" ;;
+            *) echo "Expected exactly one superadmin account, got: $result" >&2; exit 1 ;;
+          esac
