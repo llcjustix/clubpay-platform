@@ -480,7 +480,6 @@ SET
   email = 'superadmin@clubpay.local',
   role = 'super_admin',
   global_role = 'super_admin',
-  password_hash = '14fc0a272b7f9316762fee996f8a553f76acdb155113f7e22020ba25c87e687c',
   status = 'active',
   updated_at = now()
 WHERE phone = '+998900000000'
@@ -491,7 +490,6 @@ UPDATE users
 SET
   email = 'owner@clubpay.local',
   role = 'owner',
-  password_hash = 'f1aacffd5fc4cd7e018dd516d1e4b2b29e8618292024e3d3995456b588f769c8',
   status = 'active',
   updated_at = now()
 WHERE phone = '+998000000000'
@@ -503,14 +501,12 @@ WHERE phone = '+998000000000'
 
 UPDATE users
 SET role = 'owner',
-    password_hash = 'f1aacffd5fc4cd7e018dd516d1e4b2b29e8618292024e3d3995456b588f769c8',
     status = 'active',
     updated_at = now()
 WHERE phone = '+998000000000';
 
 UPDATE users
 SET role = 'owner',
-    password_hash = 'f1aacffd5fc4cd7e018dd516d1e4b2b29e8618292024e3d3995456b588f769c8',
     status = 'active',
     updated_at = now()
 WHERE email IN ('owner@clubpay.local', 'owner@test.local');
@@ -519,7 +515,6 @@ UPDATE users
 SET
   email = 'admin@clubpay.local',
   role = 'admin',
-  password_hash = 'a3c75316794fb37d045f6b84db41904b645ce82593b439ace3501f86f755e6ec',
   status = 'active',
   updated_at = now()
 WHERE phone = '+998000000001'
@@ -531,14 +526,12 @@ WHERE phone = '+998000000001'
 
 UPDATE users
 SET role = 'admin',
-    password_hash = 'a3c75316794fb37d045f6b84db41904b645ce82593b439ace3501f86f755e6ec',
     status = 'active',
     updated_at = now()
 WHERE phone = '+998000000001';
 
 UPDATE users
 SET role = 'admin',
-    password_hash = 'a3c75316794fb37d045f6b84db41904b645ce82593b439ace3501f86f755e6ec',
     status = 'active',
     updated_at = now()
 WHERE email = 'admin@clubpay.local';

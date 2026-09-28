@@ -26,6 +26,7 @@ import (
 	"sync"
 	"time"
 
+	"clubpay/internal/authsecurity"
 	"clubpay/internal/config"
 	"clubpay/internal/core"
 	"clubpay/internal/payments"
@@ -441,7 +442,8 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		  )
 		LIMIT 1
 	`, req.Login).Scan(&auth.UserID, &auth.Name, &auth.Email, &auth.Phone, &auth.GlobalRole, &storedHash)
-	if errors.Is(err, pgx.ErrNoRows) || storedHash == nil || *storedHash != hashPassword(req.Password) {
+	if errors.Is(err, pgx.ErrNoRows) || storedHash == nil || *storedHash != hashPassword(req.Password) ||
+		(strings.EqualFold(s.cfg.AppEnv, "production") && authsecurity.IsPublicDemoHash(*storedHash)) {
 		writeError(w, http.StatusUnauthorized, "Неверный логин или пароль")
 		return
 	}
@@ -9348,8 +9350,7 @@ func hashToken(token string) string {
 }
 
 func hashPassword(password string) string {
-	sum := sha256.Sum256([]byte("clubpay-demo-salt:" + password))
-	return hex.EncodeToString(sum[:])
+	return authsecurity.HashPassword(password)
 }
 
 func slugify(value string) string {

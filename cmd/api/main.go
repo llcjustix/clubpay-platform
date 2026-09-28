@@ -24,6 +24,7 @@ import (
 	"syscall"
 	"time"
 
+	"clubpay/internal/authsecurity"
 	"clubpay/internal/config"
 	"clubpay/internal/core"
 	"clubpay/internal/db"
@@ -117,6 +118,13 @@ func main() {
 
 	if err := db.RunMigrations(ctx, pool, resolveMigrationsDir(*configPath)); err != nil {
 		log.Fatalf("run migrations: %v", err)
+	}
+	rotated, revoked, err := authsecurity.HardenProductionDemoAccounts(ctx, pool, cfg.AppEnv, cfg.NodeMode, os.Getenv("SUPERADMIN_BOOTSTRAP_PASSWORD"))
+	if err != nil {
+		log.Fatalf("harden production demo accounts: %v", err)
+	}
+	if rotated > 0 || revoked > 0 {
+		log.Printf("hardened %d production demo accounts and revoked %d sessions", rotated, revoked)
 	}
 
 	var coreAdapter core.Adapter = core.NewMockAdapter()

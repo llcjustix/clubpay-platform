@@ -98,6 +98,7 @@ jobs:
 
           export CORE_MODE="ws"
           export CORE_TOKEN="${{ secrets.CORE_TOKEN }}"
+          export SUPERADMIN_BOOTSTRAP_PASSWORD="${{ secrets.SUPERADMIN_BOOTSTRAP_PASSWORD }}"
           export YANDEX_MAPS_API_KEY="${{ secrets.YANDEX_MAPS_API_KEY }}"
 
           export EDGE_WOL_TOKEN="${{ secrets.EDGE_WOL_TOKEN }}"
