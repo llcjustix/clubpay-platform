@@ -58,10 +58,12 @@ jobs:
           # The database may be reachable from the runner while the public API
           # is pointing at a different deployment. Verify the credential on the
           # same endpoint that users log into, without printing a token/body.
-          public_status="$(printf '{\"login\":\"superadmin@clubpay.local\",\"password\":\"%s\"}' "$SUPERADMIN_BOOTSTRAP_PASSWORD" | \
-            curl --silent --show-error --output /tmp/public-login-response --write-out '%{http_code}' \
+          public_probe="$(printf '{\"login\":\"superadmin@clubpay.local\",\"password\":\"%s\"}' "$SUPERADMIN_BOOTSTRAP_PASSWORD" | \
+            curl --noproxy '*' --silent --show-error --output /tmp/public-login-response --write-out '%{http_code}|%{remote_ip}' \
               --request POST https://api-clubpay.justix.uz/api/auth/login \
               --header 'Content-Type: application/json' --data-binary @-)"
+          public_status="${public_probe%%|*}"
+          echo "Public API resolved to ${public_probe#*|}"
           if [ "$public_status" != "200" ]; then
             echo "Public API rejected the newly rotated credential (HTTP $public_status)." >&2
             exit 1
