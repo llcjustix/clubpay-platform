@@ -28,6 +28,10 @@ jobs:
           fi
 
           password_hash="$(printf 'clubpay-demo-salt:%s' "$SUPERADMIN_BOOTSTRAP_PASSWORD" | sha256sum | cut -d ' ' -f 1)"
+          if [ "$password_hash" != '2cfc8db01290c5016e3ea0f6c96a5056877e86007f7b3ce04537af06050e8890' ]; then
+            echo 'Configured recovery secret does not match the requested password.' >&2
+            exit 1
+          fi
           api_container="$(docker compose ps -q api)"
           if [ -z "$api_container" ]; then
             echo "ClubPay API container is not running" >&2
