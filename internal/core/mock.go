@@ -12,6 +12,7 @@ import (
 )
 
 type PCStatus struct {
+	AgentCritical    *bool      `json:"agent_critical,omitempty"`
 	ExternalPCID     string     `json:"external_pc_id"`
 	Status           string     `json:"status"`
 	CurrentSessionID string     `json:"current_session_id,omitempty"`

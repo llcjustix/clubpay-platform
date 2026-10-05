@@ -39,6 +39,8 @@ type Config struct {
 	PlatformFeeBPS         int
 	SplitPaymentsEnabled   bool
 
+	BootGuardToken   string
+	BootGuardClubID  string
 	CoreMode         string
 	CoreBaseURL      string
 	CoreToken        string
@@ -115,6 +117,8 @@ func Load() (Config, error) {
 		PaymeSecretKey:            env("PAYME_SECRET_KEY", ""),
 		PlatformFeeBPS:            envInt("PLATFORM_FEE_BPS", 0),
 		SplitPaymentsEnabled:      envBool("SPLIT_PAYMENTS_ENABLED", false),
+		BootGuardToken:            env("CPB_GUARD_TOKEN", ""),
+		BootGuardClubID:           env("CPB_GUARD_CLUB_ID", ""),
 		CoreMode:                  env("CORE_MODE", "mock"),
 		CoreBaseURL:               strings.TrimRight(env("CORE_BASE_URL", "http://controller.local:8081"), "/"),
 		CoreToken:                 env("CORE_TOKEN", ""),

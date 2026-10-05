@@ -142,6 +142,11 @@ func NewServer(cfg config.Config, db *pgxpool.Pool, coreAdapter core.Adapter) *S
 	if subscriber, ok := coreAdapter.(coreEventSubscriber); ok {
 		subscriber.SetEventHandler(server.handleCoreWSEvent)
 	}
+	if gate, ok := coreAdapter.(interface {
+		SetCommandGate(func(context.Context, string, string) (func(), error))
+	}); ok && cfg.BootGuardToken != "" {
+		gate.SetCommandGate(server.bootCommandGate)
+	}
 	return server
 }
 
@@ -179,6 +184,9 @@ func (s *Server) SetWakePCHandler(handler core.WakeHandler) {
 func (s *Server) Routes() http.Handler {
 	mux := http.NewServeMux()
 	s.mobileRoutes(mux)
+	mux.HandleFunc("POST /api/cpb/v1/stations", s.handleBootStation)
+	mux.HandleFunc("POST /api/cpb/v1/guard", s.handleBootGuard)
+	mux.HandleFunc("POST /api/cpb/v1/leases/{action}", s.handleBootLease)
 	mux.HandleFunc("GET /api/health", s.handleHealth)
 	mux.HandleFunc("GET /api/node/status", s.handleNodeStatus)
 	mux.HandleFunc("POST /api/node/sync", s.handleNodeSync)
