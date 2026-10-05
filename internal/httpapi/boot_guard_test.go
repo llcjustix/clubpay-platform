@@ -205,4 +205,16 @@ func TestBootGuardActiveAndBookingIntegration(t *testing.T) {
 	if c := request(); c != 409 {
 		t.Fatal("booking admission", c)
 	}
+	if _, e = db.Exec(ctx, "UPDATE mobile_reservations SET starts_at=now()+interval '2 hours' WHERE pc_ref_id=$1", pc); e != nil {
+		t.Fatal(e)
+	}
+	if c := request(); c != 200 {
+		t.Fatal("far booking blocked bootstrap", c)
+	}
+	if _, e = db.Exec(ctx, "UPDATE mobile_reservations SET starts_at=now()+interval '1 minute' WHERE pc_ref_id=$1", pc); e == nil {
+		t.Fatal("rescheduled booking bypassed fence")
+	}
+	if _, e = db.Exec(ctx, "UPDATE mobile_reservations SET status='cancelled' WHERE pc_ref_id=$1", pc); e != nil {
+		t.Fatal("cancellation blocked", e)
+	}
 }
