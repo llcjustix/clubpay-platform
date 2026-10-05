@@ -185,7 +185,7 @@ func (s *Server) handleBootLease(w http.ResponseWriter, r *http.Request) {
 			}
 			// New Agents explicitly report critical state. Older Agents fail closed;
 			// only the one-time, offline cold-provision case may omit it.
-			if status.AgentOnline && (status.AgentCritical == nil || *status.AgentCritical) {
+			if status.AgentOnline && (status.AgentCritical == nil || *status.AgentCritical || (status.Status != "available" && status.Status != "blocked" && status.Status != "frozen")) {
 				writeError(w, 409, "agent_critical_or_unknown")
 				return
 			}
@@ -286,7 +286,7 @@ func (s *Server) handleBootGuard(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 503, "agent_guard_unavailable")
 		return
 	}
-	critical := status.AgentOnline && (status.AgentCritical == nil || *status.AgentCritical)
+	critical := status.AgentOnline && (status.AgentCritical == nil || *status.AgentCritical || (status.Status != "available" && status.Status != "blocked" && status.Status != "frozen"))
 	busy = busy || status.CurrentSessionID != "" || status.CurrentGrantID != "" || status.RemainingSeconds > 0 || status.Status == "occupied"
 	var next *time.Time
 	if booking {
