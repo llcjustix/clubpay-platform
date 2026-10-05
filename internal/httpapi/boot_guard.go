@@ -124,6 +124,22 @@ func (s *Server) handleBootLease(w http.ResponseWriter, r *http.Request) {
 				writeError(w, 409, "lease_expired_quarantined")
 				return
 			}
+			// Recheck live critical state before each disk mutation. A held
+			// fence still permits the already-authorized powered-off phase;
+			// guest health completion separately requires a live Agent.
+			status, e := s.core.GetPCStatus(ctx, q.ExternalPCID)
+			if e != nil {
+				writeError(w, 503, "agent_guard_unavailable")
+				return
+			}
+			if status.CurrentSessionID != "" || status.CurrentGrantID != "" || status.RemainingSeconds > 0 || status.Status == "occupied" {
+				writeError(w, 409, "active_session")
+				return
+			}
+			if status.AgentOnline && (status.AgentCritical == nil || *status.AgentCritical || (status.Status != "available" && status.Status != "blocked" && status.Status != "frozen")) {
+				writeError(w, 409, "agent_critical_or_unknown")
+				return
+			}
 		} else {
 			// Explicit reconciliation can release expired authority. No automatic release.
 			_, err = tx.Exec(ctx, `UPDATE boot_guard_leases SET held=false,released_at=now() WHERE pc_ref_id=$1`, pc)

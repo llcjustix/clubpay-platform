@@ -7,6 +7,7 @@ import (
 	clubdb "clubpay/internal/db"
 	"context"
 	"encoding/json"
+	"fmt"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"net/http/httptest"
 	"os"
@@ -72,6 +73,22 @@ func TestBootGuardFencingIntegration(t *testing.T) {
 	}
 	q.LeaseID = out["lease_id"].(string)
 	q.Fence = int64(out["fence"].(float64))
+
+	critical := false
+	live := &bootStatusCore{Adapter: ws, status: core.PCStatus{AgentOnline: true, Status: "blocked", AgentCritical: &critical}}
+	server.core = live
+	if c, _ := request("/api/cpb/v1/leases/validate", q, token); c != 200 {
+		t.Fatal("valid live guard", c)
+	}
+	critical = true
+	if c, _ := request("/api/cpb/v1/leases/validate", q, token); c != 409 {
+		t.Fatal("new critical state accepted by validate", c)
+	}
+	live.err = fmt.Errorf("unavailable")
+	if c, _ := request("/api/cpb/v1/leases/validate", q, token); c != 503 {
+		t.Fatal("unavailable live guard accepted", c)
+	}
+	server.core = ws
 	if code, _ = request("/api/cpb/v1/leases/acquire", q, token); code != 200 {
 		t.Fatal("duplicate lease", code)
 	}
@@ -217,4 +234,14 @@ func TestBootGuardActiveAndBookingIntegration(t *testing.T) {
 	if _, e = db.Exec(ctx, "UPDATE mobile_reservations SET status='cancelled' WHERE pc_ref_id=$1", pc); e != nil {
 		t.Fatal("cancellation blocked", e)
 	}
+}
+
+type bootStatusCore struct {
+	core.Adapter
+	status core.PCStatus
+	err    error
+}
+
+func (c *bootStatusCore) GetPCStatus(context.Context, string) (core.PCStatus, error) {
+	return c.status, c.err
 }
