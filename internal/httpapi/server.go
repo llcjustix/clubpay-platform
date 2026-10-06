@@ -6712,6 +6712,14 @@ func (s *Server) handleCashSession(w http.ResponseWriter, r *http.Request) {
 	}
 	extendURL := strings.TrimRight(s.cfg.FrontendBaseURL, "/") + "/qr/" + extendToken
 
+	// The pending grant trigger holds the CPB advisory lock until commit.
+	// Publish the pending reservation before the WebSocket command gate takes
+	// that same lock on another connection; otherwise cash start deadlocks.
+	if err = tx.Commit(ctx); err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
 	startResult, err := s.core.StartSession(ctx, core.StartSessionCommand{
 		RequestID:       "start_" + grantID,
 		GrantID:         grantID,
@@ -6725,6 +6733,15 @@ func (s *Server) handleCashSession(w http.ResponseWriter, r *http.Request) {
 		ExtendURL:       extendURL,
 		CreatedAt:       time.Now().UTC().Format(time.RFC3339),
 	})
+	startErr := err
+	tx, err = s.db.Begin(ctx)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	defer tx.Rollback(ctx)
+	err = startErr
+
 	if err != nil {
 		_, _ = tx.Exec(ctx, `UPDATE qr_codes SET status = 'inactive' WHERE session_grant_id = $1 AND type = 'session_extend'`, grantID)
 		_, _ = tx.Exec(ctx, `
