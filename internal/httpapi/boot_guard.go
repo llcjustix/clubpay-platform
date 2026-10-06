@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 )
 
 type bootLeaseRequest struct {
@@ -316,4 +317,13 @@ func (s *Server) handleBootGuard(w http.ResponseWriter, r *http.Request) {
 		next = &n
 	}
 	writeJSON(w, 200, map[string]any{"club_id": q.ClubID, "external_pc_id": q.ExternalPCID, "agent_online": status.AgentOnline, "active_session": busy, "next_reservation_at": next, "agent_critical": critical, "observed_at": time.Now().UTC()})
+}
+
+func writeCashPersistenceError(w http.ResponseWriter, err error) {
+	var pgErr *pgconn.PgError
+	if errors.As(err, &pgErr) && pgErr.Code == "55000" && pgErr.Message == "cpb_station_fenced" {
+		writeError(w, http.StatusConflict, "cpb_station_fenced")
+		return
+	}
+	writeError(w, http.StatusInternalServerError, err.Error())
 }

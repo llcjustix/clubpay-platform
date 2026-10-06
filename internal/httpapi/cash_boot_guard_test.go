@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http/httptest"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -46,8 +47,9 @@ func TestCashStartCommitsPendingBeforeBootCommandGate(t *testing.T) {
 	if raw == "" {
 		t.Skip("requires disposable PostgreSQL")
 	}
-	for _, reject := range []bool{false, true} {
-		t.Run(fmt.Sprint("agentReject=", reject), func(t *testing.T) {
+	for _, tc := range []struct{ reject, fenced bool }{{false, false}, {true, false}, {false, true}} {
+		reject := tc.reject
+		t.Run(fmt.Sprint("agentReject=", reject, "/fenced=", tc.fenced), func(t *testing.T) {
 			ctx := context.Background()
 			admin, err := pgxpool.New(ctx, raw)
 			if err != nil {
@@ -86,6 +88,11 @@ func TestCashStartCommitsPendingBeforeBootCommandGate(t *testing.T) {
 			if _, err = pool.Exec(ctx, "INSERT INTO auth_sessions(user_id,token_hash,expires_at) VALUES($1,$2,now()+interval '1 hour')", user, hashToken(token)); err != nil {
 				t.Fatal(err)
 			}
+			if tc.fenced {
+				if _, err = pool.Exec(ctx, "INSERT INTO boot_guard_leases(pc_ref_id,command_id,lease_id,fence,expires_at,held) VALUES($1,'expired-test','test-lease',123,now()-interval '1 second',true)", pc); err != nil {
+					t.Fatal(err)
+				}
+			}
 			adapter := &cashBootGateCore{Adapter: core.NewMockAdapter(), pool: pool, startError: reject}
 			server := NewServer(config.Config{BootGuardToken: "regression-guard", BootGuardClubID: club}, pool, adapter)
 			adapter.server = server
@@ -96,6 +103,19 @@ func TestCashStartCommitsPendingBeforeBootCommandGate(t *testing.T) {
 			req.Header.Set("Authorization", "Bearer "+token)
 			w := httptest.NewRecorder()
 			server.Routes().ServeHTTP(w, req)
+			if tc.fenced {
+				if w.Code != 409 || !strings.Contains(w.Body.String(), "cpb_station_fenced") {
+					t.Fatalf("quarantine returned server failure: %d %s", w.Code, w.Body.String())
+				}
+				if adapter.pendingVisible {
+					t.Fatal("cash dispatched while held")
+				}
+				var count int
+				if err = pool.QueryRow(ctx, "SELECT (SELECT count(*) FROM cash_payments WHERE pc_ref_id=$1)+(SELECT count(*) FROM game_access_grants WHERE pc_ref_id=$1)", pc).Scan(&count); err != nil || count != 0 {
+					t.Fatal("rejected cash transaction retained rows", count, err)
+				}
+				return
+			}
 			expected := 201
 			grantStatus := "accepted"
 			if reject {

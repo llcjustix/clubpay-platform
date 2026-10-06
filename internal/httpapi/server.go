@@ -6683,7 +6683,7 @@ func (s *Server) handleCashSession(w http.ResponseWriter, r *http.Request) {
 			RETURNING id
 		`, clubID, req.PCID, cashID, extensionGrant.ID, duration, durationSeconds, extensionGrant.CoreSessionID).Scan(&extensionGrantID)
 		if err != nil {
-			writeError(w, http.StatusInternalServerError, err.Error())
+			writeCashPersistenceError(w, err)
 			return
 		}
 		if err := tx.Commit(ctx); err != nil {
@@ -6706,7 +6706,7 @@ func (s *Server) handleCashSession(w http.ResponseWriter, r *http.Request) {
 		RETURNING id
 	`, clubID, req.PCID, cashID, duration, durationSeconds).Scan(&grantID)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+		writeCashPersistenceError(w, err)
 		return
 	}
 
