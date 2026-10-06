@@ -27,6 +27,7 @@ import (
 	"time"
 
 	"clubpay/internal/authsecurity"
+	"clubpay/internal/bootpower"
 	"clubpay/internal/config"
 	"clubpay/internal/core"
 	"clubpay/internal/payments"
@@ -40,6 +41,7 @@ type Server struct {
 	cfg                  config.Config
 	db                   *pgxpool.Pool
 	core                 core.Adapter
+	bootRecovery         *bootpower.Config
 	edgeWOLRelay         http.Handler
 	wakePC               core.WakeHandler
 	edgeSyncMu           sync.Mutex
@@ -139,6 +141,14 @@ var paymeCheckoutPageTemplate = template.Must(template.New("payme-checkout").Par
 
 func NewServer(cfg config.Config, db *pgxpool.Pool, coreAdapter core.Adapter) *Server {
 	server := &Server{cfg: cfg, db: db, core: coreAdapter, agentUpdateScheduled: make(map[string]string)}
+	if cfg.BootRecoveryObserverConfig != "" {
+		// An unreadable/invalid optional observer never relaxes the default guard.
+		data, err := os.ReadFile(cfg.BootRecoveryObserverConfig)
+		var power bootpower.Config
+		if err == nil && json.Unmarshal(data, &power) == nil && power.Validate() == nil {
+			server.bootRecovery = &power
+		}
+	}
 	if subscriber, ok := coreAdapter.(coreEventSubscriber); ok {
 		subscriber.SetEventHandler(server.handleCoreWSEvent)
 	}

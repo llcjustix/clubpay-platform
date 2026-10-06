@@ -156,9 +156,13 @@ func (s *Server) handleBootLease(w http.ResponseWriter, r *http.Request) {
 			writeError(w, 503, "guard_unavailable")
 			return
 		}
-		if held && lease.CommandID != q.CommandID && q.Operation == "rollback" && q.RecoveryCommandID == lease.CommandID && q.LeaseID == lease.LeaseID && q.Fence == lease.Fence {
+		offlineRecovery := false
+		if held && !lease.ObservedAt.Before(lease.ValidUntil) && lease.CommandID != q.CommandID && q.Operation == "rollback" && q.RecoveryCommandID == lease.CommandID && q.LeaseID == lease.LeaseID && q.Fence == lease.Fence {
 			// Explicit recovery transfers the existing quarantine under the same lock.
-			// The normal live Agent/session/booking guard below is still mandatory.
+			// Scheduling checks remain mandatory. Offline recovery additionally
+			// requires a fresh independent hypervisor observation; no caller
+			// assertion or lease-expiry extension can authorize it.
+			offlineRecovery = true
 			held = false
 		}
 		if held {
@@ -192,15 +196,17 @@ func (s *Server) handleBootLease(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 			if !status.AgentOnline && !(cold && q.Operation == "bootstrap") {
-				writeError(w, 409, "agent_guard_unavailable")
-				return
+				if !offlineRecovery || s.bootRecovery == nil || s.bootRecovery.Stopped(ctx, q.ClubID, q.ExternalPCID) != nil {
+					writeError(w, 409, "agent_guard_unavailable")
+					return
+				}
 			}
 			if status.CurrentSessionID != "" || status.CurrentGrantID != "" || status.RemainingSeconds > 0 || status.Status == "occupied" {
 				writeError(w, 409, "active_session")
 				return
 			}
 			// New Agents explicitly report critical state. Older Agents fail closed;
-			// only the one-time, offline cold-provision case may omit it.
+			// an independently confirmed powered-off recovery may also omit it.
 			if status.AgentOnline && (status.AgentCritical == nil || *status.AgentCritical || (status.Status != "available" && status.Status != "blocked" && status.Status != "frozen")) {
 				writeError(w, 409, "agent_critical_or_unknown")
 				return
