@@ -87,6 +87,11 @@ func TestBootGuardFencingIntegration(t *testing.T) {
 	if c, _ := request("/api/cpb/v1/leases/validate", q, token); c != 409 {
 		t.Fatal("new critical state accepted by validate", c)
 	}
+	live.status.AgentCritical = nil
+	if c, _ := request("/api/cpb/v1/leases/validate", q, token); c != 409 {
+		t.Fatal("unknown critical state accepted", c)
+	}
+	live.status.AgentCritical = &critical
 	live.err = fmt.Errorf("unavailable")
 	if c, _ := request("/api/cpb/v1/leases/validate", q, token); c != 503 {
 		t.Fatal("unavailable live guard accepted", c)
