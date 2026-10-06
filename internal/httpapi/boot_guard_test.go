@@ -128,6 +128,20 @@ func TestBootGuardFencingIntegration(t *testing.T) {
 	if code, out = request("/api/cpb/v1/leases/release", q, token); code != 200 {
 		t.Fatal(code, out)
 	}
+	var releasedAt time.Time
+	if err := db.QueryRow(ctx, "SELECT released_at FROM boot_guard_leases WHERE pc_ref_id=$1", pc).Scan(&releasedAt); err != nil {
+		t.Fatal(err)
+	}
+	if code, _ = request("/api/cpb/v1/leases/release", q, token); code != 200 {
+		t.Fatal("lost release response cannot be retried", code)
+	}
+	var repeatedAt time.Time
+	if err := db.QueryRow(ctx, "SELECT released_at FROM boot_guard_leases WHERE pc_ref_id=$1", pc).Scan(&repeatedAt); err != nil || !releasedAt.Equal(repeatedAt) {
+		t.Fatal("release retry rewrote release time", err)
+	}
+	if code, _ = request("/api/cpb/v1/leases/validate", q, token); code != 409 {
+		t.Fatal("released authority revalidated", code)
+	}
 	q.CommandID = "next"
 	q.LeaseID = ""
 	q.Fence = 0

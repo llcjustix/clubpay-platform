@@ -115,7 +115,7 @@ func (s *Server) handleBootLease(w http.ResponseWriter, r *http.Request) {
 	err = tx.QueryRow(ctx, `SELECT command_id,lease_id,fence,expires_at,held FROM boot_guard_leases WHERE pc_ref_id=$1`, pc).Scan(&lease.CommandID, &lease.LeaseID, &lease.Fence, &lease.ValidUntil, &held)
 	action := r.PathValue("action")
 	if action == "validate" || action == "release" {
-		if err != nil || !held || lease.CommandID != q.CommandID || lease.LeaseID != q.LeaseID || lease.Fence != q.Fence {
+		if err != nil || (!held && action == "validate") || lease.CommandID != q.CommandID || lease.LeaseID != q.LeaseID || lease.Fence != q.Fence {
 			writeError(w, 409, "lease_fenced")
 			return
 		}
@@ -140,7 +140,7 @@ func (s *Server) handleBootLease(w http.ResponseWriter, r *http.Request) {
 				writeError(w, 409, "agent_critical_or_unknown")
 				return
 			}
-		} else {
+		} else if held {
 			// Explicit reconciliation can release expired authority. No automatic release.
 			_, err = tx.Exec(ctx, `UPDATE boot_guard_leases SET held=false,released_at=now() WHERE pc_ref_id=$1`, pc)
 			if err == nil {
