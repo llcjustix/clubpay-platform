@@ -75,6 +75,8 @@ type Tariff = {
 
 type PaymentProvider = 'payme' | 'click' | 'mock';
 
+type AgentControllerRoutes = { controller_url: string; fallback_controller_url: string };
+
 type AgentEnrollment = {
   filename: string;
   enrollment: {
@@ -209,6 +211,7 @@ type ClubSettings = {
 };
 
 type ClubSettingsPayload = {
+  agent_controller_routes: AgentControllerRoutes;
   club: ClubSettings;
   zones: Zone[];
   tariffs: Tariff[];
@@ -2037,23 +2040,24 @@ function SettingsPage({ auth, selectedClubID, currentPath, onClubChange, onLogou
   const [agentFallbackControllerURL, setAgentFallbackControllerURL] = useState('');
   const [failoverStatus, setFailoverStatus] = useState<ControllerFailoverStatus | null>(null);
 
-  const agentControllerURLStorageKey = selectedClubID
-    ? `${AGENT_CONTROLLER_URL_KEY}:${selectedClubID}`
-    : AGENT_CONTROLLER_URL_KEY;
-  const agentFallbackControllerURLStorageKey = selectedClubID
-    ? `${AGENT_FALLBACK_CONTROLLER_URL_KEY}:${selectedClubID}`
-    : AGENT_FALLBACK_CONTROLLER_URL_KEY;
-
-  useEffect(() => {
-    setAgentControllerURL(localStorage.getItem(agentControllerURLStorageKey) || '');
-    setAgentFallbackControllerURL(localStorage.getItem(agentFallbackControllerURLStorageKey) || '');
-  }, [agentControllerURLStorageKey, agentFallbackControllerURLStorageKey]);
+  const settingsRequestSequence = useRef(0);
+  const currentSettingsClub = useRef(selectedClubID);
+  currentSettingsClub.current = selectedClubID;
+  const [savingAgentRoutes, setSavingAgentRoutes] = useState(false);
 
   async function loadSettings() {
     if (!selectedClubID) return;
+    const requestSequence = ++settingsRequestSequence.current;
     try {
       const payload = await api<ClubSettingsPayload>(`/api/backoffice/clubs/${selectedClubID}/settings`);
+      if (currentSettingsClub.current !== selectedClubID || settingsRequestSequence.current !== requestSequence) return;
       setSettings(payload);
+      const routes = payload.agent_controller_routes;
+      // Preserve old browser-only drafts until the first explicit server save.
+      // Once the club has a saved pair, it always wins over stale browser data.
+      const hasSavedRoutes = Boolean(routes?.controller_url);
+      setAgentControllerURL(hasSavedRoutes ? routes.controller_url : localStorage.getItem(`${AGENT_CONTROLLER_URL_KEY}:${selectedClubID}`) || '');
+      setAgentFallbackControllerURL(hasSavedRoutes ? routes.fallback_controller_url : localStorage.getItem(`${AGENT_FALLBACK_CONTROLLER_URL_KEY}:${selectedClubID}`) || '');
       setClubForm(payload.club);
       setCreatingClub(false);
       setZoneForm(defaultZoneForm(payload.zones));
@@ -2071,6 +2075,7 @@ function SettingsPage({ auth, selectedClubID, currentPath, onClubChange, onLogou
       setPCZoneFilter((current) => current && payload.zones.some((zone) => zone.id === current) ? current : '');
       setError('');
     } catch (err) {
+      if (currentSettingsClub.current !== selectedClubID || settingsRequestSequence.current !== requestSequence) return;
       setError(String((err as Error).message || err));
     }
   }
@@ -2102,6 +2107,8 @@ function SettingsPage({ auth, selectedClubID, currentPath, onClubChange, onLogou
 
   useEffect(() => {
     setSettings(null);
+    setAgentControllerURL('');
+    setAgentFallbackControllerURL('');
     loadSettings();
     loadFailoverStatus();
   }, [selectedClubID]);
@@ -2162,7 +2169,7 @@ function SettingsPage({ auth, selectedClubID, currentPath, onClubChange, onLogou
       return;
     }
     setCreatingClub(true);
-    setSettings({ club: { ...EMPTY_CLUB_FORM }, zones: [], tariffs: [], pcs: [], users: [] });
+    setSettings({ agent_controller_routes: { controller_url: '', fallback_controller_url: '' }, club: { ...EMPTY_CLUB_FORM }, zones: [], tariffs: [], pcs: [], users: [] });
     setClubForm({ ...EMPTY_CLUB_FORM, network_id: network.id, network_name: network.name });
     setZoneForm(defaultZoneForm());
     setTariffForm(defaultTariffForm());
@@ -2388,13 +2395,20 @@ function SettingsPage({ auth, selectedClubID, currentPath, onClubChange, onLogou
       setError('Укажите адрес основного Local Controller перед подготовкой Agent.');
       return;
     }
+    const clubID = selectedClubID;
     try {
       setError('');
       setMessage('');
+      const saved = settings?.agent_controller_routes;
+      if (saved?.controller_url !== controllerURL || saved?.fallback_controller_url !== agentFallbackControllerURL.trim()) {
+        await persistAgentControllerRoutes();
+      }
+      if (currentSettingsClub.current !== clubID) return;
       const payload = await api<AgentEnrollment>(`/api/backoffice/pcs/${pc.id}/agent-enrollment`, {
         method: 'POST',
-        body: JSON.stringify({ controller_url: controllerURL, fallback_controller_url: agentFallbackControllerURL.trim() }),
+        body: JSON.stringify({}),
       });
+      if (currentSettingsClub.current !== clubID) return;
       downloadTextFile(
         `ClubPay-Agent-${pc.external_pc_id || pc.number}-setup.cmd`,
         windowsInstallerBootstrap({
@@ -2419,24 +2433,41 @@ function SettingsPage({ auth, selectedClubID, currentPath, onClubChange, onLogou
       );
     setMessage(`Скачан один файл установки для «${pc.label}». Перенесите только его на этот игровой ПК и откройте двойным кликом.`);
     } catch (err) {
+      if (currentSettingsClub.current !== clubID) return;
       setError(String((err as Error).message || err));
     }
   }
 
-  function saveAgentControllerURL() {
-    const controllerURL = agentControllerURL.trim();
-    if (!controllerURL) {
+  async function persistAgentControllerRoutes() {
+    const clubID = selectedClubID;
+    const routes = await api<AgentControllerRoutes>(`/api/backoffice/clubs/${clubID}/agent-controller-routes`, {
+      method: 'POST',
+      body: JSON.stringify({ controller_url: agentControllerURL.trim(), fallback_controller_url: agentFallbackControllerURL.trim() }),
+    });
+    if (currentSettingsClub.current === clubID) {
+      ++settingsRequestSequence.current;
+      setAgentControllerURL(routes.controller_url);
+      setAgentFallbackControllerURL(routes.fallback_controller_url);
+      setSettings((current) => current?.club.id === clubID ? { ...current, agent_controller_routes: routes } : current);
+    }
+  }
+
+  async function saveAgentControllerURL() {
+    if (!agentControllerURL.trim()) {
       setError('Укажите адрес основного Local Controller.');
       return;
     }
+    setSavingAgentRoutes(true);
+    const clubID = selectedClubID;
     try {
-      localStorage.setItem(agentControllerURLStorageKey, controllerURL);
-      localStorage.setItem(agentFallbackControllerURLStorageKey, agentFallbackControllerURL.trim());
-      setAgentControllerURL(controllerURL);
+      await persistAgentControllerRoutes();
+      if (currentSettingsClub.current !== clubID) return;
       setError('');
-      setMessage('Адреса основного и резервного Controller сохранены на этом Manager.');
-    } catch {
-      setError('Не удалось сохранить адрес на этом Manager.');
+      setMessage('Адреса Controller сохранены для клуба и доступны на других компьютерах.');
+    } catch (err) {
+      if (currentSettingsClub.current === clubID) setError(String((err as Error).message || err));
+    } finally {
+      setSavingAgentRoutes(false);
     }
   }
 
@@ -2746,12 +2777,12 @@ function SettingsPage({ auth, selectedClubID, currentPath, onClubChange, onLogou
             <div className="inline-editor">
               <div className="form-mode">
                 <strong>Подготовка Agent без команд</strong>
-                <span>Укажите LAN-адреса основного и резервного Controller. Для каждого ПК скачается отдельный приватный установщик: сотрудник открывает только этот файл двойным кликом.</span>
+                <span>Сохраните LAN-адреса Controller для клуба — они будут доступны на любом компьютере. Для каждого ПК скачается отдельный приватный установщик: сотрудник открывает только этот файл двойным кликом.</span>
               </div>
               <Field label="Адрес основного Local Controller" value={agentControllerURL} onChange={setAgentControllerURL} help="Например, 192.168.1.10:8080. Это внутренний адрес сети клуба, не публичный сайт. Файл привязки нельзя отправлять игрокам или в чат." />
               <Field label="Адрес резервного Manager Controller" value={agentFallbackControllerURL} onChange={setAgentFallbackControllerURL} help="Например, 192.168.1.11:8080. Agent подключится сюда, если основной Controller недоступен." />
               <div className="button-row">
-                <Button size="sm" variant="secondary" icon={<Save size={14} />} onClick={saveAgentControllerURL}>Сохранить адрес</Button>
+                <Button size="sm" variant="secondary" icon={<Save size={14} />} disabled={savingAgentRoutes} onClick={saveAgentControllerURL}>Сохранить адреса</Button>
               </div>
             </div>
             <div className="table-filter">
@@ -2782,7 +2813,7 @@ function SettingsPage({ auth, selectedClubID, currentPath, onClubChange, onLogou
                       <td>
                         <div className="row-actions">
                           <Button size="sm" variant="ghost" icon={<QrCode size={14} />} onClick={() => printPCQR(pc)}>Печать</Button>
-                          <Button size="sm" variant="secondary" icon={<Download size={14} />} onClick={() => downloadAgentEnrollment(pc)}>Скачать Agent (1 файл)</Button>
+                          <Button size="sm" variant="secondary" icon={<Download size={14} />} disabled={savingAgentRoutes} onClick={() => downloadAgentEnrollment(pc)}>Скачать Agent (1 файл)</Button>
                           <Button size="sm" variant="ghost" icon={<RefreshCw size={14} />} onClick={() => rotatePCQR(pc)}>Перевыпустить</Button>
                           <Button size="sm" variant="ghost" onClick={() => { setPCForm(pc); setShowPCForm(true); }}>Изменить</Button>
                         </div>
