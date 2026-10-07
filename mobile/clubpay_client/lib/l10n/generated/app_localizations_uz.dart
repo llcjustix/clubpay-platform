@@ -287,6 +287,18 @@ class AppLocalizationsUz extends AppLocalizations {
       'Takroriy to‘lov yaratmang. Holatni yana tekshiring.';
 
   @override
+  String get pcAlreadyOnline =>
+      'Kompyuter allaqachon onlayn. Holati yangilanmoqda.';
+
+  @override
+  String get pcNotFound =>
+      'Kompyuter topilmadi. Kompyuterlar ro‘yxatini yangilang.';
+
+  @override
+  String get pcWakeUnavailable =>
+      'Kompyuterni yoqish buyrug‘ini yuborib bo‘lmadi. Holatini tekshiring yoki klub administratoriga murojaat qiling.';
+
+  @override
   String get language => 'Til';
 
   @override

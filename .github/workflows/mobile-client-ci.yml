@@ -1,0 +1,29 @@
+name: Mobile client CI
+on:
+  pull_request:
+    paths:
+      - 'mobile/clubpay_client/**'
+      - '.github/workflows/mobile-client-ci.yml'
+  push:
+    branches: ['codex/mobile-pc-wake-errors']
+permissions:
+  contents: read
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: mobile/clubpay_client
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.44.6'
+          channel: stable
+          cache: true
+      - run: flutter pub get
+      - run: flutter gen-l10n
+      - run: git diff --exit-code -- lib/l10n/generated
+      - run: flutter analyze
+      - run: flutter test --no-pub
+      - run: flutter build web --release --no-pub

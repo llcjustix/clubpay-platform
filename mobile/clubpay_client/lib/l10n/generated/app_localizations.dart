@@ -596,6 +596,24 @@ abstract class AppLocalizations {
   /// **'Не создавайте повторную оплату. Проверьте статус ещё раз.'**
   String get operationHelp;
 
+  /// No description provided for @pcAlreadyOnline.
+  ///
+  /// In ru, this message translates to:
+  /// **'ПК уже на связи. Обновляем его статус.'**
+  String get pcAlreadyOnline;
+
+  /// No description provided for @pcNotFound.
+  ///
+  /// In ru, this message translates to:
+  /// **'ПК не найден. Обновите список компьютеров.'**
+  String get pcNotFound;
+
+  /// No description provided for @pcWakeUnavailable.
+  ///
+  /// In ru, this message translates to:
+  /// **'Не удалось отправить команду включения ПК. Проверьте его статус или обратитесь к администратору клуба.'**
+  String get pcWakeUnavailable;
+
   /// No description provided for @language.
   ///
   /// In ru, this message translates to:

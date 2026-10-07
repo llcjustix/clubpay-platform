@@ -627,9 +627,12 @@ class _ClubDetailScreenState extends ConsumerState<ClubDetailScreen> {
     super.dispose();
   }
 
-  void _reload() => setState(
-    () => _club = ref.read(clubCatalogRepositoryProvider).club(widget.clubId),
-  );
+  void _reload() {
+    final club = ref.read(clubCatalogRepositoryProvider).club(widget.clubId);
+    setState(() {
+      _club = club;
+    });
+  }
 
   Future<void> _toggleFavorite(ClubCatalog club) async {
     try {
@@ -654,6 +657,10 @@ class _ClubDetailScreenState extends ConsumerState<ClubDetailScreen> {
       }
     } catch (error) {
       if (mounted) showFailure(context, error);
+    } finally {
+      // A stale catalog can show an online PC as wakeable. Refresh from the
+      // server after both a wake acknowledgement and an online/conflict reply.
+      if (mounted) _reload();
     }
   }
 
