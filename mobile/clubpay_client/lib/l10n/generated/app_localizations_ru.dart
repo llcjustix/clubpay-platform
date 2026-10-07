@@ -302,6 +302,16 @@ class AppLocalizationsRu extends AppLocalizations {
       'Не создавайте повторную оплату. Проверьте статус ещё раз.';
 
   @override
+  String get pcAlreadyOnline => 'ПК уже на связи. Обновляем его статус.';
+
+  @override
+  String get pcNotFound => 'ПК не найден. Обновите список компьютеров.';
+
+  @override
+  String get pcWakeUnavailable =>
+      'Не удалось отправить команду включения ПК. Проверьте его статус или обратитесь к администратору клуба.';
+
+  @override
   String get language => 'Язык';
 
   @override
