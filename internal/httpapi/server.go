@@ -27,6 +27,7 @@ import (
 	"time"
 
 	"clubpay/internal/authsecurity"
+	"clubpay/internal/bootpower"
 	"clubpay/internal/config"
 	"clubpay/internal/core"
 	"clubpay/internal/payments"
@@ -40,6 +41,7 @@ type Server struct {
 	cfg                  config.Config
 	db                   *pgxpool.Pool
 	core                 core.Adapter
+	bootRecovery         *bootpower.Config
 	edgeWOLRelay         http.Handler
 	wakePC               core.WakeHandler
 	edgeSyncMu           sync.Mutex
@@ -139,8 +141,21 @@ var paymeCheckoutPageTemplate = template.Must(template.New("payme-checkout").Par
 
 func NewServer(cfg config.Config, db *pgxpool.Pool, coreAdapter core.Adapter) *Server {
 	server := &Server{cfg: cfg, db: db, core: coreAdapter, agentUpdateScheduled: make(map[string]string)}
+	if cfg.BootRecoveryObserverConfig != "" {
+		// An unreadable/invalid optional observer never relaxes the default guard.
+		data, err := os.ReadFile(cfg.BootRecoveryObserverConfig)
+		var power bootpower.Config
+		if err == nil && json.Unmarshal(data, &power) == nil && power.Validate() == nil {
+			server.bootRecovery = &power
+		}
+	}
 	if subscriber, ok := coreAdapter.(coreEventSubscriber); ok {
 		subscriber.SetEventHandler(server.handleCoreWSEvent)
+	}
+	if gate, ok := coreAdapter.(interface {
+		SetCommandGate(func(context.Context, string, string) (func(), error))
+	}); ok && cfg.BootGuardToken != "" {
+		gate.SetCommandGate(server.bootCommandGate)
 	}
 	return server
 }
@@ -179,6 +194,9 @@ func (s *Server) SetWakePCHandler(handler core.WakeHandler) {
 func (s *Server) Routes() http.Handler {
 	mux := http.NewServeMux()
 	s.mobileRoutes(mux)
+	mux.HandleFunc("POST /api/cpb/v1/stations", s.handleBootStation)
+	mux.HandleFunc("POST /api/cpb/v1/guard", s.handleBootGuard)
+	mux.HandleFunc("POST /api/cpb/v1/leases/{action}", s.handleBootLease)
 	mux.HandleFunc("GET /api/health", s.handleHealth)
 	mux.HandleFunc("GET /api/node/status", s.handleNodeStatus)
 	mux.HandleFunc("POST /api/node/sync", s.handleNodeSync)
@@ -6668,7 +6686,7 @@ func (s *Server) handleCashSession(w http.ResponseWriter, r *http.Request) {
 			RETURNING id
 		`, clubID, req.PCID, cashID, extensionGrant.ID, duration, durationSeconds, extensionGrant.CoreSessionID).Scan(&extensionGrantID)
 		if err != nil {
-			writeError(w, http.StatusInternalServerError, err.Error())
+			writeCashPersistenceError(w, err)
 			return
 		}
 		if err := tx.Commit(ctx); err != nil {
@@ -6691,7 +6709,7 @@ func (s *Server) handleCashSession(w http.ResponseWriter, r *http.Request) {
 		RETURNING id
 	`, clubID, req.PCID, cashID, duration, durationSeconds).Scan(&grantID)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+		writeCashPersistenceError(w, err)
 		return
 	}
 
@@ -6707,6 +6725,14 @@ func (s *Server) handleCashSession(w http.ResponseWriter, r *http.Request) {
 	}
 	extendURL := strings.TrimRight(s.cfg.FrontendBaseURL, "/") + "/qr/" + extendToken
 
+	// The pending grant trigger holds the CPB advisory lock until commit.
+	// Publish the pending reservation before the WebSocket command gate takes
+	// that same lock on another connection; otherwise cash start deadlocks.
+	if err = tx.Commit(ctx); err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
 	startResult, err := s.core.StartSession(ctx, core.StartSessionCommand{
 		RequestID:       "start_" + grantID,
 		GrantID:         grantID,
@@ -6720,6 +6746,15 @@ func (s *Server) handleCashSession(w http.ResponseWriter, r *http.Request) {
 		ExtendURL:       extendURL,
 		CreatedAt:       time.Now().UTC().Format(time.RFC3339),
 	})
+	startErr := err
+	tx, err = s.db.Begin(ctx)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	defer tx.Rollback(ctx)
+	err = startErr
+
 	if err != nil {
 		_, _ = tx.Exec(ctx, `UPDATE qr_codes SET status = 'inactive' WHERE session_grant_id = $1 AND type = 'session_extend'`, grantID)
 		_, _ = tx.Exec(ctx, `
