@@ -1,6 +1,12 @@
 name: Read-only ClubPay database size diagnostic
 
 on:
+  workflow_dispatch:
+    inputs:
+      expected_api_commit:
+        description: Verified deployed API commit (40-character SHA)
+        required: true
+        type: string
   push:
     branches: [codex/db-size-diagnostic-20261010]
     paths:
@@ -30,9 +36,13 @@ jobs:
           PGUSER: ${{ secrets.DB_USER }}
           PGPASSWORD: ${{ secrets.DB_PASSWORD }}
           DOCKER_USERNAME: ${{ secrets.DOCKER_USERNAME }}
-          EXPECTED_API_COMMIT: 17a050f7fb5dafd958358e48ca1dee01723e987f
+          EXPECTED_API_COMMIT: ${{ inputs.expected_api_commit || '17a050f7fb5dafd958358e48ca1dee01723e987f' }}
         run: |
           set -euo pipefail
+          if [[ ! "$EXPECTED_API_COMMIT" =~ ^[a-f0-9]{40}$ ]]; then
+            echo "A verified deployed API SHA is required" >&2
+            exit 1
+          fi
           for variable in PGHOST PGPORT PGDATABASE PGUSER PGPASSWORD DOCKER_USERNAME; do
             if [ -z "${!variable}" ]; then
               echo "Required connection setting is unavailable" >&2

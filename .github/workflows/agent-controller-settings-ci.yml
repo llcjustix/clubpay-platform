@@ -31,10 +31,10 @@ jobs:
           cache-dependency-path: web/package-lock.json
       - run: go vet ./...
       - run: go test -race ./...
-      - name: Verify durable routes and migration against PostgreSQL
+      - name: Verify durable routes and snapshot storage against PostgreSQL
         env:
           MOBILE_TEST_DATABASE_URL: postgres://routes_test:disposable_routes_ci@127.0.0.1:5432/routes_test?sslmode=disable
-        run: go test -race ./internal/httpapi -run TestAgentControllerRoutes -count=1 -v
+        run: go test -race ./internal/httpapi -run 'TestAgentControllerRoutes|TestEdgeSnapshot' -count=1 -v
       - name: Build Web
         working-directory: web
         run: |

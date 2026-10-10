@@ -48,6 +48,14 @@ ORDER BY name;
 -- table. Counts below refer only to sampled rows, never exact event totals.
 SELECT to_regclass('public.core_events') IS NOT NULL AS has_core_events \gset
 \if :has_core_events
+SELECT pg_size_pretty(pg_relation_size(c.oid)) AS main_heap,
+       pg_size_pretty(pg_total_relation_size(c.reltoastrelid)) AS toast_with_indexes
+FROM pg_class c WHERE c.oid='public.core_events'::regclass;
+SELECT count(*) FILTER (WHERE event_type='edge_edge_snapshot') AS snapshots_last_two_minutes,
+       count(*) FILTER (WHERE event_type<>'edge_edge_snapshot') AS other_events_last_two_minutes,
+       max(created_at) FILTER (WHERE event_type='edge_edge_snapshot') AS latest_recent_snapshot
+FROM public.core_events
+WHERE created_at >= now() - interval '2 minutes';
 SELECT event_type, count(*) AS sampled_rows,
        round(avg(pg_column_size(payload))) AS average_stored_payload_bytes,
        min(created_at) AS first_sample_timestamp,
@@ -56,5 +64,11 @@ FROM public.core_events TABLESAMPLE SYSTEM (0.01) REPEATABLE (20261010)
 GROUP BY event_type
 ORDER BY sampled_rows DESC
 LIMIT 20;
+\endif
+SELECT to_regclass('public.clubs') IS NOT NULL AS has_clubs \gset
+\if :has_clubs
+SELECT max(controller_synced_at) AS latest_controller_sync,
+       count(*) FILTER (WHERE controller_synced_at >= now() - interval '2 minutes') AS recently_synchronized_clubs
+FROM public.clubs;
 \endif
 COMMIT;
