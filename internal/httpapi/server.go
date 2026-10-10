@@ -3552,16 +3552,23 @@ func (s *Server) handleEdgeEvents(w http.ResponseWriter, r *http.Request) {
 		if !accepted {
 			continue
 		}
-		payload, _ := json.Marshal(event.Payload)
+		// A snapshot is reconciliation input, not a historical event. Controllers
+		// send the entire growing club history with a new ID every sync cycle;
+		// archiving those payloads multiplies database size indefinitely. Apply
+		// snapshots below without retaining a copy or even a per-cycle journal
+		// row. Session, payment and presence events retain their existing journal.
 		occurredAt := parseOptionalTime(event.OccurredAt)
-		_, err := s.db.Exec(r.Context(), `
-			INSERT INTO core_events (event_id, event_type, club_id, external_pc_id, core_session_id, grant_id, payload, occurred_at, status, processed_at)
-			VALUES ($1, $2, $3, $4, $5, NULLIF($6, '')::uuid, $7, $8, 'processed', now())
-			ON CONFLICT (event_id) DO NOTHING
-		`, event.EventID, "edge_"+event.Type, req.ClubID, event.ExternalPCID, event.CoreSessionID, event.GrantID, payload, occurredAt)
-		if err != nil {
-			writeError(w, http.StatusBadRequest, err.Error())
-			return
+		if event.Type != "edge_snapshot" {
+			payload, _ := json.Marshal(event.Payload)
+			_, err := s.db.Exec(r.Context(), `
+				INSERT INTO core_events (event_id, event_type, club_id, external_pc_id, core_session_id, grant_id, payload, occurred_at, status, processed_at)
+				VALUES ($1, $2, $3, $4, $5, NULLIF($6, '')::uuid, $7, $8, 'processed', now())
+				ON CONFLICT (event_id) DO NOTHING
+			`, event.EventID, "edge_"+event.Type, req.ClubID, event.ExternalPCID, event.CoreSessionID, event.GrantID, payload, occurredAt)
+			if err != nil {
+				writeError(w, http.StatusBadRequest, err.Error())
+				return
+			}
 		}
 		switch event.Type {
 		case "edge_snapshot":
