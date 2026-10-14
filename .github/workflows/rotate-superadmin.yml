@@ -23,6 +23,8 @@ jobs:
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@v4
+      - name: Verify recovery scope regression tests
+        run: python3 scripts/diagnostics/test-superadmin-runtime.py
       - name: Inspect running API authority or perform explicitly authorized reset
         env:
           DB_HOST: ${{ secrets.DB_HOST }}

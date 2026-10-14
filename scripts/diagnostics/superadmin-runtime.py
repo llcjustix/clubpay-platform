@@ -4,7 +4,7 @@ def connection_environment(item, original):
     values=dict(x.split('=',1) for x in item['Config']['Env'] if '=' in x)
     u=urllib.parse.urlsplit(values.get('DATABASE_URL',''))
     if u.scheme not in ('postgres','postgresql') or u.path!='/clubpay' or not u.hostname:raise ValueError('Unexpected running API database')
-    e=dict(original);e.update(PGHOST=u.hostname,PGPORT=str(u.port or 5432),PGDATABASE='clubpay',PGUSER=urllib.parse.unquote(u.username or ''),PGPASSWORD=urllib.parse.unquote(u.password or ''),PGSSLMODE='disable',PGCONNECT_TIMEOUT='5',PGAPPNAME='clubpay-authorized-superadmin-recovery')
+    e=dict(original);e.update(PGHOST=u.hostname,PGPORT=str(u.port or 5432),PGDATABASE='clubpay',PGUSER=urllib.parse.unquote(u.username or ''),PGPASSWORD=urllib.parse.unquote(u.password or ''),PGSSLMODE=urllib.parse.parse_qs(u.query).get('sslmode',['prefer'])[0],PGCONNECT_TIMEOUT='5',PGAPPNAME='clubpay-authorized-superadmin-recovery')
     if not e['PGUSER'] or not e['PGPASSWORD']:raise ValueError('Incomplete API connection')
     return e
 
