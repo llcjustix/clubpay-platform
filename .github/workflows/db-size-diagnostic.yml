@@ -1,0 +1,77 @@
+name: Read-only ClubPay database size diagnostic
+
+on:
+  workflow_dispatch:
+    inputs:
+      expected_api_commit:
+        description: Verified deployed API commit (40-character SHA)
+        required: true
+        type: string
+  push:
+    branches: [codex/db-size-diagnostic-20261010]
+    paths:
+      - .github/workflows/db-size-diagnostic.yml
+      - scripts/diagnostics/db-size-readonly.sql
+
+permissions:
+  contents: read
+
+concurrency:
+  group: clubpay-db-size-diagnostic
+  cancel-in-progress: false
+
+jobs:
+  inspect:
+    runs-on:
+      group: jlearnx runner
+      labels: [self-hosted, docker, jlearnx]
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: Read relation sizes and aggregate statistics
+        env:
+          PGHOST: ${{ secrets.DB_HOST }}
+          PGPORT: ${{ secrets.DB_PORT }}
+          PGDATABASE: ${{ secrets.DB_NAME }}
+          PGUSER: ${{ secrets.DB_USER }}
+          PGPASSWORD: ${{ secrets.DB_PASSWORD }}
+          DOCKER_USERNAME: ${{ secrets.DOCKER_USERNAME }}
+          EXPECTED_API_COMMIT: ${{ inputs.expected_api_commit || '17a050f7fb5dafd958358e48ca1dee01723e987f' }}
+        run: |
+          set -euo pipefail
+          if [[ ! "$EXPECTED_API_COMMIT" =~ ^[a-f0-9]{40}$ ]]; then
+            echo "A verified deployed API SHA is required" >&2
+            exit 1
+          fi
+          for variable in PGHOST PGPORT PGDATABASE PGUSER PGPASSWORD DOCKER_USERNAME; do
+            if [ -z "${!variable}" ]; then
+              echo "Required connection setting is unavailable" >&2
+              exit 1
+            fi
+          done
+          if [ "$PGDATABASE" != clubpay ]; then
+            echo "Refusing to inspect a database other than clubpay" >&2
+            exit 1
+          fi
+          mapfile -t api_containers < <(docker ps \
+            --filter "ancestor=$DOCKER_USERNAME/clubpay-api:$EXPECTED_API_COMMIT" \
+            --filter label=com.docker.compose.service=api --format '{{.ID}}')
+          if [ "${#api_containers[@]}" -ne 1 ]; then
+            echo "Expected exactly one running API at the verified deployed commit" >&2
+            exit 1
+          fi
+          docker run --rm -i --network "container:${api_containers[0]}" \
+            --memory 128m --cpus 0.25 \
+            -e PGHOST -e PGPORT -e PGDATABASE -e PGUSER -e PGPASSWORD \
+            -e PGSSLMODE=disable -e PGCONNECT_TIMEOUT=5 \
+            -e PGAPPNAME=clubpay-size-readonly-diagnostic \
+            -e 'PGOPTIONS=-c default_transaction_read_only=on -c statement_timeout=15000 -c lock_timeout=2000' \
+            postgres:16-alpine psql -X --no-password -v ON_ERROR_STOP=1 \
+            < scripts/diagnostics/db-size-readonly.sql \
+            | tee "$RUNNER_TEMP/clubpay-db-size-$GITHUB_RUN_ID.txt"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: clubpay-db-size-readonly
+          path: ${{ runner.temp }}/clubpay-db-size-${{ github.run_id }}.txt
+          if-no-files-found: error
+          retention-days: 7

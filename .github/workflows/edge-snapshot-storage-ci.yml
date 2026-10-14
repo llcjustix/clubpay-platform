@@ -1,0 +1,43 @@
+name: Edge snapshot storage CI
+on:
+  pull_request:
+  push:
+    branches: [codex/db-size-diagnostic-20261010]
+    paths:
+      - internal/httpapi/**
+      - scripts/diagnostics/**
+      - .github/workflows/edge-snapshot-storage-ci.yml
+permissions:
+  contents: read
+jobs:
+  postgres18:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:18
+        env:
+          POSTGRES_USER: snapshot_test
+          POSTGRES_PASSWORD: disposable_snapshot_ci
+          POSTGRES_DB: clubpay
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd pg_isready --health-interval 5s
+          --health-timeout 5s --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: Verify synchronization and event history on production PostgreSQL major
+        env:
+          MOBILE_TEST_DATABASE_URL: postgres://snapshot_test:disposable_snapshot_ci@127.0.0.1:5432/clubpay?sslmode=disable
+        run: go test -race ./internal/httpapi -run 'TestEdgeSnapshot|TestAgentControllerRoutes' -count=1 -v
+      - name: Verify selective cleanup against disposable PostgreSQL
+        env:
+          PGHOST: 127.0.0.1
+          PGPORT: '5432'
+          PGUSER: snapshot_test
+          PGPASSWORD: disposable_snapshot_ci
+          PGDATABASE: clubpay
+          SNAPSHOT_PURGE_DISPOSABLE_TEST: '1'
+        run: bash scripts/diagnostics/test-purge-edge-snapshots.sh

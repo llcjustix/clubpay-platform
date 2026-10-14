@@ -264,6 +264,7 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("POST /api/backoffice/networks", s.handleBackofficeCreateNetwork)
 	mux.HandleFunc("POST /api/backoffice/networks/{network_id}", s.handleBackofficeUpdateNetwork)
 	mux.HandleFunc("GET /api/backoffice/clubs/{club_id}/settings", s.handleBackofficeClubSettings)
+	mux.HandleFunc("POST /api/backoffice/clubs/{club_id}/agent-controller-routes", s.handleBackofficeSaveAgentControllerRoutes)
 	mux.HandleFunc("GET /api/backoffice/clubs/{club_id}/launcher-apps", s.handleBackofficeLauncherApps)
 	mux.HandleFunc("POST /api/backoffice/launcher-apps/{app_id}/category", s.handleBackofficeLauncherAppCategory)
 	mux.HandleFunc("POST /api/backoffice/clubs/{club_id}", s.handleBackofficeUpdateClub)
@@ -1369,22 +1370,21 @@ func (s *Server) handleBackofficeAgentEnrollment(w http.ResponseWriter, r *http.
 		writeError(w, http.StatusBadRequest, "invalid json")
 		return
 	}
-	controllerURL, err := normalizeAgentControllerURL(req.ControllerURL)
+	// A fresh browser can request an installer without knowing the LAN pair.
+	// Explicit addresses remain supported for older deployment clients.
+	if strings.TrimSpace(req.ControllerURL) == "" && strings.TrimSpace(req.FallbackControllerURL) == "" {
+		req, err = s.agentControllerRoutes(r.Context(), clubID)
+		if err != nil {
+			writeAgentRoutesReadError(w, err)
+			return
+		}
+	}
+	routes, err := normalizeAgentControllerRoutes(req)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	fallbackControllerURL := ""
-	if strings.TrimSpace(req.FallbackControllerURL) != "" {
-		fallbackControllerURL, err = normalizeAgentControllerURL(req.FallbackControllerURL)
-		if err != nil {
-			writeError(w, http.StatusBadRequest, "fallback_controller_url: "+err.Error())
-			return
-		}
-		if fallbackControllerURL == controllerURL {
-			fallbackControllerURL = ""
-		}
-	}
+	controllerURL, fallbackControllerURL := routes.ControllerURL, routes.FallbackControllerURL
 
 	var externalPCID string
 	err = s.db.QueryRow(r.Context(), `
@@ -3570,16 +3570,23 @@ func (s *Server) handleEdgeEvents(w http.ResponseWriter, r *http.Request) {
 		if !accepted {
 			continue
 		}
-		payload, _ := json.Marshal(event.Payload)
+		// A snapshot is reconciliation input, not a historical event. Controllers
+		// send the entire growing club history with a new ID every sync cycle;
+		// archiving those payloads multiplies database size indefinitely. Apply
+		// snapshots below without retaining a copy or even a per-cycle journal
+		// row. Session, payment and presence events retain their existing journal.
 		occurredAt := parseOptionalTime(event.OccurredAt)
-		_, err := s.db.Exec(r.Context(), `
-			INSERT INTO core_events (event_id, event_type, club_id, external_pc_id, core_session_id, grant_id, payload, occurred_at, status, processed_at)
-			VALUES ($1, $2, $3, $4, $5, NULLIF($6, '')::uuid, $7, $8, 'processed', now())
-			ON CONFLICT (event_id) DO NOTHING
-		`, event.EventID, "edge_"+event.Type, req.ClubID, event.ExternalPCID, event.CoreSessionID, event.GrantID, payload, occurredAt)
-		if err != nil {
-			writeError(w, http.StatusBadRequest, err.Error())
-			return
+		if event.Type != "edge_snapshot" {
+			payload, _ := json.Marshal(event.Payload)
+			_, err := s.db.Exec(r.Context(), `
+				INSERT INTO core_events (event_id, event_type, club_id, external_pc_id, core_session_id, grant_id, payload, occurred_at, status, processed_at)
+				VALUES ($1, $2, $3, $4, $5, NULLIF($6, '')::uuid, $7, $8, 'processed', now())
+				ON CONFLICT (event_id) DO NOTHING
+			`, event.EventID, "edge_"+event.Type, req.ClubID, event.ExternalPCID, event.CoreSessionID, event.GrantID, payload, occurredAt)
+			if err != nil {
+				writeError(w, http.StatusBadRequest, err.Error())
+				return
+			}
 		}
 		switch event.Type {
 		case "edge_snapshot":
@@ -4459,7 +4466,7 @@ func (s *Server) edgeSnapshotData(ctx context.Context, clubID string, includeTec
 	clubRows, err := s.queryMaps(ctx, `
 		SELECT id, name, COALESCE(slug, '') AS slug, COALESCE(legal_name, '') AS legal_name,
 		       COALESCE(tin, '') AS tin, COALESCE(address, '') AS address,
-		       timezone, status,
+		       timezone, status, agent_primary_controller_url, agent_fallback_controller_url,
 		       COALESCE(click_merchant_id, '') AS click_merchant_id,
 		       COALESCE(click_service_id, '') AS click_service_id,
 		       COALESCE(click_merchant_user_id, '') AS click_merchant_user_id,
@@ -4753,19 +4760,22 @@ func (s *Server) applyEdgeSnapshotData(ctx context.Context, clubID string, paylo
 			WITH input AS (
 				SELECT * FROM jsonb_to_recordset($1::jsonb) AS x(
 					id uuid, name text, slug text, legal_name text, tin text, address text,
-					timezone text, status text, click_merchant_id text, click_service_id text,
+					timezone text, status text, agent_primary_controller_url text, agent_fallback_controller_url text, click_merchant_id text, click_service_id text,
 					click_merchant_user_id text, click_secret_key text, click_club_cntrg_id text, click_platform_cntrg_id text,
 					payme_merchant_id text, payme_secret_key text, payme_club_receiver_id text, payme_platform_receiver_id text,
 					platform_fee_bps int, ofd_mxik text, ofd_package_code text, ofd_service_name text, ofd_unit_code text,
 					ofd_vat_percent int, created_at timestamptz
 				)
 			)
-			INSERT INTO clubs (id, name, slug, legal_name, tin, address, timezone, status, click_merchant_id, click_service_id, click_merchant_user_id, click_secret_key, click_club_cntrg_id, click_platform_cntrg_id, payme_merchant_id, payme_secret_key, payme_club_receiver_id, payme_platform_receiver_id, platform_fee_bps, ofd_mxik, ofd_package_code, ofd_service_name, ofd_unit_code, ofd_vat_percent, created_at)
-			SELECT id, name, slug, legal_name, tin, address, COALESCE(NULLIF(timezone, ''), 'Asia/Tashkent'), COALESCE(NULLIF(status, ''), 'active'), click_merchant_id, click_service_id, click_merchant_user_id, click_secret_key, click_club_cntrg_id, click_platform_cntrg_id, payme_merchant_id, payme_secret_key, payme_club_receiver_id, payme_platform_receiver_id, COALESCE(platform_fee_bps, 0), ofd_mxik, ofd_package_code, ofd_service_name, ofd_unit_code, COALESCE(ofd_vat_percent, 0), COALESCE(created_at, now())
+			INSERT INTO clubs (id, name, slug, legal_name, tin, address, timezone, status, agent_primary_controller_url, agent_fallback_controller_url, click_merchant_id, click_service_id, click_merchant_user_id, click_secret_key, click_club_cntrg_id, click_platform_cntrg_id, payme_merchant_id, payme_secret_key, payme_club_receiver_id, payme_platform_receiver_id, platform_fee_bps, ofd_mxik, ofd_package_code, ofd_service_name, ofd_unit_code, ofd_vat_percent, created_at)
+			SELECT id, name, slug, legal_name, tin, address, COALESCE(NULLIF(timezone, ''), 'Asia/Tashkent'), COALESCE(NULLIF(status, ''), 'active'), agent_primary_controller_url, agent_fallback_controller_url, click_merchant_id, click_service_id, click_merchant_user_id, click_secret_key, click_club_cntrg_id, click_platform_cntrg_id, payme_merchant_id, payme_secret_key, payme_club_receiver_id, payme_platform_receiver_id, COALESCE(platform_fee_bps, 0), ofd_mxik, ofd_package_code, ofd_service_name, ofd_unit_code, COALESCE(ofd_vat_percent, 0), COALESCE(created_at, now())
 			FROM input
 			ON CONFLICT (id) DO UPDATE SET
 			  name = EXCLUDED.name, slug = EXCLUDED.slug, legal_name = EXCLUDED.legal_name, tin = EXCLUDED.tin,
 			  address = EXCLUDED.address, timezone = EXCLUDED.timezone, status = EXCLUDED.status,
+			  agent_primary_controller_url = COALESCE(EXCLUDED.agent_primary_controller_url, clubs.agent_primary_controller_url),
+			  agent_fallback_controller_url = CASE WHEN EXCLUDED.agent_primary_controller_url IS NOT NULL
+			    THEN EXCLUDED.agent_fallback_controller_url ELSE clubs.agent_fallback_controller_url END,
 			  click_merchant_id = EXCLUDED.click_merchant_id, click_service_id = EXCLUDED.click_service_id,
 			  click_merchant_user_id = EXCLUDED.click_merchant_user_id,
 			  click_secret_key = EXCLUDED.click_secret_key,
@@ -9080,7 +9090,11 @@ func (s *Server) clubSettings(ctx context.Context, clubID string, includeTechnic
 	if err != nil {
 		return nil, err
 	}
-	return map[string]any{"club": club, "zones": zones, "tariffs": tariffs, "pcs": pcs, "users": users}, nil
+	routes, err := s.agentControllerRoutes(ctx, clubID)
+	if err != nil {
+		return nil, err
+	}
+	return map[string]any{"club": club, "zones": zones, "tariffs": tariffs, "pcs": pcs, "users": users, "agent_controller_routes": routes}, nil
 }
 
 func (s *Server) listZones(ctx context.Context, clubID string) ([]map[string]any, error) {
