@@ -4813,6 +4813,10 @@ func (s *Server) applyEdgeSnapshotData(ctx context.Context, clubID string, paylo
 			return err
 		}
 	}
+	// Cloud owns global administrator identity. A stale or forged local
+	// snapshot must never reverse password rotation, disable the account, or
+	// introduce global privileges. Local nodes still import canonical Cloud
+	// credentials in the normal downward synchronization direction.
 	if err := execJSON(ctx, tx, `
 		WITH input AS (
 			SELECT * FROM jsonb_to_recordset($1::jsonb) AS x(
@@ -4822,8 +4826,19 @@ func (s *Server) applyEdgeSnapshotData(ctx context.Context, clubID string, paylo
 		INSERT INTO users (id, club_id, name, email, phone, role, global_role, password_hash, status, created_at, updated_at)
 		SELECT id, club_id, name, NULLIF(email, ''), NULLIF(phone, ''), COALESCE(NULLIF(role, ''), 'admin'), COALESCE(global_role, ''), NULLIF(password_hash, ''), COALESCE(NULLIF(status, ''), 'active'), COALESCE(created_at, now()), COALESCE(updated_at, now())
 		FROM input
+		WHERE $2 OR (
+		  lower(trim(COALESCE(input.global_role, ''))) <> 'super_admin'
+		  AND NOT EXISTS (
+		    SELECT 1 FROM users protected
+		    WHERE protected.global_role = 'super_admin'
+		      AND (protected.id = input.id
+		        OR lower(protected.email) = lower(NULLIF(input.email, ''))
+		        OR protected.phone = NULLIF(input.phone, ''))
+		  )
+		)
 		ON CONFLICT (id) DO UPDATE SET club_id = EXCLUDED.club_id, name = EXCLUDED.name, email = EXCLUDED.email, phone = EXCLUDED.phone, role = EXCLUDED.role, global_role = EXCLUDED.global_role, password_hash = COALESCE(EXCLUDED.password_hash, users.password_hash), status = EXCLUDED.status, updated_at = EXCLUDED.updated_at
-	`, payload["users"]); err != nil {
+		WHERE $2 OR COALESCE(users.global_role, '') <> 'super_admin'
+	`, payload["users"], s.localNodeMode()); err != nil {
 		return err
 	}
 	if err := execJSON(ctx, tx, `
@@ -4833,8 +4848,12 @@ func (s *Server) applyEdgeSnapshotData(ctx context.Context, clubID string, paylo
 		INSERT INTO user_club_roles (user_id, club_id, role, status, created_at, updated_at)
 		SELECT user_id, club_id, COALESCE(NULLIF(role, ''), 'admin'), COALESCE(NULLIF(status, ''), 'active'), COALESCE(created_at, now()), COALESCE(updated_at, now())
 		FROM input
+		WHERE $2 OR EXISTS (
+		  SELECT 1 FROM users account
+		  WHERE account.id = input.user_id AND COALESCE(account.global_role, '') <> 'super_admin'
+		)
 		ON CONFLICT (user_id, club_id) DO UPDATE SET role = EXCLUDED.role, status = EXCLUDED.status, updated_at = EXCLUDED.updated_at
-	`, payload["user_club_roles"]); err != nil {
+	`, payload["user_club_roles"], s.localNodeMode()); err != nil {
 		return err
 	}
 	if err := execJSON(ctx, tx, `
@@ -5077,12 +5096,13 @@ func removeLocalUserSyncConflicts(ctx context.Context, tx pgx.Tx, users any) err
 	return err
 }
 
-func execJSON(ctx context.Context, tx pgx.Tx, sql string, value any) error {
+func execJSON(ctx context.Context, tx pgx.Tx, sql string, value any, extraArgs ...any) error {
 	payload, err := json.Marshal(jsonArrayValue(value))
 	if err != nil {
 		return err
 	}
-	_, err = tx.Exec(ctx, sql, payload)
+	args := append([]any{payload}, extraArgs...)
+	_, err = tx.Exec(ctx, sql, args...)
 	return err
 }
 
