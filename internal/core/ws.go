@@ -29,8 +29,9 @@ type EventHandler func(context.Context, EventMessage) error
 type WakeHandler func(context.Context, string) error
 
 type WSController struct {
-	token   string
-	timeout time.Duration
+	commandGate func(context.Context, string, string) (func(), error)
+	token       string
+	timeout     time.Duration
 
 	// Agents publish an application heartbeat every 30 seconds.  A TCP
 	// connection can remain open when a VM is paused or a machine loses power,
@@ -113,6 +114,10 @@ func NewWSController(token string, timeout time.Duration) *WSController {
 	}
 }
 
+func (c *WSController) SetCommandGate(gate func(context.Context, string, string) (func(), error)) {
+	c.commandGate = gate
+}
+
 func (c *WSController) SetEventHandler(handler EventHandler) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -157,12 +162,17 @@ func (c *WSController) GetPCStatus(ctx context.Context, externalPCID string) (PC
 		return PCStatus{}, err
 	}
 	payload := result.Payload
+	var critical *bool
+	if v, ok := payload["agent_critical"].(bool); ok {
+		critical = &v
+	}
 	status := normalizePCState(stringValue(payload, "pc_state", "status"))
 	if status == "" {
 		status = "unknown"
 	}
 	lastSeen := time.Now().UTC()
 	return PCStatus{
+		AgentCritical:    critical,
 		ExternalPCID:     firstNonEmpty(stringValue(payload, "external_pc_id"), externalPCID),
 		Status:           status,
 		CurrentSessionID: stringValue(payload, "core_session_id", "current_session_id"),
@@ -409,6 +419,13 @@ func (c *WSController) sendCommandToSession(ctx context.Context, coreSessionID, 
 }
 
 func (c *WSController) sendCommandToClient(ctx context.Context, client *wsClient, name, commandID string, payload map[string]any) (commandResult, error) {
+	if c.commandGate != nil {
+		finish, err := c.commandGate(ctx, client.externalPCID, name)
+		if err != nil {
+			return commandResult{}, err
+		}
+		defer finish()
+	}
 	if commandID == "" {
 		commandID = name + "_" + unixMillis()
 	}
