@@ -1,4 +1,4 @@
-name: Read-only ClubPay database size diagnostic
+name: ClubPay snapshot maintenance
 
 on:
   workflow_dispatch:
@@ -28,7 +28,7 @@ jobs:
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@v4
-      - name: Read relation sizes and aggregate statistics
+      - name: Run guarded maintenance stage and collect status
         env:
           PGHOST: ${{ secrets.DB_HOST }}
           PGPORT: ${{ secrets.DB_PORT }}
