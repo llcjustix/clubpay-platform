@@ -13,4 +13,7 @@ SELECT conname,conrelid::regclass,confrelid::regclass FROM pg_constraint WHERE c
 SELECT tgname,tgenabled,pg_get_triggerdef(oid) FROM pg_trigger WHERE tgrelid='public.core_events'::regclass AND NOT tgisinternal;
 SELECT p.command,p.relid::regclass,p.bytes_processed,p.bytes_total,p.tuples_processed,clock_timestamp()-a.query_start AS elapsed FROM pg_stat_progress_copy p JOIN pg_stat_activity a ON a.pid=p.pid WHERE a.application_name='clubpay-precleanup-backup';
 SELECT relid::regclass,phase,heap_blks_total,heap_blks_scanned,heap_blks_vacuumed FROM pg_stat_progress_vacuum WHERE datname=current_database();
+SELECT c.relname,pg_get_userbyid(c.relowner)=current_user AS owned_by_connection_user,c.reltuples,c.reloptions,s.n_live_tup,s.n_dead_tup,s.last_autovacuum,s.autovacuum_count FROM pg_class c JOIN pg_stat_user_tables s ON s.relid=c.oid WHERE c.oid='public.core_events'::regclass;
+SELECT count(*) FILTER(WHERE state='idle in transaction') AS idle_transactions,max(clock_timestamp()-xact_start) AS longest_transaction FROM pg_stat_activity WHERE datname=current_database() AND pid<>pg_backend_pid();
+SELECT max(controller_synced_at) AS latest_controller_sync,count(*) FILTER(WHERE controller_synced_at>=now()-interval '2 minutes') AS recently_synced_clubs FROM clubs;
 COMMIT;
