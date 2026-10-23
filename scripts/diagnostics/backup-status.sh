@@ -11,3 +11,9 @@ if docker container inspect cpb-clubpay-snapshot-purge-20261024-r1 >/dev/null 2>
  docker logs --tail 4 cpb-clubpay-snapshot-purge-20261024-r1
 fi
 docker run --rm --network none --memory 128m --cpus .25 --mount type=bind,src=/mnt/HC_Volume_106788447/backups/clubpay/precleanup-20261024-r1,dst=/backup,readonly postgres:18 bash -c 'for f in PROTECTED_DATA_RESTORE_VERIFIED PURGE_STARTED purge-progress.txt PURGE_FAILED PURGE_COMPLETED PROTECTED_FINGERPRINTS_MATCH PROTECTED_FINGERPRINTS_DIFFER purge-before-counts.txt purge-after-counts.txt protected-fingerprints-before.txt protected-fingerprints-after.txt; do if [ -f /backup/$f ]; then echo "$f"; cat "/backup/$f"; fi; done'
+
+if docker container inspect cpb-clubpay-snapshot-purge-sequential-20261024-r2 >/dev/null 2>&1; then
+ docker inspect cpb-clubpay-snapshot-purge-sequential-20261024-r2 --format 'sequential_purge_state={{.State.Status}} exit={{.State.ExitCode}} started={{.State.StartedAt}} finished={{.State.FinishedAt}}'
+ docker logs --tail 3 cpb-clubpay-snapshot-purge-sequential-20261024-r2
+fi
+docker run --rm --network none --memory 128m --cpus .25 --mount type=bind,src=/mnt/HC_Volume_106788447/backups/clubpay/precleanup-20261024-r1,dst=/backup,readonly postgres:18 bash -c 'for f in PURGE_SEQUENTIAL_STARTED purge-sequential-progress.txt PURGE_SEQUENTIAL_FAILED; do if [ -f /backup/$f ]; then echo "$f"; cat "/backup/$f"; fi; done'
