@@ -1,6 +1,10 @@
 set -euo pipefail
 backup_root=/mnt/HC_Volume_106788447/backups/clubpay/precleanup-20261024-r1
 restore=cpb-clubpay-backup-restore-20261024-r1
+for attempt in $(seq 1 36); do
+ [ "$(docker inspect cpb-clubpay-db-backup-20261024-r1 --format '{{.State.Status}}')" != running ] && break
+ sleep 5
+done
 [ "$(docker inspect cpb-clubpay-db-backup-20261024-r1 --format '{{.State.Status}}:{{.State.ExitCode}}')" = 'exited:0' ]
 docker run --rm --network none --mount "type=bind,src=$backup_root,dst=/backup,readonly" postgres:18 bash -c 'cd /backup; test -f BACKUP_READABLE; sha256sum -c clubpay-full.dump.sha256'
 if docker container inspect "$restore" >/dev/null 2>&1; then echo 'Restore verifier already exists; refusing duplicate'; exit 1; fi
