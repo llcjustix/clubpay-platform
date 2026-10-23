@@ -50,4 +50,10 @@ done
 [ "$("${psql[@]}" -c "SELECT count(*) FROM public.core_events WHERE $qualified;")" -eq 0 ]
 "${psql[@]}" -c "SELECT 'protected_events',count(*) FROM public.core_events; SELECT 'payments',count(*) FROM public.payments; SELECT 'payment_orders',count(*) FROM public.payment_orders; SELECT 'grants',count(*) FROM public.game_access_grants; SELECT 'ledger',count(*) FROM public.player_time_ledger;" > purge-after-counts.txt
 "${psql[@]}" -f /protected-fingerprints.sql > protected-fingerprints-after.txt
+if cmp -s protected-fingerprints-before.txt protected-fingerprints-after.txt; then
+ date -u +%FT%TZ > PROTECTED_FINGERPRINTS_MATCH
+else
+ echo 'Protected fingerprints differ; inspect legitimate concurrent writes before any compaction.' > PROTECTED_FINGERPRINTS_DIFFER
+ exit 1
+fi
 printf '%s rows deleted at %s\n' "$total" "$(date -u +%FT%TZ)" > PURGE_COMPLETED
