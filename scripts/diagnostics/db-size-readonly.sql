@@ -1,7 +1,7 @@
 \set ON_ERROR_STOP on
 \pset pager off
 \timing on
-BEGIN READ ONLY;
+BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY;
 SET LOCAL statement_timeout = '15s';
 SET LOCAL lock_timeout = '2s';
 SELECT current_database() = 'clubpay' AS expected_database \gset
@@ -71,4 +71,23 @@ SELECT max(controller_synced_at) AS latest_controller_sync,
        count(*) FILTER (WHERE controller_synced_at >= now() - interval '2 minutes') AS recently_synchronized_clubs
 FROM public.clubs;
 \endif
+
+-- Exact aggregate over event headers, no payload values or personal data.
+-- Covers the whole retained history, rather than a sample or two-minute window.
+SELECT CASE WHEN created_at < timestamptz '2026-10-10T13:25:16Z'
+            THEN 'before_snapshot_fix' ELSE 'after_snapshot_fix' END AS period,
+       CASE WHEN club_id=uuid '21bbd882-bf06-4f8d-b2f0-04cf8399c65a'
+            THEN 'cpb_physical_pilot' ELSE 'other_or_unassigned' END AS source_group,
+       event_type, count(*) AS exact_retained_rows,
+       min(created_at) AS first_created_at, max(created_at) AS last_created_at
+FROM public.core_events
+GROUP BY 1,2,3 ORDER BY 1,2,4 DESC;
+SELECT count(*) AS eligible_old_processed_snapshots
+FROM public.core_events
+WHERE event_type='edge_edge_snapshot' AND status='processed'
+  AND club_id IS NOT NULL AND grant_id IS NULL
+  AND NULLIF(core_session_id,'') IS NULL AND NULLIF(external_pc_id,'') IS NULL
+  AND created_at < timestamptz '2026-10-10T13:25:16Z';
+SELECT stats_reset FROM pg_stat_database WHERE datname=current_database();
+
 COMMIT;

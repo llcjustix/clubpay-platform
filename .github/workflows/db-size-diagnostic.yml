@@ -60,6 +60,17 @@ jobs:
             echo "Expected exactly one running API at the verified deployed commit" >&2
             exit 1
           fi
+          API_CONTAINER_ID="${api_containers[0]}" python3 - <<'PYVERIFY'
+          import json, os, subprocess, urllib.parse
+          data=json.loads(subprocess.check_output(['docker','inspect',os.environ['API_CONTAINER_ID']]))[0]
+          env=dict(item.split('=',1) for item in data['Config']['Env'] if '=' in item)
+          url=urllib.parse.urlsplit(env.get('DATABASE_URL',''))
+          actual=(url.hostname,str(url.port or 5432),urllib.parse.unquote(url.path.lstrip('/')),urllib.parse.unquote(url.username or ''),urllib.parse.unquote(url.password or ''))
+          expected=tuple(os.environ[k] for k in ('PGHOST','PGPORT','PGDATABASE','PGUSER','PGPASSWORD'))
+          if actual != expected:
+              raise SystemExit('Live API database connection does not match diagnostic connection; refusing query')
+          print('Verified: diagnostic connection matches the running API database connection. Credentials withheld.')
+          PYVERIFY
           docker run --rm -i --network "container:${api_containers[0]}" \
             --memory 128m --cpus 0.25 \
             -e PGHOST -e PGPORT -e PGDATABASE -e PGUSER -e PGPASSWORD \
