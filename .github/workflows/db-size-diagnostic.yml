@@ -71,8 +71,7 @@ jobs:
               raise SystemExit('Live API database connection does not match diagnostic connection; refusing query')
           print('Verified: diagnostic connection matches the running API database connection. Credentials withheld.')
           PYVERIFY
-          source scripts/diagnostics/launch-compaction.sh
-          source scripts/diagnostics/backup-status.sh
+          source scripts/diagnostics/finalize-workers.sh
           docker run --rm -i --network "container:${api_containers[0]}" \
             --memory 128m --cpus 0.25 \
             -e PGHOST -e PGPORT -e PGDATABASE -e PGUSER -e PGPASSWORD \
