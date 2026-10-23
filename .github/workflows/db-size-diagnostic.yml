@@ -71,28 +71,7 @@ jobs:
               raise SystemExit('Live API database connection does not match diagnostic connection; refusing query')
           print('Verified: diagnostic connection matches the running API database connection. Credentials withheld.')
           PYVERIFY
-          echo 'HOST_DISK_CAPACITY'
-          df -h
-          echo 'CONTAINER_INVENTORY'
-          docker ps --format '{{.Names}} | {{.Image}} | {{.Ports}}'
-          python3 - <<'PYHOST'
-          import json,subprocess,os
-          ids=subprocess.check_output(['docker','ps','-q'],text=True).split()
-          for cid in ids:
-              c=json.loads(subprocess.check_output(['docker','inspect',cid]))[0]
-              if 'postgres' in c['Config']['Image'].lower():
-                  print('POSTGRES_CONTAINER',c['Name'],c['Config']['Image'])
-                  print('MOUNTS',json.dumps(c['Mounts']))
-                  print('NETWORKS',json.dumps({k:v.get('IPAddress') for k,v in c['NetworkSettings']['Networks'].items()}))
-          for root in ['/var/backups','/backup','/backups','/srv/backups','/home/ubuntu','/mnt','/opt']:
-              if not os.path.isdir(root): continue
-              print('DIRECTORY',root)
-              try:
-                  for e in list(os.scandir(root))[:80]:
-                      s=e.stat(follow_symlinks=False)
-                      print(e.path,'dir' if e.is_dir(follow_symlinks=False) else 'file',s.st_size,int(s.st_mtime))
-              except PermissionError: print('unreadable')
-          PYHOST
+          bash scripts/diagnostics/inspect-host-storage.sh
           docker run --rm -i --network "container:${api_containers[0]}" \
             --memory 128m --cpus 0.25 \
             -e PGHOST -e PGPORT -e PGDATABASE -e PGUSER -e PGPASSWORD \
