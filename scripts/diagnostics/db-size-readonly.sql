@@ -12,4 +12,5 @@ SELECT relname,pg_total_relation_size(relid) AS total_bytes FROM pg_stat_user_ta
 SELECT conname,conrelid::regclass,confrelid::regclass FROM pg_constraint WHERE contype='f' AND confrelid='public.core_events'::regclass;
 SELECT tgname,tgenabled,pg_get_triggerdef(oid) FROM pg_trigger WHERE tgrelid='public.core_events'::regclass AND NOT tgisinternal;
 SELECT p.command,p.relid::regclass,p.bytes_processed,p.bytes_total,p.tuples_processed,clock_timestamp()-a.query_start AS elapsed FROM pg_stat_progress_copy p JOIN pg_stat_activity a ON a.pid=p.pid WHERE a.application_name='clubpay-precleanup-backup';
+SELECT relid::regclass,phase,heap_blks_total,heap_blks_scanned,heap_blks_vacuumed FROM pg_stat_progress_vacuum WHERE datname=current_database();
 COMMIT;
