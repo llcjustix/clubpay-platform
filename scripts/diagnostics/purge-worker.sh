@@ -15,6 +15,7 @@ check=$("${psql[@]}" -c "SELECT current_database()='clubpay' AND NOT EXISTS(SELE
 expected=$("${psql[@]}" -c "SELECT count(*) FROM public.core_events WHERE $qualified;")
 [ "$expected" -eq 1932639 ]
 "${psql[@]}" -c "SELECT 'protected_events',count(*) FROM public.core_events WHERE NOT ($qualified) OR ($qualified) IS NULL; SELECT 'payments',count(*) FROM public.payments; SELECT 'payment_orders',count(*) FROM public.payment_orders; SELECT 'grants',count(*) FROM public.game_access_grants; SELECT 'ledger',count(*) FROM public.player_time_ledger;" > purge-before-counts.txt
+"${psql[@]}" -f /protected-fingerprints.sql > protected-fingerprints-before.txt
 date -u +%FT%TZ > PURGE_STARTED
 trap 'rc=$?; if [ "$rc" -ne 0 ]; then date -u +%FT%TZ > PURGE_FAILED; fi' EXIT
 cursor=''; total=0; started=$SECONDS
@@ -48,4 +49,5 @@ done
 [ "$total" -eq "$expected" ]
 [ "$("${psql[@]}" -c "SELECT count(*) FROM public.core_events WHERE $qualified;")" -eq 0 ]
 "${psql[@]}" -c "SELECT 'protected_events',count(*) FROM public.core_events; SELECT 'payments',count(*) FROM public.payments; SELECT 'payment_orders',count(*) FROM public.payment_orders; SELECT 'grants',count(*) FROM public.game_access_grants; SELECT 'ledger',count(*) FROM public.player_time_ledger;" > purge-after-counts.txt
+"${psql[@]}" -f /protected-fingerprints.sql > protected-fingerprints-after.txt
 printf '%s rows deleted at %s\n' "$total" "$(date -u +%FT%TZ)" > PURGE_COMPLETED
