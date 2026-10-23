@@ -23,6 +23,7 @@ SELECT format('SELECT %L AS table_name, count(*) AS rows FROM %I.%I;', tablename
 FROM pg_tables WHERE schemaname='public' AND tablename<>'core_events' ORDER BY tablename \gexec
 COMMIT;
 SQL
+docker exec -i -u postgres "$restore" psql -X -v ON_ERROR_STOP=1 -d clubpay_restore_check < scripts/diagnostics/purge-regression.sql >> "$RUNNER_TEMP/restore-check.txt"
 cat "$RUNNER_TEMP/restore-check.txt"
 # A persisted receipt is created only after successful archive verification and isolated restore.
 docker run --rm --network none --mount "type=bind,src=$backup_root,dst=/backup" postgres:18 bash -c 'umask 077; date -u +%FT%TZ > PROTECTED_DATA_RESTORE_VERIFIED'
