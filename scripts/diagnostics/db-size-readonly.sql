@@ -11,4 +11,5 @@ SELECT count(*) AS eligible_snapshot_rows FROM core_events WHERE event_type='edg
 SELECT relname,pg_total_relation_size(relid) AS total_bytes FROM pg_stat_user_tables ORDER BY 2 DESC LIMIT 8;
 SELECT conname,conrelid::regclass,confrelid::regclass FROM pg_constraint WHERE contype='f' AND confrelid='public.core_events'::regclass;
 SELECT tgname,tgenabled,pg_get_triggerdef(oid) FROM pg_trigger WHERE tgrelid='public.core_events'::regclass AND NOT tgisinternal;
+SELECT p.command,p.relid::regclass,p.bytes_processed,p.bytes_total,p.tuples_processed,clock_timestamp()-a.query_start AS elapsed FROM pg_stat_progress_copy p JOIN pg_stat_activity a ON a.pid=p.pid WHERE a.application_name='clubpay-precleanup-backup';
 COMMIT;
