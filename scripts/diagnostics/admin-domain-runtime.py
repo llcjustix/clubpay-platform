@@ -56,7 +56,12 @@ def main():
         command += ["-e", key]
     command += ["postgres:16-alpine", "psql", "-X", "--no-password", "-v", "ON_ERROR_STOP=1", "-At", "-F", "|"]
     password_hash = hashlib.sha256(("clubpay-demo-salt:" + os.environ["SUPERADMIN_BOOTSTRAP_PASSWORD"]).encode()).hexdigest()
-    query = "SELECT status,global_role,password_hash='" + password_hash + "' FROM users WHERE lower(COALESCE(email,''))='superadmin@clubpay.local';"
+    requested_hash = os.environ.get("VERIFY_PASSWORD_HASH", "")
+    if requested_hash:
+        if not re.fullmatch("[a-f0-9]{64}", requested_hash):
+            raise ValueError("Invalid verification hash")
+        print("::add-mask::" + requested_hash, flush=True)
+    query = "SELECT status,global_role,password_hash='" + password_hash + "',password_hash='" + requested_hash + "' FROM users WHERE lower(COALESCE(email,''))='superadmin@clubpay.local';"
     result = subprocess.run(command, input=query, text=True, capture_output=True, env=env, timeout=30)
     if result.returncode:
         report(database_check="failed", error_kind=sql_error_kind(result.stderr))
@@ -76,11 +81,16 @@ def main():
         report(postgres_running=db_item["State"]["Running"],
                postgres_health=db_item["State"].get("Health", {}).get("Status"),
                shared_network_count=len(set(item["NetworkSettings"]["Networks"]) & set(db_item["NetworkSettings"]["Networks"])))
-        candidates = [("inside_postgres", "container:" + db_ids[0], "127.0.0.1", "5432")]
+        candidates = [("inside_postgres", "container:" + db_ids[0], "127.0.0.1", "5432"),
+                      ("postgres_dns", "container:" + cid, "postgres", "5432")]
         for name, network in item["NetworkSettings"]["Networks"].items():
             peer = db_item["NetworkSettings"]["Networks"].get(name)
             if peer:
                 candidates.append(("shared_network", "container:" + cid, peer["IPAddress"], "5432"))
+                report(shared_network=name, postgres_dns_alias_present="postgres" in (peer.get("Aliases") or []),
+                       compose_managed_network=(name == item["Config"]["Labels"].get("com.docker.compose.project", "") + "_default"),
+                       runtime_uses_peer_ip=(env["PGHOST"] == peer["IPAddress"]),
+                       runtime_uses_internal_port=(env["PGPORT"] == "5432"))
             for port in db_item["NetworkSettings"]["Ports"].get("5432/tcp") or []:
                 if network.get("Gateway") and port["HostIp"] in ("0.0.0.0", ""):
                     candidates.append(("host_gateway", "container:" + cid, network["Gateway"], port["HostPort"]))
@@ -92,6 +102,12 @@ def main():
             report(database_route=label, works=check.returncode == 0,
                    error_kind=sql_error_kind(check.stderr) if check.returncode else None,
                    matches_runtime_endpoint=(host == env["PGHOST"] and port == env["PGPORT"]))
+            if not check.returncode:
+                checked_rows = [line.split("|") for line in check.stdout.strip().splitlines()]
+                report(database_route_account=label, target_count=len(checked_rows), targets=[
+                    dict(status=row[0], role=row[1], matches_configured_secret=row[2] == "t",
+                         matches_requested_password=row[3] == "t") for row in checked_rows
+                ])
     report(runner_nginx_available=bool(shutil.which("nginx")), runner_sudo_available=bool(shutil.which("sudo")), runner_uid=os.geteuid())
     # The runner may be in a container. Read only the host's Nginx directory;
     # never print other virtual hosts, keys, or complete configuration files.

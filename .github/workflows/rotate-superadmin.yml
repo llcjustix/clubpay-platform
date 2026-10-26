@@ -14,6 +14,10 @@ on:
         description: Inspect migration CORS and classify database errors without changing data
         type: boolean
         default: false
+      verify_password_hash:
+        description: Optional private password hash for a read-only equality check
+        type: string
+        default: ''
 permissions:
   contents: read
 concurrency:
@@ -40,6 +44,7 @@ jobs:
           SUPERADMIN_BOOTSTRAP_PASSWORD: ${{ secrets.SUPERADMIN_BOOTSTRAP_PASSWORD }}
           EXPECTED_API_COMMIT: ${{ inputs.expected_api_commit }}
           APPLY_SUPERADMIN_RESET: ${{ inputs.apply_reset }}
+          VERIFY_PASSWORD_HASH: ${{ inputs.verify_password_hash }}
         run: |
           if [ "${{ inputs.inspect_admin_domain }}" = true ]; then
             python3 scripts/diagnostics/admin-domain-runtime.py
