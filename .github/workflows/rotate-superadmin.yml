@@ -10,6 +10,10 @@ on:
         description: Explicitly reset the single superadmin and revoke its sessions
         type: boolean
         default: false
+      inspect_admin_domain:
+        description: Inspect migration CORS and classify database errors without changing data
+        type: boolean
+        default: false
 permissions:
   contents: read
 concurrency:
@@ -36,4 +40,9 @@ jobs:
           SUPERADMIN_BOOTSTRAP_PASSWORD: ${{ secrets.SUPERADMIN_BOOTSTRAP_PASSWORD }}
           EXPECTED_API_COMMIT: ${{ inputs.expected_api_commit }}
           APPLY_SUPERADMIN_RESET: ${{ inputs.apply_reset }}
-        run: python3 scripts/diagnostics/superadmin-runtime.py
+        run: |
+          if [ "${{ inputs.inspect_admin_domain }}" = true ]; then
+            python3 scripts/diagnostics/admin-domain-runtime.py
+          else
+            python3 scripts/diagnostics/superadmin-runtime.py
+          fi
