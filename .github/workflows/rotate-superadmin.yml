@@ -18,6 +18,10 @@ on:
         description: Optional private password hash for a read-only equality check
         type: string
         default: ''
+      repair_admin_domain:
+        description: Repair the verified PostgreSQL route and admin CORS, preserving the password
+        type: boolean
+        default: false
 permissions:
   contents: read
 concurrency:
@@ -32,7 +36,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Verify recovery scope regression tests
-        run: python3 scripts/diagnostics/test-superadmin-runtime.py
+        run: |
+          python3 scripts/diagnostics/test-superadmin-runtime.py
+          python3 scripts/diagnostics/test-admin-domain-repair.py
       - name: Inspect running API authority or perform explicitly authorized reset
         env:
           DB_HOST: ${{ secrets.DB_HOST }}
@@ -45,8 +51,11 @@ jobs:
           EXPECTED_API_COMMIT: ${{ inputs.expected_api_commit }}
           APPLY_SUPERADMIN_RESET: ${{ inputs.apply_reset }}
           VERIFY_PASSWORD_HASH: ${{ inputs.verify_password_hash }}
+          REPAIR_ADMIN_DOMAIN: ${{ inputs.repair_admin_domain }}
         run: |
-          if [ "${{ inputs.inspect_admin_domain }}" = true ]; then
+          if [ "${{ inputs.repair_admin_domain }}" = true ]; then
+            python3 scripts/diagnostics/repair-admin-domain.py
+          elif [ "${{ inputs.inspect_admin_domain }}" = true ]; then
             python3 scripts/diagnostics/admin-domain-runtime.py
           else
             python3 scripts/diagnostics/superadmin-runtime.py
