@@ -65,6 +65,33 @@ def main():
         report(database_check="ok", target_count=len(rows), targets=[
             dict(status=row[0], role=row[1], matches_configured_secret=row[2] == "t") for row in rows
         ])
+    # Check the known host PostgreSQL service, without printing connection
+    # addresses or credentials and without selecting unrelated databases.
+    db_ids = subprocess.check_output([
+        "docker", "ps", "--filter", "name=^/postgres$", "--format", "{{.ID}}"
+    ], text=True).split()
+    report(host_postgres_count=len(db_ids))
+    if len(db_ids) == 1:
+        db_item = json.loads(subprocess.check_output(["docker", "inspect", db_ids[0]]))[0]
+        report(postgres_running=db_item["State"]["Running"],
+               postgres_health=db_item["State"].get("Health", {}).get("Status"),
+               shared_network_count=len(set(item["NetworkSettings"]["Networks"]) & set(db_item["NetworkSettings"]["Networks"])))
+        candidates = [("inside_postgres", "container:" + db_ids[0], "127.0.0.1", "5432")]
+        for name, network in item["NetworkSettings"]["Networks"].items():
+            peer = db_item["NetworkSettings"]["Networks"].get(name)
+            if peer:
+                candidates.append(("shared_network", "container:" + cid, peer["IPAddress"], "5432"))
+            for port in db_item["NetworkSettings"]["Ports"].get("5432/tcp") or []:
+                if network.get("Gateway") and port["HostIp"] in ("0.0.0.0", ""):
+                    candidates.append(("host_gateway", "container:" + cid, network["Gateway"], port["HostPort"]))
+        for label, net, host, port in candidates:
+            alternate = dict(env, PGHOST=host, PGPORT=port)
+            trial = list(command)
+            trial[trial.index("--network") + 1] = net
+            check = subprocess.run(trial, input=query, text=True, capture_output=True, env=alternate, timeout=25)
+            report(database_route=label, works=check.returncode == 0,
+                   error_kind=sql_error_kind(check.stderr) if check.returncode else None,
+                   matches_runtime_endpoint=(host == env["PGHOST"] and port == env["PGPORT"]))
     report(runner_nginx_available=bool(shutil.which("nginx")), runner_sudo_available=bool(shutil.which("sudo")), runner_uid=os.geteuid())
     # The runner may be in a container. Read only the host's Nginx directory;
     # never print other virtual hosts, keys, or complete configuration files.
@@ -83,6 +110,12 @@ def main():
                 if not re.search(r"Authorization|[Ss]ecret|[Pp]assword|Bearer|[Tt]oken", line) or "Access-Control-" in line:
                     selected.append(line)
         report(nginx_host_scan="ok", relevant_directives=selected)
+    native_test = subprocess.run([
+        "docker", "run", "--rm", "--privileged", "--pid=host", "--network=none",
+        "postgres:16-alpine", "nsenter", "-t", "1", "-m", "-p", "--", "/usr/sbin/nginx", "-t"
+    ], capture_output=True, text=True, timeout=20)
+    report(host_nginx_test_ok=native_test.returncode == 0,
+           diagnostic=native_test.stderr[-1000:] if native_test.returncode else "configuration valid")
 
 
 if __name__ == "__main__":
