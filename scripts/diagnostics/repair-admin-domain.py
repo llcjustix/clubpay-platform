@@ -1,6 +1,7 @@
 """Repair only the verified Cloud API database route and admin CORS."""
 import hashlib
 import importlib.util
+import inspect
 import json
 import os
 import pathlib
@@ -74,6 +75,9 @@ def restore_api_route(item, image):
     env = dict(os.environ, **original)
     env.update(DB_HOST="postgres", DB_PORT="5432", IMAGE_TAG=os.environ["EXPECTED_API_COMMIT"])
     desired_url = repaired_url(original["DATABASE_URL"])
+    if original["DATABASE_URL"] == desired_url and original.get("DB_HOST") == "postgres" and original.get("DB_PORT") == "5432":
+        print("PASS: API already uses the verified PostgreSQL DNS route", flush=True)
+        return
     override = {"services": {"api": {"environment": {"DATABASE_URL": desired_url}}},
                 "networks": {"default": {"name": project + "_default", "external": True}}}
     with tempfile.TemporaryDirectory(prefix="clubpay-route-") as folder:
@@ -122,7 +126,6 @@ def restore_cors():
     nginx_command("-t")
     # Execute this module's tested pure transformation inside a narrowly
     # mounted official Python container. Preserve an exclusive rollback copy.
-    module_source = pathlib.Path(__file__).read_text()
     run_id = os.environ["GITHUB_RUN_ID"]
     if not run_id.isdigit():
         raise ValueError("Invalid backup identifier")
@@ -141,7 +144,7 @@ os.chmod(temp, stat.st_mode)
 os.chown(temp, stat.st_uid, stat.st_gid)
 os.replace(temp, path)
 '''
-    code = module_source.split('if __name__ == "__main__":')[0] + "\nRUN_ID=" + repr(run_id) + "\n" + driver
+    code = "import os,pathlib,re\n" + inspect.getsource(cors_patch) + "\nRUN_ID=" + repr(run_id) + "\n" + driver
     command = ["docker", "run", "--rm", "-i", "--network=none", "--memory", "128m", "--cpus", "0.25",
                "--mount", "type=bind,source=/etc/nginx,target=/host-nginx", "python:3.12-alpine", "python", "-"]
     run(command, input=code)
