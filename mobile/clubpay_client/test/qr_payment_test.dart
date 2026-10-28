@@ -112,40 +112,43 @@ void main() {
     expect(pending.key, isNotEmpty);
     expect(posts, 1);
   });
-  test('A finished extension cannot replace a new reservation balance start',
-      () async {
-    final vault = SessionVault(MemoryStore());
-    await vault.store.write(
-      'mobile.pending',
-      '{"key":"old-extension","grant":"grant_old","is_extension":true}',
-    );
-    final api = ApiClient(
-      vault,
-      dio: stubDio((request) async {
-        if (request.path == '/api/mobile/sessions/grant_old') {
-          return (200, {
-            'grant_status': 'ended',
-            'pc_label': 'Pilot PC #01',
-            'session_seconds': 1200,
-          });
-        }
-        if (request.path == '/api/player-balance/redeem') {
-          expect(request.data['qr_token'], 'reservation_pc');
-          return (200, {'grant_id': 'grant_new'});
-        }
-        fail('Unexpected request ${request.path}');
-      }),
-    );
+  test(
+    'A finished extension cannot replace a new reservation balance start',
+    () async {
+      final vault = SessionVault(MemoryStore());
+      await vault.store.write(
+        'mobile.pending',
+        '{"key":"old-extension","grant":"grant_old","is_extension":true}',
+      );
+      final api = ApiClient(
+        vault,
+        dio: stubDio((request) async {
+          if (request.path == '/api/mobile/sessions/grant_old') {
+            return (
+              200,
+              {
+                'grant_status': 'ended',
+                'pc_label': 'Pilot PC #01',
+                'session_seconds': 1200,
+              },
+            );
+          }
+          if (request.path == '/api/player-balance/redeem') {
+            expect(request.data['qr_token'], 'reservation_pc');
+            return (200, {'grant_id': 'grant_new'});
+          }
+          fail('Unexpected request ${request.path}');
+        }),
+      );
 
-    final started = await PaymentRepository(api).begin(
-      token: 'reservation_pc',
-      redeem: true,
-      isExtension: false,
-    );
+      final started = await PaymentRepository(
+        api,
+      ).begin(token: 'reservation_pc', redeem: true, isExtension: false);
 
-    expect(started.grant, 'grant_new');
-    expect(started.isExtension, isFalse);
-  });
+      expect(started.grant, 'grant_new');
+      expect(started.isExtension, isFalse);
+    },
+  );
   test(
     'Recovery retries only the saved request with the original key',
     () async {
@@ -214,5 +217,221 @@ void main() {
     expect(pending.invoice, 'cp_test_payment');
     expect(checkoutCalls, 1);
     expect(confirmationCalls, 1);
+  });
+
+  test(
+    'A legacy 11-hour payment cannot replace 35 hours on another PC',
+    () async {
+      final vault = SessionVault(MemoryStore());
+      await vault.store.write(
+        'mobile.pending',
+        '{"key":"legacy-next-pc","invoice":"cp_old"}',
+      );
+      final api = ApiClient(
+        vault,
+        dio: stubDio((r) async {
+          if (r.path == '/api/player-balance/redeem') {
+            expect(r.data['qr_token'], 'justix_pc_1');
+            return (200, {'grant_id': 'justix_new'});
+          }
+          if (r.path == '/api/mobile/sessions/justix_new') {
+            return (
+              200,
+              {
+                'grant_status': 'pending',
+                'pc_label': '1',
+                'pc_id': 'pc_1',
+                'club_id': 'justix',
+                'session_seconds': 127129,
+              },
+            );
+          }
+          fail('Another operation was opened: ${r.path}');
+        }),
+      );
+      final repo = PaymentRepository(api);
+      final result = await repo.begin(
+        token: 'justix_pc_1',
+        redeem: true,
+        pcId: 'pc_1',
+        clubId: 'justix',
+      );
+      final status = await repo.status(result);
+      expect(status!.pcLabel, '1');
+      expect(status.seconds, 35 * 3600 + 18 * 60 + 49);
+      expect(result.body!['qr_token'], 'justix_pc_1');
+      final retained = await repo.pendingOperations();
+      expect(retained.length, 2);
+      expect(retained.first.invoice, 'cp_old');
+    },
+  );
+
+  for (final change in [
+    'pc',
+    'tariff',
+    'amount',
+    'provider',
+    'balance',
+    'extension',
+  ]) {
+    test(
+      'Changing $change cannot reuse or confirm a different payment',
+      () async {
+        final vault = SessionVault(MemoryStore());
+        final old = PendingOperation.request(
+          key: 'original-operation',
+          token: 'pc_a',
+          tariff: 'hour',
+          provider: 'click',
+        ).withResult(invoice: 'cp_old');
+        final api = ApiClient(
+          vault,
+          dio: stubDio((r) async {
+            if (r.path == '/api/checkouts') {
+              expect(r.headers['Idempotency-Key'], isNot(old.key));
+              return (
+                201,
+                {
+                  'order': {'invoice_id': 'cp_new'},
+                },
+              );
+            }
+            if (r.path == '/api/player-balance/redeem') {
+              return (200, {'grant_id': 'grant_new'});
+            }
+            if (change == 'provider' &&
+                r.path == '/api/mobile/payments/test/success/cp_new') {
+              return (200, {'success': true});
+            }
+            fail('An unrelated payment was reused: ${r.path}');
+          }),
+        );
+        final repo = PaymentRepository(api);
+        await repo.remember(old);
+        final result = await repo.begin(
+          token: change == 'pc' ? 'pc_b' : 'pc_a',
+          tariff: change == 'tariff' ? 'two_hours' : 'hour',
+          amount: change == 'amount' ? 2000 : null,
+          provider: change == 'provider' ? 'mock' : 'click',
+          testPayment: change == 'provider',
+          redeem: change == 'balance',
+          isExtension: change == 'extension',
+        );
+        expect(result.key, isNot(old.key));
+        expect((await repo.pendingOperations()).first.key, old.key);
+        expect((await repo.pending())!.key, result.key);
+      },
+    );
+  }
+
+  for (final phase in ['pending', 'accepted']) {
+    test(
+      'Concurrent identical submissions reuse one key when $phase',
+      () async {
+        var posts = 0;
+        final api = ApiClient(
+          SessionVault(MemoryStore()),
+          dio: stubDio((r) async {
+            if (r.method == 'POST') {
+              posts++;
+              return (
+                201,
+                {
+                  'order': {'invoice_id': 'cp_one'},
+                },
+              );
+            }
+            return (200, {'status': 'paid', 'grant_status': phase});
+          }),
+        );
+        final repo = PaymentRepository(api);
+        final results = await Future.wait([
+          repo.begin(token: 'pc_a', tariff: 'hour', provider: 'click'),
+          repo.begin(token: 'pc_a', tariff: 'hour', provider: 'click'),
+        ]);
+        expect(posts, 1);
+        expect(results.first.key, results.last.key);
+        expect(results.last.body!['tariff_block_id'], 'hour');
+      },
+    );
+  }
+
+  test(
+    'Finishing an older operation does not clear the new selection',
+    () async {
+      final repo = PaymentRepository(ApiClient(SessionVault(MemoryStore())));
+      const old = PendingOperation(key: 'old', invoice: 'cp_old');
+      const newer = PendingOperation(key: 'new', grant: 'new_grant');
+      await repo.remember(old);
+      await repo.remember(newer);
+      await repo.clear(old.key);
+      expect((await repo.pending())!.key, newer.key);
+      expect((await repo.pendingOperations()).length, 1);
+    },
+  );
+
+  test(
+    'Recovering an older lost response cannot select it over a new one',
+    () async {
+      final api = ApiClient(
+        SessionVault(MemoryStore()),
+        dio: stubDio((r) async {
+          if (r.method == 'GET') return (404, {'error': 'operation_not_found'});
+          expect(r.headers['Idempotency-Key'], 'old-key');
+          expect(r.data['qr_token'], 'old_pc');
+          return (
+            201,
+            {
+              'order': {'invoice_id': 'cp_recovered_old'},
+            },
+          );
+        }),
+      );
+      final repo = PaymentRepository(api);
+      final old = PendingOperation.request(
+        key: 'old-key',
+        token: 'old_pc',
+        tariff: 'hour',
+        provider: 'click',
+      );
+      await repo.remember(old);
+      await repo.remember(
+        const PendingOperation(key: 'new-key', grant: 'new_grant'),
+      );
+      final recovered = await repo.recover(old);
+      expect(recovered.invoice, 'cp_recovered_old');
+      expect((await repo.pending())!.key, 'new-key');
+      expect(
+        (await repo.pendingOperations()).first.body!['qr_token'],
+        'old_pc',
+      );
+    },
+  );
+
+  test('Status rejects a response bound to a different PC or club', () async {
+    final api = ApiClient(
+      SessionVault(MemoryStore()),
+      dio: stubDio(
+        (r) async => (
+          200,
+          {
+            'pc_id': 'other_pc',
+            'club_id': 'other_club',
+            'session_seconds': 40000,
+          },
+        ),
+      ),
+    );
+    await expectLater(
+      PaymentRepository(api).status(
+        const PendingOperation(
+          key: 'one',
+          grant: 'one',
+          pcId: 'pc_1',
+          clubId: 'justix',
+        ),
+      ),
+      throwsFormatException,
+    );
   });
 }

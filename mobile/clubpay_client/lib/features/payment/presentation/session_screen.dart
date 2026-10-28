@@ -9,8 +9,9 @@ import '../../../core/ui.dart';
 import '../domain/payment_state.dart';
 
 class SessionScreen extends ConsumerStatefulWidget {
-  const SessionScreen({super.key, this.invoice});
+  const SessionScreen({super.key, this.invoice, this.operation});
   final String? invoice;
+  final PendingOperation? operation;
   @override
   ConsumerState<SessionScreen> createState() => _SessionScreenState();
 }
@@ -26,6 +27,7 @@ class _SessionScreenState extends ConsumerState<SessionScreen>
   @override
   void initState() {
     super.initState();
+    _operation = widget.operation;
     WidgetsBinding.instance.addObserver(this);
     _check();
   }
@@ -56,10 +58,16 @@ class _SessionScreenState extends ConsumerState<SessionScreen>
     });
     try {
       final repo = ref.read(paymentRepositoryProvider);
+      final returning = widget.invoice == null
+          ? null
+          : (await repo.pendingOperations())
+                .where((p) => p.invoice == widget.invoice)
+                .lastOrNull;
       var pending =
           _operation ??
           (widget.invoice != null
-              ? PendingOperation(key: 'return', invoice: widget.invoice)
+              ? returning ??
+                    PendingOperation(key: 'return', invoice: widget.invoice)
               : await repo.pending());
       if (pending == null) {
         if (mounted) context.go('/home');
@@ -79,7 +87,7 @@ class _SessionScreenState extends ConsumerState<SessionScreen>
                   : 'session_finished',
               screen: 'session',
             );
-        await repo.clear();
+        await repo.clear(pending.key);
         ref.invalidate(balancesProvider);
         ref.read(catalogRevisionProvider.notifier).bump();
       } else if (++_checks < 60) {
@@ -102,7 +110,8 @@ class _SessionScreenState extends ConsumerState<SessionScreen>
         (_operation?.isExtension ?? false) || (status?.isExtension ?? false);
     final title = switch (status?.phase) {
       SessionPhase.waitingPayment => l.waitingPayment,
-      SessionPhase.starting => isExtension ? l.extendingSession : l.startingSession,
+      SessionPhase.starting =>
+        isExtension ? l.extendingSession : l.startingSession,
       SessionPhase.active => isExtension ? l.extensionReady : l.sessionReady,
       SessionPhase.ended => l.sessionEnded,
       SessionPhase.paymentFailed => l.paymentFailed,

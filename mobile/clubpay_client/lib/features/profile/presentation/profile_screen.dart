@@ -117,7 +117,7 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen>
   }
 
   bool _loggingOut = false;
-  late final _pending = ref.read(paymentRepositoryProvider).pending();
+  late final _pending = ref.read(paymentRepositoryProvider).pendingOperations();
 
   @override
   Widget build(BuildContext context) {
@@ -206,18 +206,21 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen>
           ),
           FutureBuilder(
             future: _pending,
-            builder: (context, snapshot) => snapshot.data == null
+            builder: (context, snapshot) => snapshot.data?.isNotEmpty != true
                 ? const SizedBox.shrink()
                 : Padding(
                     padding: const EdgeInsets.only(top: 24),
                     child: SettingsGroup(
                       children: [
-                        SettingsRow(
-                          icon: CupertinoIcons.play_fill,
-                          color: ClubColors.green,
-                          title: l.resumePayment,
-                          onTap: () => context.push('/session'),
-                        ),
+                        for (final operation in snapshot.data!.reversed)
+                          SettingsRow(
+                            icon: CupertinoIcons.play_fill,
+                            color: ClubColors.green,
+                            title: l.resumePayment,
+                            subtitle: operation.pcLabel,
+                            onTap: () =>
+                                context.push('/session', extra: operation),
+                          ),
                       ],
                     ),
                   ),

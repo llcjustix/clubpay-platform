@@ -7,6 +7,7 @@ import 'package:go_router/go_router.dart';
 import '../../../core/providers.dart';
 import '../../../core/ui.dart';
 import '../domain/qr_models.dart';
+import '../../payment/domain/payment_state.dart';
 
 class ComputerScreen extends ConsumerStatefulWidget {
   const ComputerScreen({super.key, required this.token, this.reservationId});
@@ -59,17 +60,29 @@ class _ComputerScreenState extends ConsumerState<ComputerScreen> {
     final repo = ref.read(paymentRepositoryProvider);
     final provider =
         _provider ?? pc.providers.where((p) => p.available).firstOrNull?.id;
+    final tariff = _tariff ?? pc.tariffs.firstOrNull?.id;
+    final intent = PendingOperation.request(
+      token: pc.token,
+      tariff: tariff,
+      amount: amount,
+      provider: provider,
+      redeem: redeem,
+      isExtension: pc.type == 'session_extend',
+    );
     try {
-      await repo.begin(
+      final operation = await repo.begin(
         token: pc.token,
-        tariff: _tariff ?? (pc.tariffs.isEmpty ? null : pc.tariffs.first.id),
+        tariff: tariff,
         amount: amount,
         provider: provider,
         redeem: redeem,
         testPayment: !redeem && provider == 'mock',
         isExtension: pc.type == 'session_extend',
+        pcId: pc.pcId.isEmpty ? null : pc.pcId,
+        pcLabel: pc.label,
+        clubId: pc.clubId,
       );
-      if (mounted) context.push('/session');
+      if (mounted) context.push('/session', extra: operation);
       ref.read(analyticsProvider).track('checkout_created', screen: 'computer');
     } catch (e) {
       // Once submission was persisted, only recovery/status is offered.
@@ -78,8 +91,8 @@ class _ComputerScreenState extends ConsumerState<ComputerScreen> {
         ref
             .read(analyticsProvider)
             .track('checkout_failed', screen: 'computer');
-        if (pending != null) {
-          context.push('/session');
+        if (pending != null && pending.matchesRequest(intent)) {
+          context.push('/session', extra: pending);
         } else {
           showFailure(context, e);
         }

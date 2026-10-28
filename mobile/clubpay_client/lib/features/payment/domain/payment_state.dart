@@ -14,12 +14,15 @@ class SessionStatus {
     this.seconds, {
     this.checkoutUrl,
     this.isExtension = false,
+    this.pcId,
+    this.clubId,
   });
   final SessionPhase phase;
   final String pcLabel;
   final int seconds;
   final String? checkoutUrl;
   final bool isExtension;
+  final String? pcId, clubId;
   factory SessionStatus.fromJson(Map<String, dynamic> j) {
     final payment = j['status'] as String?;
     final grant = j['grant_status'] as String?;
@@ -50,6 +53,8 @@ class SessionStatus {
           .toInt(),
       checkoutUrl: j['checkout_url'] as String?,
       isExtension: j['is_extension'] == true,
+      pcId: j['pc_id'] as String?,
+      clubId: j['club_id'] as String?,
     );
   }
   bool get terminal => [
@@ -68,11 +73,66 @@ class PendingOperation {
     this.path,
     this.body,
     this.isExtension = false,
+    this.pcId,
+    this.pcLabel,
+    this.clubId,
   });
   final String key;
   final String? invoice, grant, path;
   final Map<String, dynamic>? body;
   final bool isExtension;
+  final String? pcId, pcLabel, clubId;
+
+  factory PendingOperation.request({
+    String key = '',
+    required String token,
+    String? tariff,
+    int? amount,
+    String? provider,
+    bool redeem = false,
+    bool isExtension = false,
+    String? pcId,
+    String? pcLabel,
+    String? clubId,
+  }) => PendingOperation(
+    key: key,
+    path: redeem ? '/api/player-balance/redeem' : '/api/checkouts',
+    body: {
+      'qr_token': token,
+      if (!redeem) 'payment_provider': provider,
+      if (!redeem && amount != null) 'amount_uzs': amount,
+      if (!redeem && amount == null) 'tariff_block_id': tariff,
+    },
+    isExtension: isExtension,
+    pcId: pcId,
+    pcLabel: pcLabel,
+    clubId: clubId,
+  );
+
+  bool matchesRequest(PendingOperation other) =>
+      path != null &&
+      path == other.path &&
+      body != null &&
+      other.body != null &&
+      isExtension == other.isExtension &&
+      body!.length == other.body!.length &&
+      body!.entries.every((entry) => other.body![entry.key] == entry.value);
+
+  PendingOperation withResult({
+    String? invoice,
+    String? grant,
+    bool? isExtension,
+  }) => PendingOperation(
+    key: key,
+    invoice: invoice ?? this.invoice,
+    grant: grant ?? this.grant,
+    path: path,
+    body: body,
+    isExtension: isExtension ?? this.isExtension,
+    pcId: pcId,
+    pcLabel: pcLabel,
+    clubId: clubId,
+  );
   Map<String, dynamic> toJson() => {
     'key': key,
     'invoice': invoice,
@@ -80,6 +140,9 @@ class PendingOperation {
     'path': path,
     'body': body,
     'is_extension': isExtension,
+    'pc_id': pcId,
+    'pc_label': pcLabel,
+    'club_id': clubId,
   };
   factory PendingOperation.fromJson(Map<String, dynamic> j) => PendingOperation(
     key: j['key'] as String,
@@ -90,5 +153,8 @@ class PendingOperation {
         ? null
         : Map<String, dynamic>.from(j['body'] as Map),
     isExtension: j['is_extension'] == true,
+    pcId: j['pc_id'] as String?,
+    pcLabel: j['pc_label'] as String?,
+    clubId: j['club_id'] as String?,
   );
 }

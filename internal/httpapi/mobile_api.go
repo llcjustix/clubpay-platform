@@ -211,6 +211,7 @@ func (s *Server) handleMobileOrder(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	rows, err := s.queryMaps(r.Context(), `SELECT po.invoice_id,po.status,po.duration_seconds,po.checkout_url,pc.label AS pc_label,
+ po.pc_ref_id::text AS pc_id,po.club_id::text AS club_id,
  po.extension_grant_id IS NOT NULL AS is_extension,
  COALESCE(g.id::text,'') AS grant_id,COALESCE(g.status,'pending') AS grant_status,
  CASE WHEN po.extension_grant_id IS NOT NULL THEN po.duration_seconds ELSE COALESCE(g.duration_seconds,po.duration_seconds) END AS session_seconds,g.planned_ends_at
@@ -232,7 +233,8 @@ func (s *Server) handleMobileSession(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	rows, err := s.queryMaps(r.Context(), `SELECT g.id AS grant_id,g.status AS grant_status,g.duration_seconds AS session_seconds,p.label AS pc_label,g.planned_ends_at
+	rows, err := s.queryMaps(r.Context(), `SELECT g.id AS grant_id,g.status AS grant_status,g.duration_seconds AS session_seconds,p.label AS pc_label,g.planned_ends_at,
+ g.pc_ref_id::text AS pc_id,g.club_id::text AS club_id
  FROM game_access_grants g JOIN pc_refs p ON p.id=g.pc_ref_id WHERE g.id::text=$1 AND g.player_id=$2`, r.PathValue("grant_id"), p.ID)
 	if err != nil {
 		mobileInternal(w)

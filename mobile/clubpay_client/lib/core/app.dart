@@ -12,6 +12,7 @@ import '../features/legal/presentation/public_offer_screen.dart';
 import '../features/support/presentation/support_screen.dart';
 import '../features/qr/presentation/computer_screen.dart';
 import '../features/payment/presentation/session_screen.dart';
+import '../features/payment/domain/payment_state.dart';
 import '../features/payment/presentation/active_session_screen.dart';
 import '../l10n/generated/app_localizations.dart';
 import 'providers.dart';
@@ -154,7 +155,10 @@ final routerProvider = Provider<GoRouter>((ref) {
       ),
       GoRoute(
         path: '/session',
-        pageBuilder: (_, state) => _iosPage(state, const SessionScreen()),
+        pageBuilder: (_, state) => _iosPage(
+          state,
+          SessionScreen(operation: state.extra as PendingOperation?),
+        ),
       ),
       GoRoute(
         path: '/active-session',
