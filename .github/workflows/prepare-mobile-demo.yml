@@ -61,7 +61,7 @@ jobs:
             WHERE p.status_cache <> 'deleted';
           UPDATE clubs SET name='Justix Game Club', status='active'
             WHERE id IN (SELECT id FROM demo_target);
-          UPDATE pc_refs p SET label=d.n::text FROM demo_pc_names d WHERE p.id=d.id;
+          UPDATE pc_refs p SET label=d.n::text, number=d.n FROM demo_pc_names d WHERE p.id=d.id;
           UPDATE clubs SET status='inactive'
             WHERE id NOT IN (SELECT id FROM demo_target) AND status='active';
           DO $$
