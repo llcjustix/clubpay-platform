@@ -1,0 +1,73 @@
+name: Restore clubs hidden for mobile demo
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: prepare-justix-mobile-demo
+  cancel-in-progress: false
+
+jobs:
+  restore:
+    runs-on:
+      group: jlearnx runner
+      labels: [self-hosted, docker, jlearnx]
+    steps:
+      - name: Restore visibility of the five existing clubs
+        env:
+          DB_HOST: ${{ secrets.DB_HOST }}
+          DB_PORT: ${{ secrets.DB_PORT }}
+          DB_NAME: ${{ secrets.DB_NAME }}
+          DB_USER: ${{ secrets.DB_USER }}
+          DB_PASSWORD: ${{ secrets.DB_PASSWORD }}
+        run: |
+          mapfile -t api_containers < <(docker ps --filter label=com.docker.compose.service=api --format '{{.ID}} {{.Image}}' | awk '/clubpay-api/ {print $1}')
+          if [ "${#api_containers[@]}" -ne 1 ]; then
+            echo 'Expected exactly one running ClubPay API container' >&2
+            exit 1
+          fi
+          task_network=$(docker inspect --format '{{range $name, $value := .NetworkSettings.Networks}}{{println $name}}{{end}}' "${api_containers[0]}" | head -1)
+          test -n "$task_network"
+          docker run --rm -i --network "$task_network" \
+            -e PGPASSWORD="$DB_PASSWORD" \
+            postgres:16-alpine \
+            psql "host=$DB_HOST port=$DB_PORT dbname=$DB_NAME user=$DB_USER sslmode=disable" \
+              -v ON_ERROR_STOP=1 <<'SQL'
+          BEGIN;
+          SET LOCAL lock_timeout = '10s';
+          SET LOCAL statement_timeout = '30s';
+          LOCK TABLE clubs IN SHARE ROW EXCLUSIVE MODE;
+          CREATE TEMP TABLE restore_targets (id uuid PRIMARY KEY);
+          INSERT INTO restore_targets VALUES
+            ('b6227c67-ac81-4d82-926f-4b873f7829b4'),
+            ('56defe6b-baee-43b8-987b-28462ce445da'),
+            ('564ef225-6cdb-4bf9-a362-960f942b3c4d'),
+            ('583a1203-823e-4f1f-9bd2-80c0656cd0aa'),
+            ('9ca19734-93de-492a-9b70-9d9a43ab8a92');
+          DO $$
+          BEGIN
+            IF (SELECT count(*) FROM clubs c JOIN restore_targets t ON t.id=c.id
+                WHERE c.status IN ('inactive','active')) <> 5 THEN
+              RAISE EXCEPTION 'Expected all five existing, non-deleted clubs';
+            END IF;
+          END $$;
+          SELECT 'before_clubs' AS snapshot, id, name, status FROM clubs ORDER BY name;
+          UPDATE clubs c SET status='active'
+            FROM restore_targets t WHERE c.id=t.id AND c.status='inactive';
+          DO $$
+          BEGIN
+            IF (SELECT count(*) FROM clubs c JOIN restore_targets t ON t.id=c.id
+                WHERE c.status='active') <> 5 THEN
+              RAISE EXCEPTION 'Not all five clubs became visible';
+            END IF;
+          END $$;
+          COMMIT;
+          SELECT 'after_clubs' AS snapshot, id, name, status FROM clubs ORDER BY name;
+          SELECT 'justix_pcs' AS snapshot, p.number, p.label
+            FROM pc_refs p JOIN clubs c ON c.id=p.club_id
+            WHERE c.id='21bbd882-bf06-4f8d-b2f0-04cf8399c65a' AND p.status_cache <> 'deleted'
+            ORDER BY p.number;
+          SQL
