@@ -702,11 +702,11 @@ class _ClubDetailScreenState extends ConsumerState<ClubDetailScreen> {
             else
               const PageSkeleton(rows: 3),
           ] else ...[
-            if (snapshot.data!.address.isNotEmpty)
+            if (snapshot.data!.displayAddress.isNotEmpty)
               Padding(
                 padding: const EdgeInsets.fromLTRB(16, 0, 16, 20),
                 child: Text(
-                  snapshot.data!.address,
+                  snapshot.data!.displayAddress,
                   style: const TextStyle(color: ClubColors.muted),
                 ),
               ),
@@ -821,11 +821,11 @@ class ClubCatalogRow extends StatelessWidget {
                       fontSize: 13,
                     ),
                   ),
-                  if (club.address.isNotEmpty)
+                  if (club.displayAddress.isNotEmpty)
                     Padding(
                       padding: const EdgeInsets.only(top: 2),
                       child: Text(
-                        club.address,
+                        club.displayAddress,
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
                         style: const TextStyle(

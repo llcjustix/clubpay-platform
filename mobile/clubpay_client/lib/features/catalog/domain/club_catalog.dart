@@ -1,3 +1,7 @@
+// Keep the test address in the catalog data, but hide it in player-facing UI.
+String _publicClubAddress(String address) =>
+    address.trim().toLowerCase() == 'physical test lan' ? '' : address;
+
 class ClubSearchResult {
   const ClubSearchResult({
     required this.id,
@@ -11,6 +15,7 @@ class ClubSearchResult {
     this.favorite = false,
   });
   final String id, name, address;
+  String get displayAddress => _publicClubAddress(address);
   final bool online, favorite;
   final int availablePCs, totalPCs;
   final double? latitude, longitude;
@@ -97,6 +102,7 @@ class ClubCatalog {
     this.favorite = false,
   });
   final String id, name, address;
+  String get displayAddress => _publicClubAddress(address);
   final bool online, favorite;
   final List<ClubZone> zones;
   final double? latitude, longitude;

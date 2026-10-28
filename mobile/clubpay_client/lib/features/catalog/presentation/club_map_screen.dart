@@ -210,9 +210,12 @@ class _ClubMapCard extends StatelessWidget {
               ),
             ],
           ),
-          if (club.address.isNotEmpty) ...[
+          if (club.displayAddress.isNotEmpty) ...[
             const SizedBox(height: 10),
-            Text(club.address, style: const TextStyle(color: ClubColors.muted)),
+            Text(
+              club.displayAddress,
+              style: const TextStyle(color: ClubColors.muted),
+            ),
           ],
           const SizedBox(height: 8),
           Text(
