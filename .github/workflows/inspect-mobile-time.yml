@@ -1,0 +1,49 @@
+name: Inspect mobile session time
+on:
+  workflow_dispatch:
+    inputs:
+      phone:
+        required: true
+        type: string
+permissions:
+  contents: read
+jobs:
+  inspect:
+    runs-on:
+      group: jlearnx runner
+      labels: [self-hosted, docker, jlearnx]
+    steps:
+      - name: Inspect selected player's balance and session durations
+        env:
+          TEST_PHONE: ${{ inputs.phone }}
+          DB_HOST: ${{ secrets.DB_HOST }}
+          DB_PORT: ${{ secrets.DB_PORT }}
+          DB_NAME: ${{ secrets.DB_NAME }}
+          DB_USER: ${{ secrets.DB_USER }}
+          DB_PASSWORD: ${{ secrets.DB_PASSWORD }}
+        run: |
+          echo "::add-mask::$TEST_PHONE"
+          [[ "$TEST_PHONE" =~ ^\+998[0-9]{9}$ ]]
+          mapfile -t api_containers < <(docker ps --filter label=com.docker.compose.service=api --format '{{.ID}} {{.Image}}' | awk '/clubpay-api/ {print $1}')
+          test "${#api_containers[@]}" -eq 1
+          task_network=$(docker inspect --format '{{range $name, $value := .NetworkSettings.Networks}}{{println $name}}{{end}}' "${api_containers[0]}" | head -1)
+          test -n "$task_network"
+          docker run --rm -i --network "$task_network" -e PGPASSWORD="$DB_PASSWORD" \
+            postgres:16-alpine psql \
+            "host=$DB_HOST port=$DB_PORT dbname=$DB_NAME user=$DB_USER sslmode=disable" \
+            -v ON_ERROR_STOP=1 -v phone="$TEST_PHONE" <<'SQL'
+          BEGIN READ ONLY;
+          SELECT c.name,b.seconds_balance,b.time_value_units,b.reference_price_tiyin,
+            (SELECT count(*) FROM player_time_ledger l WHERE l.player_id=p.id AND l.club_id=c.id) AS ledger_rows,
+            (SELECT sum(l.seconds_delta) FROM player_time_ledger l WHERE l.player_id=p.id AND l.club_id=c.id) AS ledger_seconds
+            FROM players p JOIN player_club_balances b ON b.player_id=p.id JOIN clubs c ON c.id=b.club_id
+            WHERE p.phone=:'phone' ORDER BY c.name;
+          SELECT c.name AS club,pc.label AS pc,g.status,g.source,g.duration_seconds,g.created_at,g.planned_ends_at
+            FROM game_access_grants g JOIN players p ON p.id=g.player_id JOIN clubs c ON c.id=g.club_id
+            JOIN pc_refs pc ON pc.id=g.pc_ref_id WHERE p.phone=:'phone' ORDER BY g.created_at DESC LIMIT 15;
+          SELECT c.name AS club,pc.label AS pc,po.status,po.duration_seconds,po.created_at,
+            po.extension_grant_id IS NOT NULL AS extension
+            FROM payment_orders po JOIN players p ON p.id=po.player_id JOIN clubs c ON c.id=po.club_id
+            JOIN pc_refs pc ON pc.id=po.pc_ref_id WHERE p.phone=:'phone' ORDER BY po.created_at DESC LIMIT 10;
+          COMMIT;
+          SQL
