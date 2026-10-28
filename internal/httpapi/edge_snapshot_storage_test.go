@@ -48,6 +48,10 @@ func sendSnapshotStorageEvent(t *testing.T, s *Server, club, node, token string,
 func TestEdgeSnapshotAppliesWithoutArchivingHistory(t *testing.T) {
 	pool, s, club, pc := snapshotStorageFixture(t)
 	ctx := context.Background()
+	var originalLabel string
+	if err := pool.QueryRow(ctx, "SELECT label FROM pc_refs WHERE id=$1", pc).Scan(&originalLabel); err != nil {
+		t.Fatal(err)
+	}
 	// Existing snapshot history must remain intact until explicitly maintained.
 	if _, err := pool.Exec(ctx, `INSERT INTO core_events(event_id,event_type,club_id,payload,status)
 		VALUES('historical-snapshot','edge_edge_snapshot',$1,'{"historical_fixture":true}','processed')`, club); err != nil {
@@ -78,6 +82,7 @@ func TestEdgeSnapshotAppliesWithoutArchivingHistory(t *testing.T) {
 		for _, p := range pcs {
 			if p["id"] == pc {
 				p["label"] = fmt.Sprintf("snapshot-label-%d", i)
+				p["status_cache"] = "sleeping"
 			}
 		}
 		if code := sendSnapshotStorageEvent(t, s, club, "", "snapshot-fixture-only", edgeEvent{
@@ -89,10 +94,10 @@ func TestEdgeSnapshotAppliesWithoutArchivingHistory(t *testing.T) {
 			s = NewServer(s.cfg, pool, core.NewMockAdapter())
 		}
 	}
-	var label string
+	var label, pcStatus string
 	var synced bool
-	if err := pool.QueryRow(ctx, "SELECT label FROM pc_refs WHERE id=$1", pc).Scan(&label); err != nil || label != "snapshot-label-24" {
-		t.Fatalf("snapshot not applied: %q, %v", label, err)
+	if err := pool.QueryRow(ctx, "SELECT label,status_cache FROM pc_refs WHERE id=$1", pc).Scan(&label, &pcStatus); err != nil || label != originalLabel || pcStatus != "sleeping" {
+		t.Fatalf("snapshot must update presence and preserve catalog: label=%q status=%q err=%v", label, pcStatus, err)
 	}
 	if err := pool.QueryRow(ctx, "SELECT controller_synced_at IS NOT NULL FROM clubs WHERE id=$1", club).Scan(&synced); err != nil || !synced {
 		t.Fatal("sync health not updated", err)
@@ -128,6 +133,10 @@ func TestEdgeSnapshotAppliesWithoutArchivingHistory(t *testing.T) {
 
 func TestEdgeSnapshotRejectsUnauthorizedAndRetriesFailedApply(t *testing.T) {
 	pool, s, club, pc := snapshotStorageFixture(t)
+	var originalLabel string
+	if err := pool.QueryRow(context.Background(), "SELECT label FROM pc_refs WHERE id=$1", pc).Scan(&originalLabel); err != nil {
+		t.Fatal(err)
+	}
 	bad := edgeEvent{EventID: "retryable-sync", Type: "edge_snapshot", Payload: map[string]any{
 		"pcs": []map[string]any{{"id": "not-a-uuid", "club_id": club}},
 	}}
@@ -145,18 +154,69 @@ func TestEdgeSnapshotRejectsUnauthorizedAndRetriesFailedApply(t *testing.T) {
 	for _, p := range bad.Payload["pcs"].([]map[string]any) {
 		if p["id"] == pc {
 			p["label"] = "successful-retry"
+			p["status_cache"] = "sleeping"
 		}
 	}
 	if code := sendSnapshotStorageEvent(t, s, club, "", "snapshot-fixture-only", bad); code != 200 {
 		t.Fatal("failed apply could not be retried", code)
 	}
-	var label string
+	var label, pcStatus string
 	var archived int
-	if err := pool.QueryRow(context.Background(), "SELECT label FROM pc_refs WHERE id=$1", pc).Scan(&label); err != nil || label != "successful-retry" {
-		t.Fatal(label, err)
+	if err := pool.QueryRow(context.Background(), "SELECT label,status_cache FROM pc_refs WHERE id=$1", pc).Scan(&label, &pcStatus); err != nil || label != originalLabel || pcStatus != "sleeping" {
+		t.Fatal(label, pcStatus, err)
 	}
 	if err := pool.QueryRow(context.Background(), "SELECT count(*) FROM core_events").Scan(&archived); err != nil || archived != 0 {
 		t.Fatal("failed/retried snapshot archived", archived, err)
+	}
+}
+
+func TestEdgeSnapshotCatalogOwnership(t *testing.T) {
+	for _, mode := range []string{"cloud", "edge", "manager"} {
+		t.Run(mode, func(t *testing.T) {
+			pool, s, club, pc := snapshotStorageFixture(t)
+			s.cfg.NodeMode = mode
+			ctx := context.Background()
+			var originalName, originalSlug, originalLabel string
+			if err := pool.QueryRow(ctx, `SELECT c.name,c.slug,p.label FROM clubs c JOIN pc_refs p ON p.club_id=c.id WHERE p.id=$1`, pc).Scan(&originalName, &originalSlug, &originalLabel); err != nil {
+				t.Fatal(err)
+			}
+			snapshot, err := s.edgeSnapshotData(ctx, club, true)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, p := range snapshot["pcs"].([]map[string]any) {
+				if p["id"] == pc {
+					p["number"] = 99001
+					p["status_cache"] = "sleeping"
+				}
+			}
+			if _, err = pool.Exec(ctx, `UPDATE clubs SET name='Justix Game Club',slug='justix-game-club',status='inactive' WHERE id=$1`, club); err != nil {
+				t.Fatal(err)
+			}
+			if _, err = pool.Exec(ctx, `UPDATE pc_refs SET label='1',number=99002 WHERE id=$1`, pc); err != nil {
+				t.Fatal(err)
+			}
+			for i := 0; i < 2; i++ {
+				if err = s.applyEdgeSnapshotData(ctx, club, snapshot); err != nil {
+					t.Fatal(err)
+				}
+			}
+			var name, slug, visibility, label, status string
+			var number int
+			if err = pool.QueryRow(ctx, `SELECT c.name,c.slug,c.status,p.label,p.number,p.status_cache FROM clubs c JOIN pc_refs p ON p.club_id=c.id WHERE p.id=$1`, pc).Scan(&name, &slug, &visibility, &label, &number, &status); err != nil {
+				t.Fatal(err)
+			}
+			if mode == "cloud" {
+				if name != "Justix Game Club" || slug != "justix-game-club" || visibility != "inactive" || label != "1" || number != 99002 {
+					t.Fatalf("Controller overwrote Cloud catalog: %q %q %q %q %d", name, slug, visibility, label, number)
+				}
+			} else if name != originalName || slug != originalSlug || visibility != "active" || label != originalLabel || number != 99001 {
+				t.Fatalf("local cache did not accept Cloud catalog: %q %q %q %q %d", name, slug, visibility, label, number)
+			}
+			if status != "sleeping" {
+				t.Fatalf("live PC status was not synchronized: %q", status)
+			}
+		})
 	}
 }
 

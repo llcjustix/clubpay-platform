@@ -4737,6 +4737,10 @@ func (s *Server) applyEdgeSnapshotData(ctx context.Context, clubID string, paylo
 		return err
 	}
 	defer tx.Rollback(ctx)
+	// Cloud owns catalog names and visibility. A Controller can still carry an
+	// older snapshot immediately after a manager edits the catalog; only local
+	// caches should accept those fields from an incoming Cloud snapshot.
+	acceptCatalogSettings := s.localNodeMode()
 	if club := payload["club"]; club != nil {
 		if err := execJSON(ctx, tx, `
 			WITH input AS (
@@ -4753,8 +4757,11 @@ func (s *Server) applyEdgeSnapshotData(ctx context.Context, clubID string, paylo
 			SELECT id, name, slug, legal_name, tin, address, COALESCE(NULLIF(timezone, ''), 'Asia/Tashkent'), COALESCE(NULLIF(status, ''), 'active'), agent_primary_controller_url, agent_fallback_controller_url, click_merchant_id, click_service_id, click_merchant_user_id, click_secret_key, click_club_cntrg_id, click_platform_cntrg_id, payme_merchant_id, payme_secret_key, payme_club_receiver_id, payme_platform_receiver_id, COALESCE(platform_fee_bps, 0), ofd_mxik, ofd_package_code, ofd_service_name, ofd_unit_code, COALESCE(ofd_vat_percent, 0), COALESCE(created_at, now())
 			FROM input
 			ON CONFLICT (id) DO UPDATE SET
-			  name = EXCLUDED.name, slug = EXCLUDED.slug, legal_name = EXCLUDED.legal_name, tin = EXCLUDED.tin,
-			  address = EXCLUDED.address, timezone = EXCLUDED.timezone, status = EXCLUDED.status,
+			  name = CASE WHEN $2::boolean THEN EXCLUDED.name ELSE clubs.name END,
+			  slug = CASE WHEN $2::boolean THEN EXCLUDED.slug ELSE clubs.slug END,
+			  legal_name = EXCLUDED.legal_name, tin = EXCLUDED.tin,
+			  address = EXCLUDED.address, timezone = EXCLUDED.timezone,
+			  status = CASE WHEN $2::boolean THEN EXCLUDED.status ELSE clubs.status END,
 			  agent_primary_controller_url = COALESCE(EXCLUDED.agent_primary_controller_url, clubs.agent_primary_controller_url),
 			  agent_fallback_controller_url = CASE WHEN EXCLUDED.agent_primary_controller_url IS NOT NULL
 			    THEN EXCLUDED.agent_fallback_controller_url ELSE clubs.agent_fallback_controller_url END,
@@ -4767,7 +4774,7 @@ func (s *Server) applyEdgeSnapshotData(ctx context.Context, clubID string, paylo
 			  platform_fee_bps = EXCLUDED.platform_fee_bps,
 			  ofd_mxik = EXCLUDED.ofd_mxik, ofd_package_code = EXCLUDED.ofd_package_code,
 			  ofd_service_name = EXCLUDED.ofd_service_name, ofd_unit_code = EXCLUDED.ofd_unit_code, ofd_vat_percent = EXCLUDED.ofd_vat_percent
-		`, []any{club}); err != nil {
+		`, []any{club}, acceptCatalogSettings); err != nil {
 			return err
 		}
 	}
@@ -4847,8 +4854,11 @@ func (s *Server) applyEdgeSnapshotData(ctx context.Context, clubID string, paylo
 		INSERT INTO pc_refs (id, club_id, zone_id, external_pc_id, number, label, mac_address, status_cache, created_at)
 		SELECT id, club_id, zone_id, external_pc_id, number, label, NULLIF(mac_address, ''), COALESCE(NULLIF(status_cache, ''), 'available'), COALESCE(created_at, now())
 		FROM input
-		ON CONFLICT (id) DO UPDATE SET zone_id = EXCLUDED.zone_id, external_pc_id = EXCLUDED.external_pc_id, number = EXCLUDED.number, label = EXCLUDED.label, mac_address = EXCLUDED.mac_address, status_cache = EXCLUDED.status_cache
-	`, payload["pcs"]); err != nil {
+		ON CONFLICT (id) DO UPDATE SET zone_id = EXCLUDED.zone_id, external_pc_id = EXCLUDED.external_pc_id,
+		  number = CASE WHEN $2::boolean THEN EXCLUDED.number ELSE pc_refs.number END,
+		  label = CASE WHEN $2::boolean THEN EXCLUDED.label ELSE pc_refs.label END,
+		  mac_address = EXCLUDED.mac_address, status_cache = EXCLUDED.status_cache
+	`, payload["pcs"], acceptCatalogSettings); err != nil {
 		return err
 	}
 	if err := execJSON(ctx, tx, `

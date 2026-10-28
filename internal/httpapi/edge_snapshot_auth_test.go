@@ -32,20 +32,20 @@ func TestEdgeSnapshotPreservesCloudSuperadmin(t *testing.T) {
 	}
 	for _, p := range payload["pcs"].([]map[string]any) {
 		if p["id"] == pc {
-			p["label"] = "auth-regression-live-pc"
+			p["status_cache"] = "sleeping"
 		}
 	}
 	if err = s.applyEdgeSnapshotData(ctx, club, payload); err != nil {
 		t.Fatal(err)
 	}
-	var hash, name, status, role, label string
+	var hash, name, status, role, pcStatus string
 	if err = pool.QueryRow(ctx, `SELECT password_hash,name,status,global_role FROM users WHERE id=$1`, id).Scan(&hash, &name, &status, &role); err != nil {
 		t.Fatal(err)
 	}
 	if hash != expected || name != "Cloud authoritative admin" || status != "active" || role != "super_admin" {
 		t.Fatal("stale edge snapshot replaced Cloud superadmin credentials or identity")
 	}
-	if err = pool.QueryRow(ctx, `SELECT label FROM pc_refs WHERE id=$1`, pc).Scan(&label); err != nil || label != "auth-regression-live-pc" {
+	if err = pool.QueryRow(ctx, `SELECT status_cache FROM pc_refs WHERE id=$1`, pc).Scan(&pcStatus); err != nil || pcStatus != "sleeping" {
 		t.Fatalf("operational PC sync lost: %v", err)
 	}
 }
