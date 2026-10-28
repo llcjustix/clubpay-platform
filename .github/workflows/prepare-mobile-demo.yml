@@ -1,4 +1,4 @@
-name: Prepare Justix mobile demo
+name: Restore Justix club and PC names
 
 on:
   workflow_dispatch:
@@ -16,7 +16,7 @@ jobs:
       group: jlearnx runner
       labels: [self-hosted, docker, jlearnx]
     steps:
-      - name: Rename demo club and PCs and hide other clubs
+      - name: Rename Justix club and PCs while preserving club visibility
         env:
           DB_HOST: ${{ secrets.DB_HOST }}
           DB_PORT: ${{ secrets.DB_PORT }}
@@ -41,7 +41,8 @@ jobs:
           SET LOCAL statement_timeout = '30s';
           LOCK TABLE clubs, pc_refs IN SHARE ROW EXCLUSIVE MODE;
           CREATE TEMP TABLE demo_target AS
-            SELECT id FROM clubs WHERE name IN ('CPB Physical Pilot', 'Justix Game Club');
+            SELECT id FROM clubs WHERE id='21bbd882-bf06-4f8d-b2f0-04cf8399c65a'
+              AND name IN ('CPB Physical Pilot', 'Justix Game Club');
           DO $$
           BEGIN
             IF (SELECT count(*) FROM demo_target) <> 1 THEN
@@ -62,17 +63,21 @@ jobs:
           UPDATE clubs SET name='Justix Game Club', status='active'
             WHERE id IN (SELECT id FROM demo_target);
           UPDATE pc_refs p SET label=d.n::text, number=d.n FROM demo_pc_names d WHERE p.id=d.id;
-          UPDATE clubs SET status='inactive'
-            WHERE id NOT IN (SELECT id FROM demo_target) AND status='active';
-          DO $$
-          BEGIN
-            IF (SELECT count(*) FROM clubs WHERE status='active') <> 1 THEN
-              RAISE EXCEPTION 'Expected only Justix to remain visible';
-            END IF;
-          END $$;
           COMMIT;
+          SELECT pg_sleep(20);
           SELECT 'after_clubs' AS snapshot, id, name, status FROM clubs ORDER BY name;
           SELECT 'after_pcs' AS snapshot, p.id, p.number, p.label
             FROM pc_refs p JOIN clubs c ON c.id=p.club_id
             WHERE c.name='Justix Game Club' AND p.status_cache <> 'deleted' ORDER BY p.number;
+          DO $$
+          BEGIN
+            IF NOT EXISTS (SELECT 1 FROM clubs WHERE id='21bbd882-bf06-4f8d-b2f0-04cf8399c65a'
+                           AND name='Justix Game Club' AND status='active') THEN
+              RAISE EXCEPTION 'Club name was overwritten after saving';
+            END IF;
+            IF (SELECT count(*) FROM pc_refs WHERE club_id='21bbd882-bf06-4f8d-b2f0-04cf8399c65a'
+                AND status_cache <> 'deleted' AND number IN (1,2) AND label=number::text) <> 2 THEN
+              RAISE EXCEPTION 'PC names were overwritten after saving';
+            END IF;
+          END $$;
           SQL
